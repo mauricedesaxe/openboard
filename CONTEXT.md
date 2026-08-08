@@ -25,6 +25,11 @@ _Avoid_: Call for papers, submission form
 One proposed talk, workshop, or panel sent to an event through a CFP or entered by an organizer.
 _Avoid_: Session, talk
 
+**Program item**:
+An accepted talk, workshop, or panel in an event's program, linked to its submission and independent
+of any agenda placement.
+_Avoid_: Session
+
 **Submission owner**:
 The person accountable for a submission and permitted to edit the proposal.
 _Avoid_: Submitter
@@ -62,8 +67,14 @@ _Avoid_: Category
 The physical or virtual place where a scheduled part of an event happens.
 _Avoid_: Location
 
+**Agenda item**:
+One scheduled placement on an agenda, referencing either a program item or a service block.
+
+**Scheduled session**:
+The UI term for a program item once it has been placed on an agenda.
+
 **Agenda**:
-An event's schedule of accepted sessions and service blocks across times, rooms, and tracks.
+An event's schedule of program items and service blocks across times, rooms, and tracks.
 _Avoid_: Calendar, timetable
 
 **Working agenda**:
