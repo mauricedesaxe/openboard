@@ -102,7 +102,7 @@ Core competencies (the heart of it):
 Core user flows the MVP must make work:
 
 - **A. Submission → published agenda.** Build form → publish link → submitters apply →
-  reviewers score → accept → accepted sessions flow directly into agenda + CMS with no
+  reviewers score → accept → program items flow directly into agenda + CMS with no
   re-entry → agenda published to an embed. This is the flagship flow, and the structural
   core.
 - **B. Find and reuse a speaker.** Import roster → tag/search → pull a past speaker into a

@@ -1,6 +1,6 @@
 # OpenBoard
 
-OpenBoard manages the program side of an event, from proposed sessions through review, speaker
+OpenBoard manages the program side of an event, from submissions through review, speaker
 onboarding, and the published schedule. This glossary names the records and relationships used
 across that workflow.
 
