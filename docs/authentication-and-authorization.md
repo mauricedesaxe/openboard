@@ -79,7 +79,7 @@ The initial guard vocabulary is:
 - `authenticated`: any verified user.
 - `eventOwner`: the event's owner.
 - `eventOrganizer`: the owner or an organizer of the event.
-- `assignedReviewer`: a reviewer assigned to the requested submission.
+- `assignedReviewer`: a reviewer assigned to the requested submission in the requested review round.
 - `submissionOwner`: the user accountable for the requested submission.
 - `submissionSpeaker`: a user linked as a speaker to the requested submission.
 
@@ -93,7 +93,8 @@ Frontend route protection improves navigation but is not an authorization bounda
 - An event has exactly one owner.
 - The owner controls organizer access, ownership transfer, and event deletion.
 - Organizers control event operations and reviewer access.
-- Roles are additive. A user may organize, review, and speak within one event.
+- Organizer and reviewer roles are additive. Speaking remains a separate submission-speaker
+  relationship, so a user may organize, review, and speak within one event.
 - A reviewer cannot be assigned to a submission they own or speak on.
 
 ### Submissions and reviews

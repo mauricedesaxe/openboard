@@ -39,7 +39,7 @@ An event-owned set of fields and validation rules used by a CFP or onboarding ta
 
 **Form response**:
 One set of answers to a form definition, belonging either to a submission or to one revision of a
-form task assignment.
+task assignment that uses a form.
 
 **Submission**:
 One proposed talk, workshop, or panel sent to an event through a CFP or entered by an organizer.
@@ -50,12 +50,13 @@ The accepted talks, workshops, and panels belonging to an event. The program is 
 the event's program items, not an independent record.
 
 **Program item**:
-An accepted talk, workshop, or panel in an event's program, linked to its submission and independent
-of any agenda placement.
+An accepted talk, workshop, or panel in an event's program. Publishing acceptance creates exactly
+one program item linked to its submission and independent of any agenda placement.
 _Avoid_: Session
 
 **Submission owner**:
-The person accountable for a submission and permitted to edit the proposal.
+The person accountable for a submission and permitted to edit the proposal. Ownership and speaking
+are independent relationships; a public CFP defaults the owner into the speaker list.
 _Avoid_: Submitter
 
 **Abstract**:
@@ -63,8 +64,9 @@ A short description of what a submission proposes to cover.
 _Avoid_: Description, summary
 
 **Submission speaker**:
-A person named as a potential speaker on a submission. The relationship remains the same before
-and after acceptance.
+A person named as a potential speaker on a submission. The relationship may remain unclaimed with
+an invited name and email or link to a verified user, and remains the same before and after
+acceptance.
 _Avoid_: Participant
 
 **Proposed speaker**:
@@ -91,8 +93,8 @@ The revocable relationship permitting one reviewer to evaluate one submission in
 One reviewer's score and optional comment for an assigned submission.
 
 **Decision**:
-The current internal or published outcome for one submission. Internal accept and decline queues
-remain distinct from published acceptance and decline.
+The current outcome for one submission: pending, internally queued for acceptance or decline, or
+published as accepted or declined.
 
 **Track**:
 A topic grouping for submissions and scheduled sessions within an event.
@@ -140,7 +142,8 @@ its first assignment.
 
 **Task assignment**:
 One required or optional obligation created from a task definition. Completion is derived from
-current-revision evidence rather than a stored completed flag.
+current-revision manual confirmation, profile data, form response, stored file, waiver, or organizer
+override evidence rather than a stored completed flag.
 
 **Event-speaker task**:
 A task one user completes once for one event.
@@ -153,7 +156,7 @@ A task one submission speaker completes specifically for one program item.
 
 **Stored file**:
 File identity and immutable R2 metadata. A stored file gains domain meaning through a speaker-profile,
-task, or form-answer attachment.
+task-assignment, or form-response attachment.
 
 **Communication**:
 One rendered message intended for one user or invitation. Delivery retries are append-only attempts
