@@ -28,7 +28,8 @@ ownership remains separate.
 
 **Invitation**:
 A pending, expiring offer to establish an event role or link a submission speaker to a verified
-user. Accepting requires email verification; declining requires only the invitation's secret link.
+user. Accepting requires email verification; declining requires the invitation's secret link and an
+explicit confirmation, but no account.
 
 **Call for proposals (CFP)**:
 An event's public invitation and form for proposed talks, workshops, or panels.
@@ -51,7 +52,7 @@ the event's program items, not an independent record.
 
 **Program item**:
 An accepted talk, workshop, or panel in an event's program. Publishing acceptance creates exactly
-one program item linked to its submission and independent of any agenda placement.
+one program item linked one-to-one to its submission and independent of any agenda placement.
 _Avoid_: Session
 
 **Submission owner**:
@@ -84,13 +85,13 @@ A person permitted to evaluate submissions assigned to them for an event.
 
 **Review round**:
 One named review campaign for a CFP, defining reviewer visibility, scoring rules, due date, and
-whether reviewing is open or closed.
+whether reviewing is open or closed. A CFP has one review round in the current increment.
 
 **Reviewer assignment**:
 The revocable relationship permitting one reviewer to evaluate one submission in one review round.
 
 **Review**:
-One reviewer's score and optional comment for an assigned submission.
+One reviewer's score and optional comment for an assigned submission in one review round.
 
 **Decision**:
 The current outcome for one submission: pending, internally queued for acceptance or decline, or
@@ -129,9 +130,6 @@ _Avoid_: Draft schedule
 The public projection of agenda information that organizers have deliberately released.
 _Avoid_: Live agenda
 
-The [program and agenda relationship](docs/diagrams/program-and-agenda.png) is also preserved as an
-editable [tldraw board](docs/diagrams/program-and-agenda.tldr).
-
 **Calendar sync state**:
 The stable iCalendar UID, sequence, and cancellation state used to synchronize one published agenda
 placement with external calendars.
@@ -161,3 +159,6 @@ task-assignment, or form-response attachment.
 **Communication**:
 One rendered message intended for one user or invitation. Delivery retries are append-only attempts
 and never change the domain state that caused the message.
+
+The [program and agenda relationship](docs/diagrams/program-and-agenda.png) is also preserved as an
+editable [tldraw board](docs/diagrams/program-and-agenda.tldr).

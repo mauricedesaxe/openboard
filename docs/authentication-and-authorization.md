@@ -47,8 +47,9 @@ They receive a single-use invitation link and prove control of that address with
 OpenBoard then links the submission speaker to their `UserId`; authorization no longer depends
 on email matching.
 
-Declining an invitation requires only its secret link, creates no user or access grant, and stops
-further reminders. Unclaimed submission speakers receive no other operational communications.
+The decline link opens a confirmation page. An explicit unauthenticated action using that secret
+declines the invitation, creates no user or access grant, and stops further reminders. Unclaimed
+submission speakers receive no other operational communications.
 
 Before claim, the submission owner or an organizer can correct the invited address and reissue the
 invitation. Correction or reissue atomically advances its version only while the submission speaker
