@@ -10,8 +10,8 @@ across that workflow.
 A conference or similar gathering whose program is managed in OpenBoard.
 
 **User**:
-A person with a verified OpenBoard identity managed by Better Auth. Domain records reference the
-user's stable `UserId`; email addresses are contact points, not identity.
+A person with a verified OpenBoard identity. Domain records reference the user's stable `UserId`;
+email addresses are contact points, not identity.
 _Avoid_: Principal
 
 **Event owner**:
@@ -27,9 +27,7 @@ One organizer or reviewer access grant linking a user to an event. Roles are add
 ownership remains separate.
 
 **Invitation**:
-A pending, expiring offer to establish an event role or link a submission speaker to a verified
-user. Accepting requires email verification; declining requires the invitation's secret link and an
-explicit confirmation, but no account.
+A pending offer to establish an event role or link a submission speaker to a user.
 
 **Call for proposals (CFP)**:
 An event's public invitation and form for proposed talks, workshops, or panels.
@@ -51,13 +49,13 @@ The accepted talks, workshops, and panels belonging to an event. The program is 
 the event's program items, not an independent record.
 
 **Program item**:
-An accepted talk, workshop, or panel in an event's program. Publishing acceptance creates exactly
-one program item linked one-to-one to its submission and independent of any agenda placement.
+An accepted talk, workshop, or panel linked one-to-one to its submission and independent of any
+agenda placement.
 _Avoid_: Session
 
 **Submission owner**:
 The person accountable for a submission and permitted to edit the proposal. Ownership and speaking
-are independent relationships; a public CFP defaults the owner into the speaker list.
+are independent relationships.
 _Avoid_: Submitter
 
 **Abstract**:
@@ -85,7 +83,7 @@ A person permitted to evaluate submissions assigned to them for an event.
 
 **Review round**:
 One named review campaign for a CFP, defining reviewer visibility, scoring rules, due date, and
-whether reviewing is open or closed. A CFP has one review round in the current increment.
+whether reviewing is open or closed.
 
 **Reviewer assignment**:
 The revocable relationship permitting one reviewer to evaluate one submission in one review round.
@@ -98,7 +96,7 @@ The current outcome for one submission: pending, internally queued for acceptanc
 published as accepted or declined.
 
 **Track**:
-A topic grouping for submissions and scheduled sessions within an event.
+A topic grouping assigned to a submission and inherited by its program item.
 _Avoid_: Category
 
 **Room**:
@@ -107,8 +105,7 @@ _Avoid_: Location
 
 **Agenda item**:
 One durable placement on an agenda. An agenda item is either a program placement referencing one
-program item or a service block containing its own details, never both. Removing a program placement
-from the schedule cancels its agenda item rather than deleting it.
+program item or a service block containing its own details, never both.
 
 **Service block**:
 Agenda-native content such as registration, a break, lunch, or a reception. A service block is a
@@ -123,13 +120,12 @@ blocks across times, rooms, and tracks.
 _Avoid_: Calendar, timetable
 
 **Working agenda**:
-The private agenda organizers are still preparing. It may temporarily contain room or speaker
-conflicts while organizers arrange its items.
+The private agenda organizers are still preparing.
 _Avoid_: Draft schedule
 
 **Published agenda**:
-The public projection of agenda information that organizers have deliberately released. Publication
-requires the working agenda to have no room or speaker conflicts.
+The conflict-free public projection of agenda information that organizers have deliberately
+released.
 _Avoid_: Live agenda
 
 **Calendar sync state**:
@@ -137,17 +133,15 @@ The stable iCalendar UID, sequence, and cancellation state used to synchronize o
 placement with external calendars.
 
 **Task definition**:
-An event-owned reusable requirement whose target scope and completion mechanism become fixed after
-its first assignment.
+An event-owned reusable requirement with a target scope and completion mechanism.
 
 **Task assignment**:
-One required or optional obligation created from a task definition. Completion is derived from
-current-revision manual confirmation, profile data, form response, stored file, waiver, or organizer
-override evidence rather than a stored completed flag.
+One required or optional obligation created from a task definition. Completion is derived from task
+evidence for the current assignment revision rather than a stored completed flag.
 
 **Task evidence**:
-One append-only record supporting completion of one task assignment revision through manual
-confirmation, profile data, a form response, a stored file, a waiver, or an organizer override.
+One record supporting completion of one task assignment revision through manual confirmation,
+profile data, a form response, a stored file, a waiver, or an organizer override.
 
 **Event-speaker task**:
 A task one user completes once for one event.
@@ -159,12 +153,8 @@ A shared task that any claimed speaker may complete once for one program item.
 A task one submission speaker completes specifically for one program item.
 
 **Stored file**:
-File identity and immutable R2 metadata. A stored file gains domain meaning through a speaker-profile,
+File identity and metadata. A stored file gains domain meaning through a speaker-profile,
 task-assignment, or form-response attachment.
 
 **Communication**:
-One rendered message intended for one user or invitation. Delivery retries are append-only attempts
-and never change the domain state that caused the message.
-
-The [program and agenda relationship](docs/diagrams/program-and-agenda.png) is also preserved as an
-editable [tldraw board](docs/diagrams/program-and-agenda.tldr).
+One rendered message intended for one user or invitation.
