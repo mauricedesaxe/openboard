@@ -121,9 +121,12 @@ that are *not* in the brief, and are cut for the MVP: live transcription, AI con
 repurposing, the media library, and the CRM/Marketing/CMS pillars (swyx confirmed program
 only). AI-assisted *review* stays as the one thin, optional slice of AI.
 
+Authentication and resource authorization are required foundations for organizer, reviewer,
+submission owner, and submission speaker workflows.
+
 ## Out of scope (explicitly descoped)
 
-- Authentication and billing (per instruction — focus on core competencies only).
+- Billing.
 - SessionBoard's full marketing/content-repurposing engine, Speaker CRM, and CMS.
 - Features 7–9 and AI-assisted review are **optional**, not in the must-have core.
 
