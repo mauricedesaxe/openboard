@@ -1,6 +1,6 @@
 # Authentication and authorization
 
-Status: Decided on 2026-08-08 in
+Status: Authentication and authorization boundary decided on 2026-08-08 in
 [issue #10](https://github.com/mauricedesaxe/openboard/issues/10).
 
 ## Decision
@@ -48,7 +48,11 @@ OpenBoard then links the submission speaker to their `PrincipalId`; authorizatio
 on email matching.
 
 Before claim, the submission owner or an organizer can correct the invited address and reissue the
-invitation. The first version does not link several verified email addresses to one principal.
+invitation. Correction or reissue atomically advances its version only while the submission speaker
+remains unclaimed, invalidating every earlier invitation link. A claim atomically links the principal
+only when that invitation version is current and the submission speaker remains unclaimed. This
+prevents stale invitations or concurrent claimants from linking a principal to the relationship. The
+first version does not link several verified email addresses to one principal.
 
 ### Organizers and reviewers
 
