@@ -96,7 +96,8 @@ The current outcome for one submission: pending, internally queued for acceptanc
 published as accepted or declined.
 
 **Track**:
-A topic grouping assigned to a submission and inherited by its program item.
+The one topic grouping assigned to a submission and inherited by its program item. Agenda placement
+does not reassign it.
 _Avoid_: Category
 
 **Room**:
