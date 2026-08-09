@@ -123,11 +123,13 @@ blocks across times, rooms, and tracks.
 _Avoid_: Calendar, timetable
 
 **Working agenda**:
-The private agenda organizers are still preparing.
+The private agenda organizers are still preparing. It may temporarily contain room or speaker
+conflicts while organizers arrange its items.
 _Avoid_: Draft schedule
 
 **Published agenda**:
-The public projection of agenda information that organizers have deliberately released.
+The public projection of agenda information that organizers have deliberately released. Publication
+requires the working agenda to have no room or speaker conflicts.
 _Avoid_: Live agenda
 
 **Calendar sync state**:
@@ -142,6 +144,10 @@ its first assignment.
 One required or optional obligation created from a task definition. Completion is derived from
 current-revision manual confirmation, profile data, form response, stored file, waiver, or organizer
 override evidence rather than a stored completed flag.
+
+**Task evidence**:
+One append-only record supporting completion of one task assignment revision through manual
+confirmation, profile data, a form response, a stored file, a waiver, or an organizer override.
 
 **Event-speaker task**:
 A task one user completes once for one event.
