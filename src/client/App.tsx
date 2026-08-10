@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
   Link,
@@ -32,6 +32,7 @@ import {
   type EventInput,
 } from "../shared/events";
 import {
+  proposalContentSchema,
   proposalDraftSchema,
   type ProposalContent,
   type ProposalDraft,
@@ -58,6 +59,7 @@ export function App() {
 
 function SessionApp() {
   const session = authClient.useSession();
+  const location = useLocation();
 
   if (session.isPending) {
     return <FullPageStatus label="Opening your board" />;
@@ -88,7 +90,10 @@ function SessionApp() {
           session.data ? (
             <AuthenticatedApp email={session.data.user.email} />
           ) : (
-            <Navigate to="/sign-in" replace />
+            <Navigate
+              to={`/sign-in?returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`}
+              replace
+            />
           )
         }
       />
@@ -1478,7 +1483,7 @@ function CfpBuilder({
             This form is locked because it already has a final submission.
           </p>
         )}
-        <fieldset className="builder-fields" disabled={cfp?.structureLocked}>
+        <fieldset className="builder-fields">
           <div className="field-pair">
             <Field label="CFP name" name={`cfp-name-${formId}`}>
               <input
@@ -1525,6 +1530,7 @@ function CfpBuilder({
             name={`cfp-formats-${formId}`}
           >
             <input
+              disabled={cfp?.structureLocked}
               id={`cfp-formats-${formId}`}
               value={definition.formats.join(", ")}
               onChange={(event) =>
@@ -1548,23 +1554,33 @@ function CfpBuilder({
               <p>Add only the information this event needs.</p>
             </div>
             <div className="field-type-actions">
-              <button type="button" onClick={() => addField("short_text")}>
+              <button
+                disabled={cfp?.structureLocked}
+                type="button"
+                onClick={() => addField("short_text")}
+              >
                 + Short text
               </button>
-              <button type="button" onClick={() => addField("long_text")}>
+              <button
+                disabled={cfp?.structureLocked}
+                type="button"
+                onClick={() => addField("long_text")}
+              >
                 + Long text
               </button>
-              <button type="button" onClick={() => addField("single_select")}>
+              <button
+                disabled={cfp?.structureLocked}
+                type="button"
+                onClick={() => addField("single_select")}
+              >
                 + Single select
-              </button>
-              <button type="button" onClick={() => addField("file")}>
-                + File
               </button>
             </div>
           </div>
           {definition.customFields.map((field, index) => (
             <CustomFieldEditor
               allFields={definition.customFields}
+              disabled={cfp?.structureLocked ?? false}
               field={field}
               idPrefix={formId}
               index={index}
@@ -1594,9 +1610,7 @@ function CfpBuilder({
         <div className="builder-actions">
           <button
             className="primary-button"
-            disabled={
-              cfp?.structureLocked || create.isPending || update.isPending
-            }
+            disabled={create.isPending || update.isPending}
             type="submit"
           >
             {cfp ? "Save form" : "Create draft"}
@@ -1623,6 +1637,7 @@ function CfpBuilder({
 }
 
 function CustomFieldEditor({
+  disabled,
   field,
   idPrefix,
   index,
@@ -1631,6 +1646,7 @@ function CustomFieldEditor({
   onChange,
   onRemove,
 }: {
+  disabled: boolean;
   field: CustomField;
   idPrefix: string;
   index: number;
@@ -1646,7 +1662,7 @@ function CustomFieldEditor({
   );
   const fieldId = (name: string) => `${idPrefix}-${name}-${index}`;
   return (
-    <fieldset className="custom-field-card">
+    <fieldset className="custom-field-card" disabled={disabled}>
       <legend>{field.type.replace("_", " ")}</legend>
       {validationMessage && (
         <p className="form-error" role="alert">
@@ -1789,17 +1805,17 @@ function SubmissionPage() {
   const submission = useQuery(
     trpc.submissions.getOwn.queryOptions(submissionInput),
   );
-  const cfp = useQuery(
-    trpc.cfps.publicByEventSlug.queryOptions(
-      { slug: submission.data?.event.slug ?? "unavailable" },
-      { enabled: Boolean(submission.data), retry: false },
-    ),
-  );
-  const [content, setContent] = useState<ProposalContent>();
+  const [editState, setEditState] = useState<{
+    submissionId: string;
+    content: ProposalContent;
+  }>();
   const update = useMutation(
     trpc.submissions.updateOwn.mutationOptions({
       onSuccess: async (saved) => {
-        setContent(submissionContent(saved));
+        setEditState({
+          submissionId: saved.id,
+          content: submissionContent(saved),
+        });
         await queryClient.invalidateQueries(
           trpc.submissions.getOwn.queryFilter(submissionInput),
         );
@@ -1827,15 +1843,26 @@ function SubmissionPage() {
       </div>
     );
 
-  const active = submission.data.status === "active";
-  const editable = active && submission.data.decision.status === "pending";
-  const initialContent = submissionContent(submission.data);
-  const currentContent = content ?? initialContent;
+  const loadedSubmission = submission.data;
+  const active = loadedSubmission.status === "active";
+  const initialContent = submissionContent(loadedSubmission);
+  const currentContent =
+    editState?.submissionId === submission.data.id
+      ? editState.content
+      : initialContent;
+  const editable = submission.data.permissions.canEdit;
 
   function changeContent(
     update: (current: ProposalContent) => ProposalContent,
   ) {
-    setContent((current) => update(current ?? initialContent));
+    setEditState((current) => ({
+      submissionId: loadedSubmission.id,
+      content: update(
+        current?.submissionId === loadedSubmission.id
+          ? current.content
+          : initialContent,
+      ),
+    }));
   }
 
   function save(event: FormEvent) {
@@ -1859,133 +1886,141 @@ function SubmissionPage() {
             {submission.data.event.name} · {submission.data.cfp.name}
           </p>
         </div>
-        <div className={`submission-state ${active ? "active" : "withdrawn"}`}>
-          {active ? "Confirmation recorded" : "Withdrawn"}
+        <div className="submission-state-group">
+          <span
+            className={`submission-state ${active ? "active" : "withdrawn"}`}
+          >
+            {submission.data.status}
+          </span>
+          <span className="submission-state">
+            Decision: {submission.data.decision.status.replace("_", " ")}
+          </span>
+          <span className="submission-state">
+            Confirmation: {submission.data.confirmation.status}
+          </span>
         </div>
       </section>
       {currentContent && (
         <section className="form-board submission-form">
           <form onSubmit={save}>
             <div className="eyebrow">Your proposal</div>
-            <div className="field-pair">
-              <Field label="Title" name="submission-title">
-                <input
-                  disabled={!editable}
-                  id="submission-title"
+            <fieldset
+              className="submission-fields"
+              disabled={!editable || update.isPending}
+            >
+              <div className="field-pair">
+                <Field label="Title" name="submission-title">
+                  <input
+                    id="submission-title"
+                    required
+                    value={currentContent.title}
+                    onChange={(event) =>
+                      changeContent((current) => ({
+                        ...current,
+                        title: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+                <Field label="Track" name="submission-track">
+                  <select
+                    id="submission-track"
+                    required
+                    value={currentContent.trackId}
+                    onChange={(event) =>
+                      changeContent((current) => ({
+                        ...current,
+                        trackId: event.target
+                          .value as ProposalContent["trackId"],
+                      }))
+                    }
+                  >
+                    {submission.data.form.tracks.map((track) => (
+                      <option key={track.id} value={track.id}>
+                        {track.name}
+                        {track.archived ? " (archived)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <Field label="Abstract" name="submission-abstract">
+                <textarea
+                  id="submission-abstract"
                   required
-                  value={currentContent.title}
+                  value={currentContent.abstract}
                   onChange={(event) =>
                     changeContent((current) => ({
                       ...current,
-                      title: event.target.value,
+                      abstract: event.target.value,
                     }))
                   }
                 />
               </Field>
-              <Field label="Track" name="submission-track">
-                <select
-                  disabled={!editable || !cfp.data}
-                  id="submission-track"
-                  required
-                  value={currentContent.trackId}
-                  onChange={(event) =>
-                    changeContent((current) => ({
-                      ...current,
-                      trackId: event.target.value as ProposalContent["trackId"],
-                    }))
-                  }
-                >
-                  {(cfp.data?.tracks ?? [submission.data.track]).map(
-                    (track) => (
-                      <option key={track.id} value={track.id}>
-                        {track.name}
-                      </option>
-                    ),
-                  )}
-                </select>
-              </Field>
-            </div>
-            <Field label="Abstract" name="submission-abstract">
-              <textarea
-                disabled={!editable}
-                id="submission-abstract"
-                required
-                value={currentContent.abstract}
-                onChange={(event) =>
-                  changeContent((current) => ({
-                    ...current,
-                    abstract: event.target.value,
-                  }))
-                }
-              />
-            </Field>
-            <div className="field-pair">
-              <Field label="Format" name="submission-format">
-                <select
-                  disabled={!editable || !cfp.data}
-                  id="submission-format"
-                  required
-                  value={currentContent.format}
-                  onChange={(event) =>
-                    changeContent((current) => ({
-                      ...current,
-                      format: event.target.value,
-                    }))
-                  }
-                >
-                  {(cfp.data?.formats ?? [submission.data.format]).map(
-                    (format) => (
+              <div className="field-pair">
+                <Field label="Format" name="submission-format">
+                  <select
+                    id="submission-format"
+                    required
+                    value={currentContent.format}
+                    onChange={(event) =>
+                      changeContent((current) => ({
+                        ...current,
+                        format: event.target.value,
+                      }))
+                    }
+                  >
+                    {submission.data.form.formats.map((format) => (
                       <option key={format}>{format}</option>
-                    ),
-                  )}
-                </select>
-              </Field>
-              <Field label="Proposed speaker" name="submission-speaker">
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Proposed speaker" name="submission-speaker">
+                  <input
+                    id="submission-speaker"
+                    required
+                    value={currentContent.proposedSpeakers[0]?.name ?? ""}
+                    onChange={(event) =>
+                      changeContent((current) => ({
+                        ...current,
+                        proposedSpeakers: [
+                          {
+                            name: event.target.value,
+                            email: current.proposedSpeakers[0]?.email ?? "",
+                          },
+                          ...current.proposedSpeakers.slice(1),
+                        ],
+                      }))
+                    }
+                  />
+                </Field>
+              </div>
+              <Field label="Speaker email" name="submission-speaker-email">
                 <input
-                  disabled={!editable}
-                  id="submission-speaker"
+                  id="submission-speaker-email"
                   required
-                  value={currentContent.proposedSpeakers[0]?.name ?? ""}
+                  type="email"
+                  value={currentContent.proposedSpeakers[0]?.email ?? ""}
                   onChange={(event) =>
                     changeContent((current) => ({
                       ...current,
                       proposedSpeakers: [
                         {
-                          name: event.target.value,
-                          email: current.proposedSpeakers[0]?.email ?? "",
+                          name: current.proposedSpeakers[0]?.name ?? "",
+                          email: event.target.value,
                         },
+                        ...current.proposedSpeakers.slice(1),
                       ],
                     }))
                   }
                 />
               </Field>
-            </div>
-            <Field label="Speaker email" name="submission-speaker-email">
-              <input
-                disabled={!editable}
-                id="submission-speaker-email"
-                required
-                type="email"
-                value={currentContent.proposedSpeakers[0]?.email ?? ""}
-                onChange={(event) =>
-                  changeContent((current) => ({
-                    ...current,
-                    proposedSpeakers: [
-                      {
-                        name: current.proposedSpeakers[0]?.name ?? "",
-                        email: event.target.value,
-                      },
-                    ],
-                  }))
-                }
-              />
-            </Field>
-            {cfp.data &&
-              visibleCustomFields(
-                cfp.data.customFields,
+              {visibleCustomFields(
+                submission.data.form.customFields,
                 currentContent.customAnswers,
               ).map((field) => (
                 <PublicCustomField
+                  disabled={!editable || update.isPending}
                   field={field}
                   key={field.key}
                   value={currentContent.customAnswers[field.key] ?? ""}
@@ -2000,32 +2035,35 @@ function SubmissionPage() {
                   }
                 />
               ))}
+            </fieldset>
             {(update.error || withdraw.error) && (
               <p className="form-error" role="alert">
                 {update.error?.message ?? withdraw.error?.message}
               </p>
             )}
-            {editable && (
+            {(editable || submission.data.permissions.canWithdraw) && (
               <div className="submission-actions">
                 <button
                   className="primary-button"
-                  disabled={update.isPending || cfp.isPending}
+                  disabled={!editable || update.isPending}
                   type="submit"
                 >
                   {update.isPending ? "Saving…" : "Save proposal"}
                 </button>
-                <button
-                  className="text-button danger-button"
-                  disabled={withdraw.isPending}
-                  onClick={() =>
-                    withdraw.mutate({
-                      submissionId: submissionInput.submissionId,
-                    })
-                  }
-                  type="button"
-                >
-                  {withdraw.isPending ? "Withdrawing…" : "Withdraw proposal"}
-                </button>
+                {submission.data.permissions.canWithdraw && (
+                  <button
+                    className="text-button danger-button"
+                    disabled={withdraw.isPending}
+                    onClick={() =>
+                      withdraw.mutate({
+                        submissionId: submissionInput.submissionId,
+                      })
+                    }
+                    type="button"
+                  >
+                    {withdraw.isPending ? "Withdrawing…" : "Withdraw proposal"}
+                  </button>
+                )}
               </div>
             )}
           </form>
@@ -2049,12 +2087,16 @@ function PublicCfpPage() {
   const [draft, setDraft] = useState<ProposalDraft>(() =>
     loadProposalDraft(slug),
   );
+  const [proposalError, setProposalError] = useState<string>();
   const draftKey = proposalDraftKey(slug);
   const submit = useMutation(
     trpc.submissions.submit.mutationOptions({
       onSuccess: (submission) => {
         if (draftKey) window.localStorage.removeItem(draftKey);
         void navigate(`/submissions/${submission.id}`);
+      },
+      onError: () => {
+        setDraft((current) => ({ ...current, submitAfterSignIn: false }));
       },
     }),
   );
@@ -2063,6 +2105,58 @@ function PublicCfpPage() {
   useEffect(() => {
     window.localStorage.setItem(draftKey, JSON.stringify(draft));
   }, [draft, draftKey]);
+
+  function proposalInput() {
+    if (!cfp.data) {
+      return {
+        ok: false as const,
+        message: "The proposal form is unavailable.",
+      };
+    }
+    const parsed = proposalContentSchema.safeParse({
+      title: coreAnswers.title,
+      abstract: coreAnswers.abstract,
+      format: coreAnswers.format,
+      trackId: coreAnswers.track,
+      proposedSpeakers: [
+        { name: coreAnswers.speakerName, email: coreAnswers.speakerEmail },
+      ],
+      customAnswers,
+    });
+    if (!parsed.success) {
+      return {
+        ok: false as const,
+        message:
+          parsed.error.issues[0]?.message ??
+          "Check the proposal before submitting.",
+      };
+    }
+    return {
+      ok: true as const,
+      value: {
+        slug,
+        cfpId: cfp.data.cfpId,
+        clientDraftId: draft.clientDraftId,
+        ...parsed.data,
+      },
+    };
+  }
+
+  const finishPendingSubmission = useEffectEvent(() => {
+    const parsed = proposalInput();
+    if (parsed.ok) submit.mutate(parsed.value);
+  });
+
+  useEffect(() => {
+    if (
+      draft.submitAfterSignIn &&
+      session.data &&
+      cfp.data &&
+      !submit.isPending
+    ) {
+      finishPendingSubmission();
+    }
+  }, [cfp.data, draft.submitAfterSignIn, session.data, submit.isPending]);
 
   function setStep(update: number | ((current: number) => number)) {
     setDraft((current) => ({
@@ -2100,26 +2194,23 @@ function PublicCfpPage() {
       return;
     }
 
+    const parsed = proposalInput();
+    if (!parsed.ok) {
+      setProposalError(parsed.message);
+      return;
+    }
+    setProposalError(undefined);
+
     if (!session.data) {
       const returnTo = `/events/${slug}/cfp`;
+      const pendingDraft = { ...draft, submitAfterSignIn: true };
+      setDraft(pendingDraft);
+      window.localStorage.setItem(draftKey, JSON.stringify(pendingDraft));
       void navigate(`/sign-in?returnTo=${encodeURIComponent(returnTo)}`);
       return;
     }
 
-    if (!cfp.data) return;
-    submit.mutate({
-      slug,
-      cfpId: cfp.data.cfpId,
-      clientDraftId: draft.clientDraftId,
-      title: coreAnswers.title,
-      abstract: coreAnswers.abstract,
-      format: coreAnswers.format,
-      trackId: coreAnswers.track,
-      proposedSpeakers: [
-        { name: coreAnswers.speakerName, email: coreAnswers.speakerEmail },
-      ],
-      customAnswers,
-    });
+    submit.mutate(parsed.value);
   }
 
   if (cfp.isPending)
@@ -2272,6 +2363,7 @@ function PublicCfpPage() {
                 {visibleCustomFields(cfp.data.customFields, customAnswers).map(
                   (field) => (
                     <PublicCustomField
+                      disabled={false}
                       field={field}
                       key={field.key}
                       value={customAnswers[field.key] ?? ""}
@@ -2320,9 +2412,9 @@ function PublicCfpPage() {
                 </button>
               )}
             </div>
-            {submit.error && (
+            {(proposalError || submit.error) && (
               <p className="form-error" role="alert">
-                {submit.error.message}
+                {proposalError ?? submit.error?.message}
               </p>
             )}
           </form>
@@ -2333,10 +2425,12 @@ function PublicCfpPage() {
 }
 
 function PublicCustomField({
+  disabled,
   field,
   value,
   onChange,
 }: {
+  disabled: boolean;
   field: CustomField;
   value: string;
   onChange: (value: string) => void;
@@ -2345,6 +2439,7 @@ function PublicCustomField({
     return (
       <Field label={field.label} name={field.key}>
         <textarea
+          disabled={disabled}
           id={field.key}
           required={field.required}
           value={value}
@@ -2356,6 +2451,7 @@ function PublicCustomField({
     return (
       <Field label={field.label} name={field.key}>
         <select
+          disabled={disabled}
           id={field.key}
           required={field.required}
           value={value}
@@ -2377,6 +2473,7 @@ function PublicCustomField({
       >
         <input
           accept={field.acceptedTypes.join(",")}
+          disabled
           id={field.key}
           required={field.required}
           type="file"
@@ -2386,6 +2483,7 @@ function PublicCustomField({
   return (
     <Field label={field.label} name={field.key}>
       <input
+        disabled={disabled}
         id={field.key}
         required={field.required}
         value={value}
@@ -2409,6 +2507,7 @@ function emptyCfpDefinition(): CfpDefinitionInput {
 function emptyProposalDraft(): ProposalDraft {
   return {
     clientDraftId: crypto.randomUUID(),
+    submitAfterSignIn: false,
     step: 0,
     coreAnswers: {
       abstract: "",

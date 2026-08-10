@@ -1,4 +1,13 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  exists,
+  inArray,
+  isNull,
+  notInArray,
+  or,
+} from "drizzle-orm";
 
 import {
   customFieldsSchema,
@@ -28,6 +37,7 @@ import {
 
 type ProposalWriteError =
   | "cfp_unavailable"
+  | "cfp_changed"
   | "deadline_passed"
   | "invalid_answers"
   | "invalid_format"
@@ -83,6 +93,7 @@ export async function submitProposal(
         id: submissionId,
         eventId: validated.eventId,
         cfpId: input.cfpId,
+        cfpRevision: validated.revision,
         ownerUserId,
         clientDraftId: input.clientDraftId,
         trackId: input.trackId,
@@ -90,6 +101,13 @@ export async function submitProposal(
         abstract: input.abstract,
         format: input.format,
         status: "active",
+        createdAt: now,
+        updatedAt: now,
+      }),
+      database.insert(decisions).values({
+        id: crypto.randomUUID(),
+        submissionId,
+        status: "pending",
         createdAt: now,
         updatedAt: now,
       }),
@@ -112,13 +130,6 @@ export async function submitProposal(
         createdAt: now,
         updatedAt: now,
       }),
-      database.insert(decisions).values({
-        id: crypto.randomUUID(),
-        submissionId,
-        status: "pending",
-        createdAt: now,
-        updatedAt: now,
-      }),
       database.insert(communications).values({
         id: crypto.randomUUID(),
         submissionId,
@@ -133,6 +144,9 @@ export async function submitProposal(
         .where(eq(cfps.id, input.cfpId)),
     ]);
   } catch (error: unknown) {
+    if (String(error).includes("stale_cfp")) {
+      return { ok: false, error: "cfp_changed" };
+    }
     if (String(error).includes("UNIQUE constraint failed")) {
       const [raced] = await database
         .select({ id: submissions.id })
@@ -185,6 +199,10 @@ export async function findOwnSubmission(
       eventSlug: events.slug,
       cfpId: cfps.id,
       cfpName: cfps.name,
+      deadline: cfps.deadline,
+      formatsJson: cfps.formatsJson,
+      customFieldsJson: cfps.customFieldsJson,
+      eventId: events.id,
       trackId: tracks.id,
       trackName: tracks.name,
       answersJson: formResponses.answersJson,
@@ -227,6 +245,22 @@ export async function findOwnSubmission(
       ),
     )
     .orderBy(submissionSpeakers.position);
+  const formTracks = await database
+    .select({
+      id: tracks.id,
+      name: tracks.name,
+      archivedAt: tracks.archivedAt,
+    })
+    .from(tracks)
+    .where(
+      and(
+        eq(tracks.eventId, row.eventId),
+        or(isNull(tracks.archivedAt), eq(tracks.id, row.trackId)),
+      ),
+    )
+    .orderBy(tracks.position);
+  const published = isPublished(row.decisionStatus);
+  const active = row.status === "active";
 
   return submissionSchema.parse({
     id: row.id,
@@ -237,10 +271,24 @@ export async function findOwnSubmission(
     abstract: row.abstract,
     format: row.format,
     track: { id: row.trackId, name: row.trackName },
+    form: {
+      deadline: row.deadline,
+      formats: JSON.parse(row.formatsJson) as unknown,
+      tracks: formTracks.map((track) => ({
+        id: track.id,
+        name: track.name,
+        archived: track.archivedAt !== null,
+      })),
+      customFields: JSON.parse(row.customFieldsJson) as unknown,
+    },
     proposedSpeakers: speakers,
     customAnswers: JSON.parse(row.answersJson) as unknown,
     decision: { status: row.decisionStatus },
     confirmation: { status: row.communicationId ? "recorded" : undefined },
+    permissions: {
+      canEdit: active && !published && new Date(row.deadline) > new Date(),
+      canWithdraw: active && !published,
+    },
   });
 }
 
@@ -285,7 +333,7 @@ export async function updateOwnSubmission(
     )
     .limit(1);
   if (!current) return { ok: false, error: "not_found" };
-  if (current.status !== "active" || current.decisionStatus !== "pending") {
+  if (current.status !== "active" || isPublished(current.decisionStatus)) {
     return { ok: false, error: "submission_closed" };
   }
 
@@ -299,7 +347,7 @@ export async function updateOwnSubmission(
 
   const now = new Date();
   try {
-    await database.batch([
+    const [root] = await database.batch([
       database
         .update(submissions)
         .set({
@@ -314,6 +362,37 @@ export async function updateOwnSubmission(
             eq(submissions.id, submissionId),
             eq(submissions.ownerUserId, ownerUserId),
             eq(submissions.status, "active"),
+            exists(
+              database
+                .select({ id: decisions.id })
+                .from(decisions)
+                .where(
+                  and(
+                    eq(decisions.submissionId, submissionId),
+                    notInArray(decisions.status, ["accepted", "declined"]),
+                  ),
+                ),
+            ),
+            exists(
+              database
+                .select({ id: cfps.id })
+                .from(cfps)
+                .innerJoin(
+                  tracks,
+                  and(
+                    eq(tracks.id, input.trackId),
+                    eq(tracks.eventId, cfps.eventId),
+                    isNull(tracks.archivedAt),
+                  ),
+                )
+                .where(
+                  and(
+                    eq(cfps.id, current.cfpId),
+                    eq(cfps.status, "open"),
+                    eq(cfps.updatedAt, validated.revision),
+                  ),
+                ),
+            ),
           ),
         ),
       database
@@ -344,7 +423,13 @@ export async function updateOwnSubmission(
         })
         .where(eq(formResponses.submissionId, submissionId)),
     ]);
-  } catch {
+    if (root.meta.changes === 0) {
+      return { ok: false, error: "submission_closed" };
+    }
+  } catch (error: unknown) {
+    if (String(error).includes("submission_closed")) {
+      return { ok: false, error: "submission_closed" };
+    }
     return { ok: false, error: "persistence_failed" };
   }
 
@@ -375,22 +460,57 @@ export async function withdrawOwnSubmission(
     )
     .limit(1);
   if (!current) return { ok: false, error: "not_found" };
-  if (current.status !== "active" || current.decisionStatus !== "pending") {
+  if (current.status !== "active" || isPublished(current.decisionStatus)) {
     return { ok: false, error: "submission_closed" };
   }
 
   const now = new Date();
-  const result = await database
-    .update(submissions)
-    .set({ status: "withdrawn", withdrawnAt: now, updatedAt: now })
-    .where(
-      and(
-        eq(submissions.id, submissionId),
-        eq(submissions.ownerUserId, ownerUserId),
-        eq(submissions.status, "active"),
+  const [root] = await database.batch([
+    database
+      .update(submissions)
+      .set({ status: "withdrawn", withdrawnAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(submissions.id, submissionId),
+          eq(submissions.ownerUserId, ownerUserId),
+          eq(submissions.status, "active"),
+          exists(
+            database
+              .select({ id: decisions.id })
+              .from(decisions)
+              .where(
+                and(
+                  eq(decisions.submissionId, submissionId),
+                  notInArray(decisions.status, ["accepted", "declined"]),
+                ),
+              ),
+          ),
+        ),
       ),
-    );
-  if (result.meta.changes === 0) {
+    database
+      .update(decisions)
+      .set({ status: "pending", updatedAt: now })
+      .where(
+        and(
+          eq(decisions.submissionId, submissionId),
+          inArray(decisions.status, ["accept_queued", "decline_queued"]),
+          exists(
+            database
+              .select({ id: submissions.id })
+              .from(submissions)
+              .where(
+                and(
+                  eq(submissions.id, submissionId),
+                  eq(submissions.ownerUserId, ownerUserId),
+                  eq(submissions.status, "withdrawn"),
+                  eq(submissions.updatedAt, now),
+                ),
+              ),
+          ),
+        ),
+      ),
+  ]);
+  if (root.meta.changes === 0) {
     return { ok: false, error: "submission_closed" };
   }
 
@@ -410,7 +530,12 @@ async function validateProposal(
   cfpId: string,
   input: ProposalContent,
 ): Promise<
-  | { ok: true; eventId: string; answers: Record<string, string> }
+  | {
+      ok: true;
+      eventId: string;
+      revision: Date;
+      answers: Record<string, string>;
+    }
   | { ok: false; error: ProposalWriteError }
 > {
   const [definition] = await database
@@ -419,6 +544,7 @@ async function validateProposal(
       deadline: cfps.deadline,
       formatsJson: cfps.formatsJson,
       customFieldsJson: cfps.customFieldsJson,
+      updatedAt: cfps.updatedAt,
       trackId: tracks.id,
     })
     .from(cfps)
@@ -455,24 +581,31 @@ async function validateProposal(
   }
 
   const fieldKeys = new Set(fields.data.map((field) => field.key));
-  if (Object.keys(answers.data).some((key) => !fieldKeys.has(key))) {
-    return { ok: false, error: "invalid_answers" };
-  }
-  const visible = visibleCustomFields(fields.data, answers.data);
-  if (visible.some((field) => !validAnswer(field, answers.data[field.key]))) {
+  const currentAnswers = Object.fromEntries(
+    Object.entries(answers.data)
+      .filter(([key]) => fieldKeys.has(key))
+      .map(([key, value]) => [key, value.trim()]),
+  );
+  const visible = visibleCustomFields(fields.data, currentAnswers);
+  if (visible.some((field) => !validAnswer(field, currentAnswers[field.key]))) {
     return { ok: false, error: "invalid_answers" };
   }
 
   return {
     ok: true,
     eventId: definition.eventId,
+    revision: definition.updatedAt,
     answers: Object.fromEntries(
       visible.flatMap((field) => {
-        const value = answers.data[field.key]?.trim();
+        const value = currentAnswers[field.key];
         return value ? [[field.key, value]] : [];
       }),
     ),
   };
+}
+
+function isPublished(status: typeof decisions.$inferSelect.status): boolean {
+  return status === "accepted" || status === "declined";
 }
 
 function validAnswer(field: CustomField, value: string | undefined): boolean {
