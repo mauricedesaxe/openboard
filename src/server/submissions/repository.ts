@@ -7,6 +7,7 @@ import {
   isNull,
   notInArray,
   or,
+  sql,
 } from "drizzle-orm";
 
 import {
@@ -390,6 +391,7 @@ export async function updateOwnSubmission(
                     eq(cfps.id, current.cfpId),
                     eq(cfps.status, "open"),
                     eq(cfps.updatedAt, validated.revision),
+                    sql`julianday(${cfps.deadline}) > julianday('now')`,
                   ),
                 ),
             ),
@@ -465,51 +467,56 @@ export async function withdrawOwnSubmission(
   }
 
   const now = new Date();
-  const [root] = await database.batch([
-    database
-      .update(submissions)
-      .set({ status: "withdrawn", withdrawnAt: now, updatedAt: now })
-      .where(
-        and(
-          eq(submissions.id, submissionId),
-          eq(submissions.ownerUserId, ownerUserId),
-          eq(submissions.status, "active"),
-          exists(
-            database
-              .select({ id: decisions.id })
-              .from(decisions)
-              .where(
-                and(
-                  eq(decisions.submissionId, submissionId),
-                  notInArray(decisions.status, ["accepted", "declined"]),
+  let root;
+  try {
+    [root] = await database.batch([
+      database
+        .update(submissions)
+        .set({ status: "withdrawn", withdrawnAt: now, updatedAt: now })
+        .where(
+          and(
+            eq(submissions.id, submissionId),
+            eq(submissions.ownerUserId, ownerUserId),
+            eq(submissions.status, "active"),
+            exists(
+              database
+                .select({ id: decisions.id })
+                .from(decisions)
+                .where(
+                  and(
+                    eq(decisions.submissionId, submissionId),
+                    notInArray(decisions.status, ["accepted", "declined"]),
+                  ),
                 ),
-              ),
+            ),
           ),
         ),
-      ),
-    database
-      .update(decisions)
-      .set({ status: "pending", updatedAt: now })
-      .where(
-        and(
-          eq(decisions.submissionId, submissionId),
-          inArray(decisions.status, ["accept_queued", "decline_queued"]),
-          exists(
-            database
-              .select({ id: submissions.id })
-              .from(submissions)
-              .where(
-                and(
-                  eq(submissions.id, submissionId),
-                  eq(submissions.ownerUserId, ownerUserId),
-                  eq(submissions.status, "withdrawn"),
-                  eq(submissions.updatedAt, now),
+      database
+        .update(decisions)
+        .set({ status: "pending", updatedAt: now })
+        .where(
+          and(
+            eq(decisions.submissionId, submissionId),
+            inArray(decisions.status, ["accept_queued", "decline_queued"]),
+            exists(
+              database
+                .select({ id: submissions.id })
+                .from(submissions)
+                .where(
+                  and(
+                    eq(submissions.id, submissionId),
+                    eq(submissions.ownerUserId, ownerUserId),
+                    eq(submissions.status, "withdrawn"),
+                    eq(submissions.updatedAt, now),
+                  ),
                 ),
-              ),
+            ),
           ),
         ),
-      ),
-  ]);
+    ]);
+  } catch {
+    return { ok: false, error: "persistence_failed" };
+  }
   if (root.meta.changes === 0) {
     return { ok: false, error: "submission_closed" };
   }
@@ -567,7 +574,9 @@ async function validateProposal(
   }
   if (!definition.trackId) return { ok: false, error: "invalid_track" };
 
-  const formats = zStringArray(JSON.parse(definition.formatsJson) as unknown);
+  const formats = parseStringArray(
+    JSON.parse(definition.formatsJson) as unknown,
+  );
   if (!formats?.includes(input.format)) {
     return { ok: false, error: "invalid_format" };
   }
@@ -614,7 +623,7 @@ function validAnswer(field: CustomField, value: string | undefined): boolean {
   return field.type !== "single_select" || field.options.includes(answer);
 }
 
-function zStringArray(value: unknown): string[] | undefined {
+function parseStringArray(value: unknown): string[] | undefined {
   return Array.isArray(value) && value.every((item) => typeof item === "string")
     ? value
     : undefined;

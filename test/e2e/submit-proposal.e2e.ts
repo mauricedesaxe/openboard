@@ -24,7 +24,17 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
     .fill("This browser workflow keeps every local answer through sign-in.");
   await page.getByLabel("Format").selectOption("Talk");
   await page.getByLabel("Track").selectOption({ label: "Web systems" });
+  const proposalStepStartedAt = await page.evaluate(() => performance.now());
   await page.getByRole("button", { name: "Continue" }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Proposed speaker name" }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      (startedAt) => performance.now() - startedAt,
+      proposalStepStartedAt,
+    ),
+  ).toBeLessThan(400);
   expect(trpcRequests).toEqual([]);
 
   await page
@@ -33,7 +43,15 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   await page
     .getByRole("textbox", { name: "Proposed speaker email" })
     .fill(`browser-speaker-${suffix}@example.com`);
+  const speakerStepStartedAt = await page.evaluate(() => performance.now());
   await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByLabel("Audience")).toBeVisible();
+  expect(
+    await page.evaluate(
+      (startedAt) => performance.now() - startedAt,
+      speakerStepStartedAt,
+    ),
+  ).toBeLessThan(400);
   await page.getByLabel("Audience").selectOption("Experienced");
   await page
     .getByRole("textbox", { name: "Workshop requirements" })
