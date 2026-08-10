@@ -16,7 +16,6 @@ import {
   conditionSourceFields,
   nextCustomFieldKey,
   removeCustomField,
-  replaceCustomField,
   visibleCustomFields,
   type CfpDefinitionInput,
   type CustomField,
@@ -1383,7 +1382,9 @@ function CfpBuilder({
   function updateField(index: number, field: CustomField) {
     setDefinition((current) => ({
       ...current,
-      customFields: replaceCustomField(current.customFields, index, field),
+      customFields: current.customFields.map((currentField, fieldIndex) =>
+        fieldIndex === index ? field : currentField,
+      ),
     }));
   }
 
@@ -1592,26 +1593,15 @@ function CustomFieldEditor({
           {validationMessage}
         </p>
       )}
-      <div className="field-pair">
-        <Field label="Field key" name={fieldId("field-key")}>
-          <input
-            id={fieldId("field-key")}
-            value={field.key}
-            onChange={(event) =>
-              onChange({ ...field, key: event.target.value })
-            }
-          />
-        </Field>
-        <Field label="Label" name={fieldId("field-label")}>
-          <input
-            id={fieldId("field-label")}
-            value={field.label}
-            onChange={(event) =>
-              onChange({ ...field, label: event.target.value })
-            }
-          />
-        </Field>
-      </div>
+      <Field label="Label" name={fieldId("field-label")}>
+        <input
+          id={fieldId("field-label")}
+          value={field.label}
+          onChange={(event) =>
+            onChange({ ...field, label: event.target.value })
+          }
+        />
+      </Field>
       {field.type === "single_select" && (
         <Field
           hint="Separate options with commas"
@@ -1805,7 +1795,7 @@ function PublicCfpPage() {
                 <Field label="Title" name="public-title">
                   <input
                     id="public-title"
-                    required
+                    required={cfp.data.coreFields.title.required}
                     value={coreAnswers.title}
                     onChange={(event) =>
                       setCoreAnswers((current) => ({
@@ -1818,7 +1808,7 @@ function PublicCfpPage() {
                 <Field label="Abstract" name="public-abstract">
                   <textarea
                     id="public-abstract"
-                    required
+                    required={cfp.data.coreFields.abstract.required}
                     value={coreAnswers.abstract}
                     onChange={(event) =>
                       setCoreAnswers((current) => ({
@@ -1832,7 +1822,7 @@ function PublicCfpPage() {
                   <Field label="Format" name="public-format">
                     <select
                       id="public-format"
-                      required
+                      required={cfp.data.coreFields.format.required}
                       value={coreAnswers.format}
                       onChange={(event) =>
                         setCoreAnswers((current) => ({
@@ -1850,7 +1840,7 @@ function PublicCfpPage() {
                   <Field label="Track" name="public-track">
                     <select
                       id="public-track"
-                      required
+                      required={cfp.data.coreFields.track.required}
                       value={coreAnswers.track}
                       onChange={(event) =>
                         setCoreAnswers((current) => ({
@@ -1877,7 +1867,7 @@ function PublicCfpPage() {
                 <Field label="Proposed speaker name" name="speaker-name">
                   <input
                     id="speaker-name"
-                    required
+                    required={cfp.data.coreFields.proposedSpeakers.required}
                     value={coreAnswers.speakerName}
                     onChange={(event) =>
                       setCoreAnswers((current) => ({
@@ -1890,7 +1880,7 @@ function PublicCfpPage() {
                 <Field label="Proposed speaker email" name="speaker-email">
                   <input
                     id="speaker-email"
-                    required
+                    required={cfp.data.coreFields.proposedSpeakers.required}
                     type="email"
                     value={coreAnswers.speakerEmail}
                     onChange={(event) =>

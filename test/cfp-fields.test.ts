@@ -3,7 +3,6 @@ import { describe, expect, test } from "vitest";
 import {
   nextCustomFieldKey,
   removeCustomField,
-  replaceCustomField,
   type CustomField,
   visibleCustomFields,
 } from "../src/shared/cfps";
@@ -49,7 +48,7 @@ describe("conditional CFP fields", () => {
     ).toEqual(["audience"]);
   });
 
-  test("keeps generated keys and dependent conditions valid after edits", () => {
+  test("keeps generated keys and dependent conditions valid after removal", () => {
     const fields: CustomField[] = [
       {
         key: "question_1",
@@ -68,11 +67,6 @@ describe("conditional CFP fields", () => {
     ];
 
     expect(nextCustomFieldKey(fields)).toBe("question_2");
-    const renamed = replaceCustomField(fields, 0, {
-      ...fields[0]!,
-      key: "audience",
-    });
-    expect(renamed[1]?.condition?.fieldKey).toBe("audience");
-    expect(removeCustomField(renamed, 0)[0]?.condition).toBeUndefined();
+    expect(removeCustomField(fields, 0)[0]?.condition).toBeUndefined();
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import type { CfpFormContract } from "../src/shared/cfps";
+import { visibleCustomFields, type CfpFormContract } from "../src/shared/cfps";
 
 import { callTrpc, getResult, signIn, testEnvironment } from "./support";
 
@@ -351,6 +351,20 @@ describe("build and open a conditional CFP", () => {
       ],
     });
     expect(publicForm.customFields).toEqual(draftInput.customFields);
+    const selectedTrack = publicForm.tracks.find(
+      (track) => track.id === data.id,
+    );
+    expect(selectedTrack?.name).toBe("Data");
+    expect(
+      visibleCustomFields(publicForm.customFields, {
+        audience: "Beginner",
+      }).map((field) => field.key),
+    ).toEqual(["audience", "outline"]);
+    expect(
+      visibleCustomFields(publicForm.customFields, {
+        audience: "Experienced",
+      }).find((field) => field.key === "workshop_requirements"),
+    ).toMatchObject({ required: true });
     expect(
       (
         await callTrpc(
