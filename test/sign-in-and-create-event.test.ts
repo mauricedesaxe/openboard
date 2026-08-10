@@ -135,6 +135,9 @@ async function signIn(
 
   const setCookie = verify.headers.get("set-cookie");
   expect(setCookie).toBeTruthy();
+  expect(setCookie).toMatch(/;\s*HttpOnly/i);
+  expect(setCookie).toMatch(/;\s*SameSite=Lax/i);
+  expect(setCookie).toMatch(/;\s*Secure/i);
   const cookie = setCookie?.split(";", 1)[0] ?? "";
   const user = await testEnvironment.DB.prepare(
     "SELECT id FROM user WHERE email = ?",
@@ -149,6 +152,16 @@ async function signIn(
     headers: authHeaders,
   });
   expect(reusedCode.status).toBe(400);
+
+  for (let requestNumber = 0; requestNumber < 11; requestNumber += 1) {
+    const session = await workerFetch("/api/auth/get-session", {
+      headers: {
+        "CF-Connecting-IP": authHeaders["CF-Connecting-IP"],
+        Cookie: cookie,
+      },
+    });
+    expect(session.status).toBe(200);
+  }
 
   return { cookie, userId: user?.id ?? "" };
 }
@@ -188,5 +201,5 @@ function getResult<T>(response: TrpcResponse<T>): T {
 }
 
 function workerFetch(path: string, init?: RequestInit): Promise<Response> {
-  return worker.default.fetch(new Request(`http://localhost${path}`, init));
+  return worker.default.fetch(new Request(`https://localhost${path}`, init));
 }

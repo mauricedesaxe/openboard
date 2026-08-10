@@ -14,7 +14,7 @@
   ],
   "vars": {
     "APP_ENV": "test",
-    "APP_URL": "http://localhost",
+    "APP_URL": "https://localhost",
     "BETTER_AUTH_SECRET": "test-secret-that-is-at-least-thirty-two-characters",
     "EMAIL_TRANSPORT": "capture",
   },

@@ -39,7 +39,7 @@ export function createAuth({
     trustedOrigins: [new URL(config.appUrl).origin],
     rateLimit: {
       enabled: true,
-      max: 10,
+      max: 100,
       storage: "database",
       window: 60,
     },
@@ -87,23 +87,12 @@ async function sendAuthenticationCode(
     return;
   }
 
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.email.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: config.email.from,
-      to: [message.email],
-      subject: "Your OpenBoard sign-in code",
-      text: `Your OpenBoard sign-in code is ${message.otp}. It expires in five minutes.`,
-    }),
+  await config.email.sender.send({
+    from: { email: config.email.from, name: "OpenBoard" },
+    to: message.email,
+    subject: "Your OpenBoard sign-in code",
+    text: `Your OpenBoard sign-in code is ${message.otp}. It expires in five minutes.`,
   });
-
-  if (!response.ok) {
-    throw new Error(`Resend returned ${response.status}.`);
-  }
 }
 
 function normalizeEmail(email: string): string {

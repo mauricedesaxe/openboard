@@ -1,13 +1,30 @@
 import { z } from "zod";
 
-const rawConfigSchema = z.object({
+const commonConfigShape = {
   APP_ENV: z.enum(["local", "test", "preview", "production"]),
   APP_URL: z.url(),
   BETTER_AUTH_SECRET: z.string().min(32),
-  EMAIL_TRANSPORT: z.enum(["capture", "resend"]),
-  EMAIL_FROM: z.string().optional(),
-  RESEND_API_KEY: z.string().optional(),
-});
+};
+
+const rawConfigSchema = z.discriminatedUnion("EMAIL_TRANSPORT", [
+  z.object({
+    ...commonConfigShape,
+    EMAIL_TRANSPORT: z.literal("capture"),
+  }),
+  z.object({
+    ...commonConfigShape,
+    EMAIL: z.custom<SendEmail>(
+      (value) =>
+        typeof value === "object" &&
+        value !== null &&
+        "send" in value &&
+        typeof value.send === "function",
+      "Cloudflare email requires the EMAIL binding.",
+    ),
+    EMAIL_FROM: z.email(),
+    EMAIL_TRANSPORT: z.literal("cloudflare"),
+  }),
+]);
 
 const configSchema = rawConfigSchema.superRefine((config, context) => {
   if (
@@ -29,16 +46,6 @@ const configSchema = rawConfigSchema.superRefine((config, context) => {
       message: "Preview and production require an HTTPS application URL.",
     });
   }
-
-  if (
-    config.EMAIL_TRANSPORT === "resend" &&
-    (!config.EMAIL_FROM || !config.RESEND_API_KEY)
-  ) {
-    context.addIssue({
-      code: "custom",
-      message: "Resend requires EMAIL_FROM and RESEND_API_KEY.",
-    });
-  }
 });
 
 type RawConfig = z.infer<typeof rawConfigSchema>;
@@ -47,7 +54,9 @@ export type AppConfig = {
   appEnv: RawConfig["APP_ENV"];
   appUrl: string;
   authSecret: string;
-  email: { type: "capture" } | { type: "resend"; apiKey: string; from: string };
+  email:
+    | { type: "capture" }
+    | { type: "cloudflare"; from: string; sender: SendEmail };
 };
 
 export type ConfigResult =
@@ -75,9 +84,9 @@ export function parseConfig(
         config.EMAIL_TRANSPORT === "capture"
           ? { type: "capture" }
           : {
-              type: "resend",
-              apiKey: config.RESEND_API_KEY as string,
-              from: config.EMAIL_FROM as string,
+              type: "cloudflare",
+              from: config.EMAIL_FROM,
+              sender: config.EMAIL,
             },
     },
   };

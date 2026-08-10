@@ -6,9 +6,9 @@ const validConfig = {
   APP_ENV: "production",
   APP_URL: "https://openboard.example.com",
   BETTER_AUTH_SECRET: "production-secret-with-at-least-thirty-two-characters",
-  EMAIL_TRANSPORT: "resend",
-  EMAIL_FROM: "OpenBoard <auth@example.com>",
-  RESEND_API_KEY: "re_test",
+  EMAIL: { send: () => Promise.resolve({ messageId: "message-id" }) },
+  EMAIL_FROM: "auth@alexlazar.dev",
+  EMAIL_TRANSPORT: "cloudflare",
 };
 
 describe("configuration", () => {
@@ -22,8 +22,11 @@ describe("configuration", () => {
     expect(
       parseConfig({ ...validConfig, APP_URL: "http://openboard.example.com" }),
     ).toMatchObject({ ok: false });
+    expect(parseConfig({ ...validConfig, EMAIL: undefined })).toMatchObject({
+      ok: false,
+    });
     expect(
-      parseConfig({ ...validConfig, RESEND_API_KEY: undefined }),
+      parseConfig({ ...validConfig, EMAIL_FROM: "not-an-email" }),
     ).toMatchObject({ ok: false });
   });
 
@@ -35,9 +38,9 @@ describe("configuration", () => {
         appUrl: "https://openboard.example.com",
         authSecret: validConfig.BETTER_AUTH_SECRET,
         email: {
-          type: "resend",
+          type: "cloudflare",
           from: validConfig.EMAIL_FROM,
-          apiKey: validConfig.RESEND_API_KEY,
+          sender: validConfig.EMAIL,
         },
       },
     });

@@ -19,6 +19,7 @@ never emitted by preview or production configurations.
 Run `pnpm check` to execute formatting, linting, type checking, isolated D1 tests, and the Worker
 and SPA build.
 
-Production requires `APP_ENV=production`, an HTTPS `APP_URL`, a random `BETTER_AUTH_SECRET`, and
-the Resend variables checked by `src/server/config.ts`. The Worker returns a typed 503 response
-instead of serving the application when configuration is incomplete or unsafe.
+Production requires `APP_ENV=production`, an HTTPS `APP_URL`, a random `BETTER_AUTH_SECRET`,
+`EMAIL_TRANSPORT=cloudflare`, `EMAIL_FROM=auth@alexlazar.dev`, and the `EMAIL` binding configured in
+`wrangler.jsonc`. The Worker returns a typed 503 response instead of serving the application when
+configuration is incomplete or unsafe.
