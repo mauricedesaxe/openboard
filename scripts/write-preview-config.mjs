@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const reviewNumber = process.env.PREVIEW_NUMBER;
 const previewD1Id =
-  process.env.PREVIEW_D1_ID ?? "00000000-0000-0000-0000-000000000000";
+  process.env.PREVIEW_D1_ID ?? "369223a1-2ad4-4496-aa3d-7208580521ac";
 const workersDevSubdomain =
   process.env.WORKERS_DEV_SUBDOMAIN ?? "sweet-mouse-22c9";
 
