@@ -90,9 +90,18 @@ async function measureLocalTransition(
 ): Promise<number> {
   await page.evaluate((nextSelector) => {
     delete document.body.dataset.transitionDuration;
-    const startedAt = performance.now();
+    let startedAt: number | undefined;
+    document.addEventListener(
+      "click",
+      () => {
+        startedAt = performance.now();
+      },
+      { capture: true, once: true },
+    );
     const observer = new MutationObserver(() => {
-      if (!document.querySelector(nextSelector)) return;
+      if (startedAt === undefined || !document.querySelector(nextSelector)) {
+        return;
+      }
       document.body.dataset.transitionDuration = String(
         performance.now() - startedAt,
       );
