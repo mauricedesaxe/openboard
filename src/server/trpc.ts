@@ -135,6 +135,15 @@ export const appRouter = trpc.router({
       .mutation(async ({ ctx, input }) => {
         const result = await createInvitation(ctx.database, ctx.userId, input);
         if (!result.ok) throwInvitationWriteError(result.error);
+        if (result.outcome === "already_pending") {
+          return {
+            outcome: result.outcome,
+            id: result.value.id,
+            email: result.value.email,
+            role: result.value.role,
+            expiresAt: result.value.expiresAt.toISOString(),
+          };
+        }
 
         try {
           await sendEventInvitation(ctx.config, result.value);
@@ -149,14 +158,17 @@ export const appRouter = trpc.router({
                   : "Unknown email failure",
             }),
           );
-          throw new TRPCError({
-            code: "BAD_GATEWAY",
-            message:
-              "The invitation was saved, but the email could not be sent.",
-          });
+          return {
+            outcome: "delivery_failed" as const,
+            id: result.value.id,
+            email: result.value.email,
+            role: result.value.role,
+            expiresAt: result.value.expiresAt.toISOString(),
+          };
         }
 
         return {
+          outcome: "sent" as const,
           id: result.value.id,
           email: result.value.email,
           role: result.value.role,

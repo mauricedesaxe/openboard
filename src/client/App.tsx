@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
   Link,
@@ -525,27 +525,78 @@ function EventTeamPanel({ slug }: { slug: string }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const team = useQuery(trpc.eventTeam.list.queryOptions({ slug }));
+  const formRef = useRef<HTMLFormElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<EventRole>("organizer");
   const [replacement, setReplacement] = useState<{
+    kind: "resend" | "correct";
     id: InvitationId;
     email: string;
     role: EventRole;
   }>();
+  const [notice, setNotice] = useState<{
+    tone: "success" | "warning" | "error";
+    message: string;
+    invitation?: {
+      id: InvitationId;
+      email: string;
+      role: EventRole;
+    };
+  }>();
+  useEffect(() => {
+    if (!replacement) return;
+
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    formRef.current?.scrollIntoView({
+      behavior: reduceMotion ? "auto" : "smooth",
+      block: "center",
+    });
+    if (replacement.kind === "correct") emailRef.current?.focus();
+  }, [replacement]);
   const invite = useMutation(
     trpc.eventTeam.invite.mutationOptions({
       onError: async () => {
-        setReplacement(undefined);
         await queryClient.invalidateQueries(
           trpc.eventTeam.list.queryFilter({ slug }),
         );
       },
-      onSuccess: async () => {
-        setEmail("");
-        setReplacement(undefined);
+      onSuccess: async (result) => {
         await queryClient.invalidateQueries(
           trpc.eventTeam.list.queryFilter({ slug }),
         );
+        if (result.outcome === "already_pending") {
+          setReplacement(undefined);
+          setNotice({
+            tone: "warning",
+            message: `A ${result.role} invitation is already pending for ${result.email}. Nothing changed.`,
+            invitation: {
+              id: result.id,
+              email: result.email,
+              role: result.role,
+            },
+          });
+          return;
+        }
+        if (result.outcome === "delivery_failed") {
+          startReplacement("resend", result);
+          setNotice({
+            tone: "error",
+            message:
+              "The invitation was saved, but the email could not be sent. Send a replacement to retry.",
+          });
+          return;
+        }
+
+        setNotice({
+          tone: "success",
+          message: replacement
+            ? "The old link was revoked and the replacement was sent."
+            : "The invitation was sent.",
+        });
+        cancelReplacement();
       },
     }),
   );
@@ -571,6 +622,7 @@ function EventTeamPanel({ slug }: { slug: string }) {
 
   function submit(event: FormEvent) {
     event.preventDefault();
+    setNotice(undefined);
     invite.mutate({
       slug,
       email,
@@ -579,18 +631,69 @@ function EventTeamPanel({ slug }: { slug: string }) {
     });
   }
 
-  function editInvitation(invitation: {
-    id: string;
-    email: string;
-    role: EventRole;
-  }) {
+  function startReplacement(
+    kind: "resend" | "correct",
+    invitation: {
+      id: string;
+      email: string;
+      role: EventRole;
+    },
+  ) {
+    setNotice(undefined);
     setReplacement({
+      kind,
       id: invitation.id as InvitationId,
       email: invitation.email,
       role: invitation.role,
     });
     setEmail(invitation.email);
     setRole(invitation.role);
+  }
+
+  function cancelReplacement() {
+    setReplacement(undefined);
+    setEmail("");
+    setRole("organizer");
+  }
+
+  const pendingInvitations =
+    team.data?.invitations
+      .filter((invitation) => invitation.usable)
+      .sort(
+        (left, right) =>
+          left.email.localeCompare(right.email) ||
+          left.role.localeCompare(right.role),
+      ) ?? [];
+  const pastAttempts =
+    team.data?.invitations.filter((invitation) => !invitation.usable) ?? [];
+
+  function pastAttemptStatus(invitation: {
+    status: "pending" | "accepted" | "declined" | "revoked";
+  }) {
+    return invitation.status === "pending" ? "expired" : invitation.status;
+  }
+
+  function replacementTitle() {
+    return replacement?.kind === "correct"
+      ? "Correct invitation address"
+      : "Resend invitation link";
+  }
+
+  function replacementExplanation() {
+    return replacement?.kind === "correct"
+      ? "Sending this correction revokes the old link and sends a new link to the corrected address."
+      : "Sending this replacement revokes the old link and sends a new link to the same address.";
+  }
+
+  function replacementButtonLabel() {
+    if (invite.isPending) return "Sending…";
+    if (replacement?.kind === "correct") {
+      return "Revoke old link and send correction";
+    }
+    if (replacement?.kind === "resend") {
+      return "Revoke old link and resend";
+    }
+    return "Send invitation";
   }
 
   return (
@@ -604,13 +707,26 @@ function EventTeamPanel({ slug }: { slug: string }) {
             role without removing the person or their history.
           </p>
         </div>
-        <form className="invite-form" onSubmit={submit}>
+        <form
+          className={`invite-form${replacement ? " invite-form-replacement" : ""}`}
+          onSubmit={submit}
+          ref={formRef}
+        >
+          {replacement && (
+            <div className="replacement-banner" aria-live="polite">
+              <div className="eyebrow">Replacement mode</div>
+              <strong>{replacementTitle()}</strong>
+              <p>{replacementExplanation()}</p>
+            </div>
+          )}
           <div className="field-pair">
             <Field label="Email address" name="team-email">
               <input
                 id="team-email"
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="teammate@example.com"
+                readOnly={replacement?.kind === "resend"}
+                ref={emailRef}
                 required
                 type="email"
                 value={email}
@@ -619,6 +735,7 @@ function EventTeamPanel({ slug }: { slug: string }) {
             <Field label="Event role" name="team-role">
               <select
                 id="team-role"
+                disabled={Boolean(replacement)}
                 onChange={(event) => setRole(event.target.value as EventRole)}
                 value={role}
               >
@@ -634,28 +751,42 @@ function EventTeamPanel({ slug }: { slug: string }) {
                 revokeInvitation.error?.message}
             </p>
           )}
+          {notice && (
+            <div
+              aria-live="polite"
+              className={`invite-notice invite-notice-${notice.tone}`}
+            >
+              <span>{notice.message}</span>
+              {notice.invitation && (
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    if (notice.invitation) {
+                      startReplacement("resend", notice.invitation);
+                    }
+                  }}
+                  type="button"
+                >
+                  Resend link
+                </button>
+              )}
+            </div>
+          )}
           <div className="team-actions">
             <button
               className="primary-button"
               disabled={invite.isPending}
               type="submit"
             >
-              {invite.isPending
-                ? "Sending…"
-                : replacement
-                  ? "Send replacement"
-                  : "Send invitation"}
+              {replacementButtonLabel()}
             </button>
             {replacement && (
               <button
                 className="text-button"
-                onClick={() => {
-                  setReplacement(undefined);
-                  setEmail("");
-                }}
+                onClick={cancelReplacement}
                 type="button"
               >
-                Cancel correction
+                Cancel replacement
               </button>
             )}
           </div>
@@ -704,52 +835,74 @@ function EventTeamPanel({ slug }: { slug: string }) {
             </div>
           </div>
           <div>
-            <div className="eyebrow">Invitation history</div>
-            <div className="team-list">
+            <div className="eyebrow">Pending invitations</div>
+            <div className="team-list pending-invitations">
               {team.data.invitations.length === 0 && (
                 <p className="muted">No invitations sent yet.</p>
               )}
-              {team.data.invitations.map((invitation) => {
-                const displayStatus =
-                  invitation.status === "pending" && !invitation.usable
-                    ? "expired"
-                    : invitation.status;
-                return (
-                  <div className="team-row" key={invitation.id}>
-                    <div>
-                      <strong>{invitation.email}</strong>
-                      <span>
-                        {invitation.role} · {displayStatus}
-                      </span>
-                    </div>
-                    {invitation.usable && (
-                      <div className="team-row-actions">
-                        <button
-                          className="text-button"
-                          onClick={() => editInvitation(invitation)}
-                          type="button"
-                        >
-                          Correct or resend
-                        </button>
-                        <button
-                          className="text-button"
-                          disabled={revokeInvitation.isPending}
-                          onClick={() =>
-                            revokeInvitation.mutate({
-                              slug,
-                              invitationId: invitation.id,
-                            })
-                          }
-                          type="button"
-                        >
-                          Revoke
-                        </button>
-                      </div>
-                    )}
+              {team.data.invitations.length > 0 &&
+                pendingInvitations.length === 0 && (
+                  <p className="muted">No pending invitations.</p>
+                )}
+              {pendingInvitations.map((invitation) => (
+                <div
+                  className="team-row"
+                  id={`invitation-${invitation.id}`}
+                  key={invitation.id}
+                >
+                  <div>
+                    <strong>{invitation.email}</strong>
+                    <span>{invitation.role} · pending</span>
                   </div>
-                );
-              })}
+                  <div className="team-row-actions">
+                    <button
+                      className="text-button"
+                      onClick={() => startReplacement("resend", invitation)}
+                      type="button"
+                    >
+                      Resend link
+                    </button>
+                    <button
+                      className="text-button"
+                      onClick={() => startReplacement("correct", invitation)}
+                      type="button"
+                    >
+                      Correct address
+                    </button>
+                    <button
+                      className="text-button"
+                      disabled={revokeInvitation.isPending}
+                      onClick={() =>
+                        revokeInvitation.mutate({
+                          slug,
+                          invitationId: invitation.id,
+                        })
+                      }
+                      type="button"
+                    >
+                      Revoke
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
+            {pastAttempts.length > 0 && (
+              <details className="past-attempts">
+                <summary>Past attempts ({pastAttempts.length})</summary>
+                <div className="team-list">
+                  {pastAttempts.map((invitation) => (
+                    <div className="team-row team-row-past" key={invitation.id}>
+                      <div>
+                        <strong>{invitation.email}</strong>
+                        <span>
+                          {invitation.role} · {pastAttemptStatus(invitation)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
         </div>
       )}

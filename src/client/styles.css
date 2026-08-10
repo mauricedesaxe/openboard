@@ -451,6 +451,60 @@ a {
 .invite-form {
   align-self: start;
 }
+.invite-form-replacement {
+  border: 2px solid var(--orange);
+  padding: 24px;
+  background: rgba(237, 106, 58, 0.06);
+  box-shadow: 7px 7px 0 var(--acid);
+  animation: replacement-enter 320ms ease-out;
+}
+.replacement-banner {
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--orange);
+  padding-bottom: 18px;
+}
+.replacement-banner strong {
+  display: block;
+  margin-top: 10px;
+  font:
+    600 26px/1 "Newsreader",
+    serif;
+}
+.replacement-banner p {
+  margin: 10px 0 0;
+  color: rgba(27, 39, 36, 0.72);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.invite-form input[readonly],
+.invite-form select:disabled {
+  cursor: not-allowed;
+  color: rgba(27, 39, 36, 0.58);
+  border-bottom-style: dashed;
+}
+.invite-notice {
+  margin: 0 0 22px;
+  border: 1px solid currentColor;
+  padding: 13px 15px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.invite-notice-warning {
+  color: #765500;
+  background: rgba(217, 255, 86, 0.28);
+}
+.invite-notice-error {
+  color: #a22d18;
+  background: rgba(237, 106, 58, 0.08);
+}
+.invite-notice-success {
+  color: #185f43;
+  background: rgba(24, 95, 67, 0.08);
+}
 .team-actions,
 .invitation-actions {
   display: flex;
@@ -496,6 +550,22 @@ a {
   color: rgba(27, 39, 36, 0.6);
   font: 10px "DM Mono";
   text-transform: uppercase;
+}
+.past-attempts {
+  margin-top: 34px;
+  color: rgba(27, 39, 36, 0.62);
+}
+.past-attempts summary {
+  width: fit-content;
+  border-bottom: 1px solid currentColor;
+  padding-bottom: 4px;
+  cursor: pointer;
+  font: 500 11px "DM Mono";
+  text-transform: uppercase;
+}
+.team-row-past {
+  min-height: 62px;
+  opacity: 0.7;
 }
 .invitation-page {
   min-height: 100vh;
@@ -547,6 +617,18 @@ a {
     opacity: 0.4;
   }
 }
+@keyframes replacement-enter {
+  from {
+    transform: translateY(8px);
+    box-shadow: 0 0 0 var(--acid);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .invite-form-replacement {
+    animation: none;
+  }
+}
 
 @media (max-width: 800px) {
   .signin-page,
@@ -581,6 +663,18 @@ a {
     margin-top: 55px;
   }
   .agenda-board {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .team-row {
+    align-items: flex-start;
+    padding: 18px 0;
+    flex-direction: column;
+  }
+  .team-row .team-row-actions {
+    justify-content: flex-start;
+  }
+  .invite-notice {
     align-items: flex-start;
     flex-direction: column;
   }

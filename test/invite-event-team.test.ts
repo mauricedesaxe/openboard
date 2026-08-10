@@ -194,17 +194,57 @@ describe("invite the event team", () => {
     );
     expect(expired.status).toBe(409);
 
-    await callTrpc(
+    const firstResend = await callTrpc<{
+      outcome: string;
+      id: string;
+    }>(
       "eventTeam.invite",
       { slug: "decline-event", email: "resend@example.com", role: "reviewer" },
       owner.cookie,
     );
+    const firstResendInvitation = getResult(firstResend.body);
+    expect(firstResendInvitation.outcome).toBe("sent");
     const firstResendSecret = await getInvitationSecret("resend@example.com");
-    await callTrpc(
+    const duplicateResend = await callTrpc<{
+      outcome: string;
+      id: string;
+      email: string;
+      role: string;
+      expiresAt: string;
+    }>(
       "eventTeam.invite",
       { slug: "decline-event", email: "resend@example.com", role: "reviewer" },
       owner.cookie,
     );
+    const duplicateResult = getResult(duplicateResend.body);
+    expect(duplicateResult).toMatchObject({
+      outcome: "already_pending",
+      id: firstResendInvitation.id,
+      email: "resend@example.com",
+      role: "reviewer",
+    });
+    expect(typeof duplicateResult.expiresAt).toBe("string");
+    expect(await getInvitationSecret("resend@example.com")).toBe(
+      firstResendSecret,
+    );
+    const duplicateAttempts = await testEnvironment.DB.prepare(
+      "SELECT status FROM invitations WHERE email = ? ORDER BY created_at",
+    )
+      .bind("resend@example.com")
+      .all<{ status: string }>();
+    expect(duplicateAttempts.results).toEqual([{ status: "pending" }]);
+
+    const explicitResend = await callTrpc<{ outcome: string }>(
+      "eventTeam.invite",
+      {
+        slug: "decline-event",
+        email: "resend@example.com",
+        role: "reviewer",
+        replacesInvitationId: firstResendInvitation.id,
+      },
+      owner.cookie,
+    );
+    expect(getResult(explicitResend.body).outcome).toBe("sent");
     const secondResendSecret = await getInvitationSecret("resend@example.com");
     expect(secondResendSecret).not.toBe(firstResendSecret);
     const supersededResend = await callTrpc(
@@ -449,7 +489,7 @@ describe("invite the event team", () => {
       input,
     );
     expect(first.ok).toBe(true);
-    if (!first.ok) return;
+    if (!first.ok || first.outcome !== "created") return;
 
     const failingConfig: AppConfig = {
       appEnv: "production",
@@ -467,13 +507,21 @@ describe("invite the event team", () => {
       sendEventInvitation(failingConfig, first.value),
     ).rejects.toThrow("Email service unavailable");
 
-    const retry = await createInvitation(
+    const duplicate = await createInvitation(
       database,
       owner.userId as UserId,
       input,
     );
-    expect(retry.ok).toBe(true);
-    if (!retry.ok) return;
+    expect(duplicate.ok && duplicate.outcome).toBe("already_pending");
+    if (!duplicate.ok) return;
+    expect(duplicate.value.id).toBe(first.value.id);
+
+    const retry = await createInvitation(database, owner.userId as UserId, {
+      ...input,
+      replacesInvitationId: first.value.id,
+    });
+    expect(retry.ok && retry.outcome).toBe("created");
+    if (!retry.ok || retry.outcome !== "created") return;
     expect(retry.value.id).not.toBe(first.value.id);
     const attempts = await testEnvironment.DB.prepare(
       "SELECT status FROM invitations WHERE email = ? ORDER BY created_at",
