@@ -1,6 +1,12 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, test } from "vitest";
 
+import type { AppConfig } from "../src/server/config";
+import { createDatabase } from "../src/server/database/client";
+import { sendEventInvitation } from "../src/server/event-team/delivery";
+import { createInvitation } from "../src/server/event-team/repository";
+import type { UserId } from "../src/shared/events";
+
 const testEnvironment = env as unknown as { DB: D1Database };
 const worker = exports as unknown as {
   default: { fetch(request: Request): Promise<Response> };
@@ -97,15 +103,38 @@ describe("invite the event team", () => {
     );
     expect(replay.status).toBe(409);
 
-    const role = await testEnvironment.DB.prepare(
+    await callTrpc(
+      "eventTeam.invite",
+      {
+        slug: "team-event",
+        email: "reviewer+corrected@example.com",
+        role: "organizer",
+      },
+      owner.cookie,
+    );
+    const organizerSecret = await getInvitationSecret(
+      "reviewer+corrected@example.com",
+    );
+    const additiveAcceptance = await callTrpc(
+      "invitations.accept",
+      { secret: organizerSecret },
+      recipient.cookie,
+    );
+    expect(additiveAcceptance.status).toBe(200);
+
+    const roles = await testEnvironment.DB.prepare(
       `SELECT role, revoked_at AS revokedAt
        FROM event_roles
        WHERE event_id = (SELECT id FROM events WHERE slug = ?)
-         AND user_id = ?`,
+         AND user_id = ?
+       ORDER BY role`,
     )
       .bind("team-event", recipient.userId)
-      .first<{ role: string; revokedAt: number | null }>();
-    expect(role).toEqual({ role: "reviewer", revokedAt: null });
+      .all<{ role: string; revokedAt: number | null }>();
+    expect(roles.results).toEqual([
+      { role: "organizer", revokedAt: null },
+      { role: "reviewer", revokedAt: null },
+    ]);
 
     const visibleEvent = await callTrpc(
       "events.get",
@@ -165,6 +194,36 @@ describe("invite the event team", () => {
     );
     expect(expired.status).toBe(409);
 
+    await callTrpc(
+      "eventTeam.invite",
+      { slug: "decline-event", email: "resend@example.com", role: "reviewer" },
+      owner.cookie,
+    );
+    const firstResendSecret = await getInvitationSecret("resend@example.com");
+    await callTrpc(
+      "eventTeam.invite",
+      { slug: "decline-event", email: "resend@example.com", role: "reviewer" },
+      owner.cookie,
+    );
+    const secondResendSecret = await getInvitationSecret("resend@example.com");
+    expect(secondResendSecret).not.toBe(firstResendSecret);
+    const supersededResend = await callTrpc(
+      "invitations.get",
+      { secret: firstResendSecret },
+      undefined,
+      "query",
+    );
+    expect(supersededResend.status).toBe(409);
+    const resendAttempts = await testEnvironment.DB.prepare(
+      "SELECT status FROM invitations WHERE email = ? ORDER BY created_at",
+    )
+      .bind("resend@example.com")
+      .all<{ status: string }>();
+    expect(resendAttempts.results).toEqual([
+      { status: "revoked" },
+      { status: "pending" },
+    ]);
+
     const cancellable = await callTrpc<{ id: string }>(
       "eventTeam.invite",
       {
@@ -218,6 +277,14 @@ describe("invite the event team", () => {
       slug: "access-event",
     });
 
+    const ownerList = await callTrpc(
+      "eventTeam.list",
+      { slug: "access-event" },
+      owner.cookie,
+      "query",
+    );
+    expect(ownerList.status).toBe(200);
+
     for (const actor of [organizer, reviewer, unrelated]) {
       const forbidden = await callTrpc(
         "eventTeam.invite",
@@ -225,7 +292,45 @@ describe("invite the event team", () => {
         actor.cookie,
       );
       expect(forbidden.status).toBe(404);
+
+      const forbiddenList = await callTrpc(
+        "eventTeam.list",
+        { slug: "access-event" },
+        actor.cookie,
+        "query",
+      );
+      expect(forbiddenList.status).toBe(404);
     }
+
+    const cancellable = await callTrpc<{ id: string }>(
+      "eventTeam.invite",
+      {
+        slug: "access-event",
+        email: "matrix-cancel@example.com",
+        role: "reviewer",
+      },
+      owner.cookie,
+    );
+    for (const actor of [organizer, reviewer, unrelated]) {
+      const forbiddenRevocation = await callTrpc(
+        "eventTeam.revokeInvitation",
+        {
+          slug: "access-event",
+          invitationId: getResult(cancellable.body).id,
+        },
+        actor.cookie,
+      );
+      expect(forbiddenRevocation.status).toBe(404);
+    }
+    const ownerRevocation = await callTrpc(
+      "eventTeam.revokeInvitation",
+      {
+        slug: "access-event",
+        invitationId: getResult(cancellable.body).id,
+      },
+      owner.cookie,
+    );
+    expect(ownerRevocation.status).toBe(200);
 
     const event = await testEnvironment.DB.prepare(
       "SELECT id FROM events WHERE slug = ?",
@@ -249,6 +354,15 @@ describe("invite the event team", () => {
         Date.now(),
       )
       .run();
+
+    for (const actor of [organizer, reviewer, unrelated]) {
+      const forbiddenRevocation = await callTrpc(
+        "eventTeam.revokeRole",
+        { slug: "access-event", roleId: reviewerRoleId },
+        actor.cookie,
+      );
+      expect(forbiddenRevocation.status).toBe(404);
+    }
 
     const revoke = await callTrpc(
       "eventTeam.revokeRole",
@@ -281,6 +395,95 @@ describe("invite the event team", () => {
     );
     expect(organizerEvent.status).toBe(200);
     expect(organizerRoleId).not.toBe(reviewerRoleId);
+  });
+
+  test("allows only one terminal outcome when accept and decline race", async () => {
+    const owner = await signIn("race-owner@example.com", "192.0.2.38");
+    const recipient = await signIn("race-recipient@example.com", "192.0.2.39");
+    await createEvent(owner.cookie, "race-event");
+    await callTrpc(
+      "eventTeam.invite",
+      {
+        slug: "race-event",
+        email: "race-recipient@example.com",
+        role: "reviewer",
+      },
+      owner.cookie,
+    );
+    const secret = await getInvitationSecret("race-recipient@example.com");
+
+    const [acceptance, decline] = await Promise.all([
+      callTrpc("invitations.accept", { secret }, recipient.cookie),
+      callTrpc("invitations.decline", { secret }),
+    ]);
+    expect([acceptance.status, decline.status].sort()).toEqual([200, 409]);
+
+    const invitation = await testEnvironment.DB.prepare(
+      "SELECT status FROM invitations WHERE email = ?",
+    )
+      .bind("race-recipient@example.com")
+      .first<{ status: string }>();
+    const role = await testEnvironment.DB.prepare(
+      "SELECT id FROM event_roles WHERE user_id = ? AND revoked_at IS NULL",
+    )
+      .bind(recipient.userId)
+      .first<{ id: string }>();
+    expect(invitation?.status).toBe(
+      acceptance.status === 200 ? "accepted" : "declined",
+    );
+    expect(Boolean(role)).toBe(acceptance.status === 200);
+  });
+
+  test("keeps a failed email delivery resendable", async () => {
+    const owner = await signIn("delivery-owner@example.com", "192.0.2.40");
+    await createEvent(owner.cookie, "delivery-event");
+    const database = createDatabase(testEnvironment.DB);
+    const input = {
+      slug: "delivery-event",
+      email: "delivery-recipient@example.com",
+      role: "organizer" as const,
+    };
+    const first = await createInvitation(
+      database,
+      owner.userId as UserId,
+      input,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const failingConfig: AppConfig = {
+      appEnv: "production",
+      appUrl: "https://localhost",
+      authSecret: "test-secret-that-is-at-least-thirty-two-characters",
+      email: {
+        type: "cloudflare",
+        from: "auth@example.com",
+        sender: {
+          send: () => Promise.reject(new Error("Email service unavailable")),
+        },
+      },
+    };
+    await expect(
+      sendEventInvitation(failingConfig, first.value),
+    ).rejects.toThrow("Email service unavailable");
+
+    const retry = await createInvitation(
+      database,
+      owner.userId as UserId,
+      input,
+    );
+    expect(retry.ok).toBe(true);
+    if (!retry.ok) return;
+    expect(retry.value.id).not.toBe(first.value.id);
+    const attempts = await testEnvironment.DB.prepare(
+      "SELECT status FROM invitations WHERE email = ? ORDER BY created_at",
+    )
+      .bind(input.email)
+      .all<{ status: string }>();
+    expect(attempts.results).toEqual([
+      { status: "revoked" },
+      { status: "pending" },
+    ]);
   });
 });
 

@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 
 import type {
   EventRole,
@@ -304,29 +304,33 @@ export async function acceptInvitation(
     return { ok: false, error: "email_mismatch" };
   }
 
-  const [record] = await database
-    .select({
-      eventId: invitations.eventId,
-      invitedByUserId: invitations.invitedByUserId,
-    })
-    .from(invitations)
-    .where(eq(invitations.id, invitation.value.id))
-    .limit(1);
-  if (!record) return { ok: false, error: "not_found" };
-
-  const [existingRole] = await database
-    .select({ id: eventRoles.id })
-    .from(eventRoles)
-    .where(
-      and(
-        eq(eventRoles.eventId, record.eventId),
-        eq(eventRoles.userId, recipient.id),
-        eq(eventRoles.role, invitation.value.role),
-        isNull(eventRoles.revokedAt),
-      ),
-    )
-    .limit(1);
   const now = new Date();
+  const roleId = crypto.randomUUID() as EventRoleId;
+  const grantRole = database
+    .insert(eventRoles)
+    .select(
+      database
+        .select({
+          id: sql<string>`${roleId}`.as("id"),
+          eventId: invitations.eventId,
+          userId: sql<string>`${recipient.id}`.as("user_id"),
+          role: invitations.role,
+          invitationId: invitations.id,
+          grantedByUserId: invitations.invitedByUserId,
+          revokedAt: sql<null>`NULL`.as("revoked_at"),
+          revokedByUserId: sql<null>`NULL`.as("revoked_by_user_id"),
+          createdAt: sql<number>`${now.getTime()}`.as("created_at"),
+        })
+        .from(invitations)
+        .where(
+          and(
+            eq(invitations.id, invitation.value.id),
+            eq(invitations.status, "pending"),
+            gt(invitations.expiresAt, now),
+          ),
+        ),
+    )
+    .onConflictDoNothing();
   const accept = database
     .update(invitations)
     .set({
@@ -343,24 +347,9 @@ export async function acceptInvitation(
     );
 
   try {
-    if (existingRole) {
-      const result = await accept;
-      if (result.meta.changes !== 1) {
-        return { ok: false, error: "unavailable" };
-      }
-    } else {
-      await database.batch([
-        accept,
-        database.insert(eventRoles).values({
-          id: crypto.randomUUID() as EventRoleId,
-          eventId: record.eventId,
-          userId: recipient.id,
-          role: invitation.value.role,
-          invitationId: invitation.value.id,
-          grantedByUserId: record.invitedByUserId,
-          createdAt: now,
-        }),
-      ]);
+    const [, acceptResult] = await database.batch([grantRole, accept]);
+    if (acceptResult.meta.changes !== 1) {
+      return { ok: false, error: "unavailable" };
     }
   } catch {
     return { ok: false, error: "unavailable" };

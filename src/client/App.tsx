@@ -101,6 +101,7 @@ function SignInPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const returnTo = safeReturnTo(searchParams.get("returnTo"));
+  const invitationSignIn = returnTo.startsWith("/invitations/");
   const [email, setEmail] = useState(searchParams.get("email") ?? "");
   const [code, setCode] = useState("");
   const [step, setStep] = useState<"email" | "code">("email");
@@ -199,7 +200,9 @@ function SignInPage() {
       <section className="signin-panel">
         <div className="panel-number">01</div>
         <div>
-          <div className="eyebrow">Owner access</div>
+          <div className="eyebrow">
+            {invitationSignIn ? "Invitation access" : "Owner access"}
+          </div>
           <h2>
             {step === "email" ? "Start with your email" : "Check your inbox"}
           </h2>
@@ -250,7 +253,11 @@ function SignInPage() {
             </Field>
             <div className="code-actions">
               <button className="primary-button" disabled={busy} type="submit">
-                {busy ? "Verifying…" : "Open my board"}
+                {busy
+                  ? "Verifying…"
+                  : invitationSignIn
+                    ? "Continue to invitation"
+                    : "Open my board"}
               </button>
               <button
                 className="text-button"
@@ -527,6 +534,12 @@ function EventTeamPanel({ slug }: { slug: string }) {
   }>();
   const invite = useMutation(
     trpc.eventTeam.invite.mutationOptions({
+      onError: async () => {
+        setReplacement(undefined);
+        await queryClient.invalidateQueries(
+          trpc.eventTeam.list.queryFilter({ slug }),
+        );
+      },
       onSuccess: async () => {
         setEmail("");
         setReplacement(undefined);
@@ -773,7 +786,7 @@ function InvitationPage({
         <section className="invitation-card">
           <div className="eyebrow">Invitation unavailable</div>
           <h1>This invitation can’t be used.</h1>
-          <p>{invitation.error.message}</p>
+          <p>Check the link or ask the event owner for a new invitation.</p>
           <Link className="arrow-link" to="/">
             Open OpenBoard
           </Link>
@@ -795,16 +808,17 @@ function InvitationPage({
 
   const returnTo = `/invitations/${secret}`;
   const signInUrl = `/sign-in?returnTo=${encodeURIComponent(returnTo)}&email=${encodeURIComponent(invitation.data.email)}`;
+  const emailMismatch = signedIn && email !== invitation.data.email;
   return (
     <main className="invitation-page">
       <section className="invitation-card">
         <div className="eyebrow">Event invitation</div>
         <h1>Join {invitation.data.eventName}.</h1>
         <p>
-          You were invited as an <strong>{invitation.data.role}</strong> through{" "}
-          <strong>{invitation.data.email}</strong>.
+          You were invited with the <strong>{invitation.data.role}</strong> role
+          through <strong>{invitation.data.email}</strong>.
         </p>
-        {signedIn && email !== invitation.data.email && (
+        {emailMismatch && (
           <p className="form-error" role="alert">
             Sign out and use {invitation.data.email} to accept this invitation.
           </p>
@@ -818,7 +832,7 @@ function InvitationPage({
           {signedIn ? (
             <button
               className="primary-button"
-              disabled={accept.isPending || email !== invitation.data.email}
+              disabled={accept.isPending || emailMismatch}
               onClick={() => accept.mutate({ secret })}
               type="button"
             >
@@ -831,7 +845,7 @@ function InvitationPage({
           )}
           <button
             className="text-button"
-            disabled={decline.isPending}
+            disabled={decline.isPending || emailMismatch}
             onClick={() => decline.mutate({ secret })}
             type="button"
           >
