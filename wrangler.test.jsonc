@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "openboard-test",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "openboard-test",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "vars": {
+    "APP_ENV": "test",
+    "APP_URL": "http://localhost",
+    "BETTER_AUTH_SECRET": "test-secret-that-is-at-least-thirty-two-characters",
+    "EMAIL_TRANSPORT": "capture",
+  },
+}

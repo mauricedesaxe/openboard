@@ -1,0 +1,505 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap");
+
+:root {
+  color: #1b2724;
+  background: #f4efe3;
+  font-family: "Manrope", sans-serif;
+  font-synthesis: none;
+  --ink: #1b2724;
+  --paper: #f4efe3;
+  --acid: #d9ff56;
+  --orange: #ed6a3a;
+  --line: rgba(27, 39, 36, 0.22);
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+button,
+input,
+select {
+  font: inherit;
+}
+a {
+  color: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+.topbar {
+  height: 72px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4vw;
+}
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  letter-spacing: -0.03em;
+}
+.wordmark-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  background: var(--ink);
+  color: var(--acid);
+  font-family: "DM Mono";
+  font-size: 12px;
+}
+.account-strip {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-family: "DM Mono";
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.text-button {
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  padding: 2px 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.back-button {
+  margin-top: 20px;
+}
+
+.signin-page {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+}
+.signin-intro {
+  padding: clamp(40px, 7vw, 100px);
+  background: var(--ink);
+  color: var(--paper);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+}
+.signin-intro h1 {
+  margin: 24px 0;
+  max-width: 800px;
+  color: var(--acid);
+  font:
+    600 clamp(58px, 7.5vw, 116px)/0.84 "Newsreader",
+    serif;
+  letter-spacing: -0.065em;
+}
+.signin-intro p {
+  max-width: 620px;
+  font-size: clamp(16px, 1.5vw, 21px);
+  line-height: 1.6;
+  color: rgba(244, 239, 227, 0.72);
+}
+.eyebrow {
+  font: 500 11px/1 "DM Mono";
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.route-line {
+  display: flex;
+  align-items: center;
+  margin-top: 70px;
+  font: 11px "DM Mono";
+  text-transform: uppercase;
+}
+.route-line i {
+  width: clamp(24px, 5vw, 90px);
+  height: 1px;
+  margin: 0 12px;
+  background: rgba(217, 255, 86, 0.4);
+}
+.signin-panel {
+  position: relative;
+  padding: clamp(40px, 8vw, 120px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 28px;
+}
+.signin-panel h2 {
+  margin: 12px 0;
+  font:
+    600 clamp(36px, 4vw, 62px)/0.95 "Newsreader",
+    serif;
+  letter-spacing: -0.04em;
+}
+.panel-number {
+  position: absolute;
+  top: 5vw;
+  right: 5vw;
+  color: var(--orange);
+  font: 500 12px "DM Mono";
+}
+.muted {
+  color: rgba(27, 39, 36, 0.62);
+  line-height: 1.5;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-bottom: 24px;
+}
+.field label {
+  font: 500 11px "DM Mono";
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.field input,
+.field select {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--ink);
+  border-radius: 0;
+  padding: 14px 0;
+  background: transparent;
+  color: var(--ink);
+  outline: none;
+}
+.field input:focus,
+.field select:focus {
+  border-bottom-width: 3px;
+  padding-bottom: 12px;
+}
+.field-hint {
+  color: rgba(27, 39, 36, 0.55);
+  font-size: 12px;
+}
+.primary-button {
+  display: inline-flex;
+  justify-content: center;
+  border: 1px solid var(--ink);
+  padding: 15px 22px;
+  background: var(--ink);
+  color: var(--paper);
+  cursor: pointer;
+  font: 500 12px "DM Mono";
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  transition:
+    transform 120ms ease,
+    background 120ms ease;
+}
+.primary-button:hover:not(:disabled) {
+  transform: translate(-3px, -3px);
+  box-shadow: 3px 3px 0 var(--orange);
+}
+.primary-button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.link-button {
+  text-decoration: none;
+}
+.dev-code {
+  margin-bottom: 20px;
+  padding: 12px;
+  border: 1px dashed var(--orange);
+  font: 12px "DM Mono";
+}
+.form-error {
+  color: #a22d18;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.page {
+  width: min(1180px, 92vw);
+  margin: 0 auto;
+  padding: 70px 0 100px;
+}
+.page-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 40px;
+  margin-bottom: 64px;
+}
+.page-heading h1,
+.event-title-block h1 {
+  margin: 12px 0 0;
+  font:
+    600 clamp(48px, 7vw, 92px)/0.9 "Newsreader",
+    serif;
+  letter-spacing: -0.055em;
+}
+.empty-board {
+  min-height: 330px;
+  border: 1px solid var(--line);
+  padding: clamp(34px, 5vw, 70px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+.empty-board > * {
+  background: var(--paper);
+}
+.empty-board h2 {
+  margin: 14px 0 4px;
+  font:
+    600 36px "Newsreader",
+    serif;
+}
+.empty-board p {
+  max-width: 520px;
+  line-height: 1.6;
+}
+.empty-number {
+  color: var(--orange);
+  font: 12px "DM Mono";
+}
+.arrow-link {
+  font: 500 12px "DM Mono";
+  text-transform: uppercase;
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+  padding-bottom: 4px;
+}
+.arrow-link span {
+  color: var(--orange);
+}
+.event-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+.event-card {
+  position: relative;
+  min-height: 280px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 34px;
+  text-decoration: none;
+  transition: background 140ms ease;
+}
+.event-card:hover {
+  background: var(--acid);
+}
+.event-card h2 {
+  margin: 55px 0 8px;
+  max-width: 80%;
+  font:
+    600 36px/1 "Newsreader",
+    serif;
+}
+.event-card p,
+.card-timezone {
+  color: rgba(27, 39, 36, 0.6);
+  font-size: 13px;
+}
+.card-index,
+.card-timezone {
+  font-family: "DM Mono";
+}
+.card-arrow {
+  position: absolute;
+  right: 34px;
+  bottom: 34px;
+  font-size: 30px;
+}
+
+.create-layout {
+  display: grid;
+  grid-template-columns: 0.85fr 1.15fr;
+  gap: clamp(50px, 9vw, 130px);
+}
+.create-aside h1 {
+  margin: 34px 0 20px;
+  font:
+    600 clamp(44px, 5vw, 72px)/0.92 "Newsreader",
+    serif;
+  letter-spacing: -0.05em;
+}
+.create-aside p {
+  max-width: 470px;
+  color: rgba(27, 39, 36, 0.65);
+  line-height: 1.65;
+}
+.step-marker {
+  display: flex;
+  gap: 14px;
+  margin-top: 85px;
+  font: 11px "DM Mono";
+  text-transform: uppercase;
+}
+.step-marker strong {
+  color: var(--orange);
+}
+.form-board {
+  border: 1px solid var(--ink);
+  padding: clamp(30px, 5vw, 70px);
+  background: rgba(255, 255, 255, 0.2);
+  box-shadow: 10px 10px 0 var(--acid);
+}
+.field-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+}
+.slug-input {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--ink);
+  font-family: "DM Mono";
+  font-size: 13px;
+}
+.slug-input span {
+  color: rgba(27, 39, 36, 0.5);
+}
+.slug-input input {
+  border: 0;
+  padding-left: 3px;
+  font-family: "DM Mono";
+}
+
+.event-page .arrow-link {
+  display: inline-block;
+  margin-bottom: 65px;
+}
+.event-title-block {
+  border-bottom: 1px solid var(--ink);
+  padding-bottom: 45px;
+}
+.event-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 28px;
+}
+.event-meta span {
+  border: 1px solid var(--line);
+  padding: 8px 12px;
+  font: 11px "DM Mono";
+  text-transform: uppercase;
+}
+.agenda-board {
+  min-height: 300px;
+  margin-top: 50px;
+  padding: clamp(32px, 6vw, 72px);
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 30px;
+  background: var(--ink);
+  color: var(--paper);
+}
+.agenda-board h2 {
+  margin: 14px 0 8px;
+  color: var(--acid);
+  font:
+    600 clamp(38px, 5vw, 66px) "Newsreader",
+    serif;
+}
+.agenda-board p {
+  max-width: 590px;
+  color: rgba(244, 239, 227, 0.65);
+  line-height: 1.6;
+}
+.agenda-id {
+  font: 11px "DM Mono";
+  white-space: nowrap;
+  color: var(--orange);
+}
+.full-status {
+  min-height: 100vh;
+  display: grid;
+  place-content: center;
+  gap: 15px;
+  font: 12px "DM Mono";
+  text-transform: uppercase;
+}
+.pulse {
+  width: 10px;
+  height: 10px;
+  margin: auto;
+  background: var(--orange);
+  animation: pulse 1s infinite alternate;
+}
+@keyframes pulse {
+  to {
+    transform: scale(1.8);
+    opacity: 0.4;
+  }
+}
+
+@media (max-width: 800px) {
+  .signin-page,
+  .create-layout {
+    grid-template-columns: 1fr;
+  }
+  .signin-intro {
+    min-height: 52vh;
+  }
+  .route-line {
+    margin-top: 36px;
+  }
+  .signin-panel {
+    min-height: 48vh;
+  }
+  .topbar {
+    padding: 0 20px;
+  }
+  .account-strip > span {
+    display: none;
+  }
+  .page-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .event-grid {
+    grid-template-columns: 1fr;
+  }
+  .create-aside .step-marker {
+    margin-top: 55px;
+  }
+  .agenda-board {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 480px) {
+  .signin-intro,
+  .signin-panel {
+    padding: 34px 24px;
+  }
+  .signin-intro h1 {
+    font-size: 52px;
+  }
+  .route-line i {
+    margin: 0 5px;
+  }
+  .route-line {
+    font-size: 9px;
+  }
+  .field-pair {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .form-board {
+    box-shadow: 6px 6px 0 var(--acid);
+  }
+}
