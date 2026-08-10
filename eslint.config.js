@@ -41,6 +41,10 @@ export default tseslint.config(
     },
   },
   {
+    files: ["**/*.mjs"],
+    languageOptions: { globals: { ...globals.node } },
+  },
+  {
     files: ["src/client/main.tsx"],
     rules: { "react-refresh/only-export-components": "off" },
   },
