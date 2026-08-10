@@ -274,17 +274,125 @@ export const cfps = sqliteTable(
   ],
 );
 
+export const submissions = sqliteTable(
+  "submissions",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    cfpId: text("cfp_id")
+      .notNull()
+      .references(() => cfps.id, { onDelete: "cascade" }),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => user.id),
+    clientDraftId: text("client_draft_id").notNull(),
+    trackId: text("track_id")
+      .notNull()
+      .references(() => tracks.id),
+    title: text("title").notNull(),
+    abstract: text("abstract").notNull(),
+    format: text("format").notNull(),
+    status: text("status", { enum: ["active", "withdrawn"] }).notNull(),
+    withdrawnAt: integer("withdrawn_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("submissions_event_id_idx").on(table.eventId),
+    index("submissions_owner_user_id_idx").on(table.ownerUserId),
+    uniqueIndex("submissions_owner_draft_idx").on(
+      table.cfpId,
+      table.ownerUserId,
+      table.clientDraftId,
+    ),
+  ],
+);
+
+export const submissionSpeakers = sqliteTable(
+  "submission_speakers",
+  {
+    id: text("id").primaryKey(),
+    submissionId: text("submission_id")
+      .notNull()
+      .references(() => submissions.id, { onDelete: "cascade" }),
+    invitedName: text("invited_name").notNull(),
+    invitedEmail: text("invited_email").notNull(),
+    position: integer("position").notNull(),
+    removedAt: integer("removed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("submission_speakers_submission_id_idx").on(table.submissionId),
+  ],
+);
+
+export const formResponses = sqliteTable("form_responses", {
+  id: text("id").primaryKey(),
+  cfpId: text("cfp_id")
+    .notNull()
+    .references(() => cfps.id),
+  submissionId: text("submission_id")
+    .notNull()
+    .unique()
+    .references(() => submissions.id, { onDelete: "cascade" }),
+  answersJson: text("answers_json").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const decisions = sqliteTable("decisions", {
+  id: text("id").primaryKey(),
+  submissionId: text("submission_id")
+    .notNull()
+    .unique()
+    .references(() => submissions.id, { onDelete: "cascade" }),
+  status: text("status", {
+    enum: [
+      "pending",
+      "accept_queued",
+      "decline_queued",
+      "accepted",
+      "declined",
+    ],
+  }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const communications = sqliteTable(
+  "communications",
+  {
+    id: text("id").primaryKey(),
+    submissionId: text("submission_id").references(() => submissions.id, {
+      onDelete: "cascade",
+    }),
+    recipientUserId: text("recipient_user_id").references(() => user.id),
+    destination: text("destination").notNull(),
+    purpose: text("purpose").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("communications_submission_id_idx").on(table.submissionId)],
+);
+
 export const schema = {
   account,
   agendas,
+  communications,
+  decisions,
   eventRoles,
   cfps,
   events,
+  formResponses,
   invitations,
   rateLimit,
   reviewerAssignments,
   rooms,
   session,
+  submissions,
+  submissionSpeakers,
   tracks,
   user,
   verification,

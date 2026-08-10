@@ -15,6 +15,11 @@ import {
   revokeInvitationSchema,
 } from "../shared/event-team";
 import { eventInputSchema, type UserId } from "../shared/events";
+import {
+  proposalContentSchema,
+  submissionIdSchema,
+  submitProposalSchema,
+} from "../shared/submissions";
 
 import {
   createDraftCfp,
@@ -54,6 +59,13 @@ import {
   updateRoom,
   updateTrack,
 } from "./program-setup/repository";
+import {
+  findOwnSubmission,
+  listOwnSubmissions,
+  submitProposal,
+  updateOwnSubmission,
+  withdrawOwnSubmission,
+} from "./submissions/repository";
 
 type Context = {
   auth: Auth;
@@ -479,6 +491,63 @@ export const appRouter = trpc.router({
         return result;
       }),
   }),
+  submissions: trpc.router({
+    listOwn: authenticatedProcedure.query(({ ctx }) =>
+      listOwnSubmissions(ctx.database, ctx.userId),
+    ),
+    submit: authenticatedProcedure
+      .input(submitProposalSchema)
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.session.user.emailVerified) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Verify your email before submitting a proposal.",
+          });
+        }
+        const result = await submitProposal(
+          ctx.database,
+          ctx.userId,
+          ctx.session.user.email,
+          input,
+        );
+        if (!result.ok) throwProposalWriteError(result.error);
+        return result.value;
+      }),
+    getOwn: authenticatedProcedure
+      .input(z.object({ submissionId: submissionIdSchema }))
+      .query(async ({ ctx, input }) => {
+        const submission = await findOwnSubmission(
+          ctx.database,
+          ctx.userId,
+          input.submissionId,
+        );
+        if (!submission) throwSubmissionNotFound();
+        return submission;
+      }),
+    updateOwn: authenticatedProcedure
+      .input(proposalContentSchema.extend({ submissionId: submissionIdSchema }))
+      .mutation(async ({ ctx, input }) => {
+        const result = await updateOwnSubmission(
+          ctx.database,
+          ctx.userId,
+          input.submissionId,
+          input,
+        );
+        if (!result.ok) throwProposalWriteError(result.error);
+        return result.value;
+      }),
+    withdrawOwn: authenticatedProcedure
+      .input(z.object({ submissionId: submissionIdSchema }))
+      .mutation(async ({ ctx, input }) => {
+        const result = await withdrawOwnSubmission(
+          ctx.database,
+          ctx.userId,
+          input.submissionId,
+        );
+        if (!result.ok) throwProposalWriteError(result.error);
+        return result.value;
+      }),
+  }),
 });
 
 function throwCfpItemNotFound(): never {
@@ -593,6 +662,58 @@ function throwCfpWriteError(
     code: "INTERNAL_SERVER_ERROR",
     message: "The call for proposals could not be saved.",
   });
+}
+
+function throwProposalWriteError(
+  error:
+    | "cfp_unavailable"
+    | "deadline_passed"
+    | "invalid_answers"
+    | "invalid_format"
+    | "invalid_track"
+    | "not_found"
+    | "persistence_failed"
+    | "submission_closed",
+): never {
+  if (error === "not_found") throwSubmissionNotFound();
+  if (error === "submission_closed") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "This proposal can no longer be edited.",
+    });
+  }
+  if (error === "cfp_unavailable" || error === "deadline_passed") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "This call for proposals is no longer accepting submissions.",
+    });
+  }
+  if (error === "invalid_track") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Choose an active track for this event.",
+    });
+  }
+  if (error === "invalid_format") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Choose a format offered by this call for proposals.",
+    });
+  }
+  if (error === "invalid_answers") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Check the answers required by the current proposal form.",
+    });
+  }
+  throw new TRPCError({
+    code: "INTERNAL_SERVER_ERROR",
+    message: "The proposal could not be saved.",
+  });
+}
+
+function throwSubmissionNotFound(): never {
+  throw new TRPCError({ code: "NOT_FOUND", message: "Proposal not found." });
 }
 
 function throwInvitationWriteError(

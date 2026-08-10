@@ -267,6 +267,7 @@ export async function findPublicCfp(
     .where(and(eq(events.slug, slug), eq(cfps.status, "open")))
     .limit(1);
   if (!row) return undefined;
+  if (new Date(row.deadline) <= new Date()) return undefined;
 
   const activeTracks = await database
     .select({ id: tracks.id, name: tracks.name })
