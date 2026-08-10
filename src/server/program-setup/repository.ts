@@ -1,10 +1,10 @@
-import { and, asc, eq, isNull, max } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 
 import type { RoomId, TrackId } from "../../shared/cfps";
 import type { UserId } from "../../shared/events";
 import type { Database } from "../database/client";
 import { rooms, tracks } from "../database/schema";
-import { findOwnedEvent } from "../events/repository";
+import { findEventForOrganizer } from "../events/repository";
 
 type EventOption = {
   id: RoomId | TrackId;
@@ -110,7 +110,7 @@ async function listEventOptions(
   slug: string,
   kind: OptionKind,
 ): Promise<EventOption[] | undefined> {
-  const event = await findOwnedEvent(database, userId, slug);
+  const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return undefined;
 
   const rows =
@@ -140,44 +140,29 @@ async function createEventOption(
   kind: OptionKind,
   name: string,
 ): Promise<EventOption | undefined> {
-  const event = await findOwnedEvent(database, userId, slug);
+  const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return undefined;
 
   const id = crypto.randomUUID() as RoomId | TrackId;
-  const now = new Date();
-  const [positionRow] =
-    kind === "track"
-      ? await database
-          .select({ position: max(tracks.position) })
-          .from(tracks)
-          .where(eq(tracks.eventId, event.id))
-      : await database
-          .select({ position: max(rooms.position) })
-          .from(rooms)
-          .where(eq(rooms.eventId, event.id));
-  const position = (positionRow?.position ?? -1) + 1;
+  const now = Date.now();
 
   if (kind === "track") {
-    await database.insert(tracks).values({
-      id,
-      eventId: event.id,
-      name,
-      position,
-      createdAt: now,
-      updatedAt: now,
-    });
+    await database.run(sql`
+      INSERT INTO tracks (id, event_id, name, position, created_at, updated_at)
+      SELECT ${id}, ${event.id}, ${name}, COALESCE(MAX(position), -1) + 1, ${now}, ${now}
+      FROM tracks
+      WHERE event_id = ${event.id}
+    `);
   } else {
-    await database.insert(rooms).values({
-      id,
-      eventId: event.id,
-      name,
-      position,
-      createdAt: now,
-      updatedAt: now,
-    });
+    await database.run(sql`
+      INSERT INTO rooms (id, event_id, name, position, created_at, updated_at)
+      SELECT ${id}, ${event.id}, ${name}, COALESCE(MAX(position), -1) + 1, ${now}, ${now}
+      FROM rooms
+      WHERE event_id = ${event.id}
+    `);
   }
 
-  return { id, name, position };
+  return findEventOption(database, event.id, kind, id);
 }
 
 async function updateEventOption(
@@ -188,7 +173,7 @@ async function updateEventOption(
   id: RoomId | TrackId,
   name: string,
 ): Promise<EventOption | undefined> {
-  const event = await findOwnedEvent(database, userId, slug);
+  const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return undefined;
 
   const now = new Date();
@@ -226,7 +211,7 @@ async function archiveEventOption(
   kind: OptionKind,
   id: RoomId | TrackId,
 ): Promise<boolean> {
-  const event = await findOwnedEvent(database, userId, slug);
+  const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return false;
 
   const now = new Date();
@@ -262,7 +247,7 @@ async function reorderEventOptions(
   kind: OptionKind,
   orderedIds: (RoomId | TrackId)[],
 ): Promise<"ok" | "not_found" | "invalid_order"> {
-  const event = await findOwnedEvent(database, userId, slug);
+  const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return "not_found";
 
   const current = await listEventOptions(database, userId, slug, kind);

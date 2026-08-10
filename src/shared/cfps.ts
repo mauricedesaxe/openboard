@@ -26,6 +26,19 @@ const fieldBase = {
     .regex(
       /^[a-z][a-z0-9_]*$/,
       "Use lowercase letters, numbers, and underscores.",
+    )
+    .refine(
+      (key) =>
+        ![
+          "abstract",
+          "format",
+          "proposed_speakers",
+          "speaker_email",
+          "speaker_name",
+          "title",
+          "track",
+        ].includes(key),
+      "Use a key that does not belong to a core proposal field.",
     ),
   label: nameSchema,
   required: z.boolean(),

@@ -12,12 +12,16 @@ import {
   useSearchParams,
 } from "react-router";
 
-import type { EventRole, InvitationId } from "../shared/event-team";
 import {
   cfpDefinitionInputSchema,
   type CfpDefinitionInput,
   type CustomField,
 } from "../shared/cfps";
+import {
+  eventLocalDateTimeToIso,
+  isoToEventLocalDateTime,
+} from "../shared/date-time";
+import type { EventRole, InvitationId } from "../shared/event-team";
 import {
   eventInputSchema,
   listTimezones,
@@ -846,25 +850,50 @@ function CfpSetupPage() {
         <OptionEditor
           title="Tracks"
           detail="Authors choose one track for each proposal."
+          error={
+            createTrack.error ??
+            updateTrack.error ??
+            archiveTrack.error ??
+            reorderTracks.error
+          }
           items={tracks.data}
           onCreate={(name) => createTrack.mutate({ slug, name })}
           onRename={(id, name) =>
             updateTrack.mutate({ slug, trackId: id, name })
           }
-          onArchive={(id) => archiveTrack.mutate({ slug, trackId: id })}
+          onArchive={(id) => {
+            if (window.confirm("Archive this track?")) {
+              archiveTrack.mutate({ slug, trackId: id });
+            }
+          }}
           onReorder={(orderedIds) => reorderTracks.mutate({ slug, orderedIds })}
         />
         <OptionEditor
           title="Rooms"
           detail="Rooms are ready for later agenda placement."
+          error={
+            createRoom.error ??
+            updateRoom.error ??
+            archiveRoom.error ??
+            reorderRooms.error
+          }
           items={rooms.data}
           onCreate={(name) => createRoom.mutate({ slug, name })}
           onRename={(id, name) => updateRoom.mutate({ slug, roomId: id, name })}
-          onArchive={(id) => archiveRoom.mutate({ slug, roomId: id })}
+          onArchive={(id) => {
+            if (window.confirm("Archive this room?")) {
+              archiveRoom.mutate({ slug, roomId: id });
+            }
+          }}
           onReorder={(orderedIds) => reorderRooms.mutate({ slug, orderedIds })}
         />
       </div>
-      <CfpBuilder cfp={cfp.data} key={cfp.data?.id ?? "new"} slug={slug} />
+      <CfpBuilder
+        cfp={cfp.data}
+        key={cfp.data?.id ?? "new"}
+        slug={slug}
+        timezone={event.data.timezone}
+      />
     </div>
   );
 }
@@ -873,6 +902,7 @@ function OptionEditor({
   title,
   detail,
   items,
+  error,
   onCreate,
   onRename,
   onArchive,
@@ -881,16 +911,23 @@ function OptionEditor({
   title: string;
   detail: string;
   items: EventOption[];
+  error: { message: string } | null;
   onCreate: (name: string) => void;
   onRename: (id: string, name: string) => void;
   onArchive: (id: string) => void;
   onReorder: (ids: string[]) => void;
 }) {
   const [name, setName] = useState("");
+  const [validationError, setValidationError] = useState<string>();
+  const singular = title.slice(0, -1).toLowerCase();
 
   function create(event: FormEvent) {
     event.preventDefault();
-    if (name.trim().length < 2) return;
+    if (name.trim().length < 2) {
+      setValidationError(`Enter at least 2 characters for the ${singular}.`);
+      return;
+    }
+    setValidationError(undefined);
     onCreate(name.trim());
     setName("");
   }
@@ -920,7 +957,14 @@ function OptionEditor({
               event.preventDefault();
               const form = new FormData(event.currentTarget);
               const nextName = form.get("name");
-              if (typeof nextName === "string") onRename(item.id, nextName);
+              if (typeof nextName !== "string" || nextName.trim().length < 2) {
+                setValidationError(
+                  `Enter at least 2 characters for the ${singular}.`,
+                );
+                return;
+              }
+              setValidationError(undefined);
+              onRename(item.id, nextName.trim());
             }}
           >
             <input
@@ -957,11 +1001,16 @@ function OptionEditor({
           </form>
         ))}
       </div>
+      {(validationError || error) && (
+        <p className="form-error" role="alert">
+          {validationError ?? error?.message}
+        </p>
+      )}
       <form className="option-add" onSubmit={create}>
         <input
-          aria-label={`New ${title.toLowerCase()} name`}
+          aria-label={`New ${singular} name`}
           onChange={(event) => setName(event.target.value)}
-          placeholder={`Add ${title.toLowerCase()}`}
+          placeholder={`Add ${singular}`}
           value={name}
         />
         <button className="mini-button" type="submit">
@@ -1074,6 +1123,7 @@ function InvitationPage({
 function CfpBuilder({
   cfp,
   slug,
+  timezone,
 }: {
   cfp:
     | (CfpDefinitionInput & {
@@ -1083,6 +1133,7 @@ function CfpBuilder({
       })
     | null;
   slug: string;
+  timezone: string;
 }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
@@ -1123,6 +1174,21 @@ function CfpBuilder({
     else create.mutate({ slug, ...parsed.data });
   }
 
+  function saveAndOpen() {
+    const parsed = cfpDefinitionInputSchema.safeParse(definition);
+    if (!cfp || !parsed.success) {
+      setValidationError(
+        parsed.success
+          ? "Create the draft before opening it."
+          : (parsed.error.issues[0]?.message ?? "Check the form definition."),
+      );
+      return;
+    }
+
+    setValidationError(undefined);
+    open.mutate({ slug, cfpId: cfp.id, ...parsed.data });
+  }
+
   function updateField(index: number, field: CustomField) {
     setDefinition((current) => ({
       ...current,
@@ -1157,95 +1223,109 @@ function CfpBuilder({
         )}
       </div>
       <form onSubmit={save}>
-        <div className="field-pair">
-          <Field label="CFP name" name="cfp-name">
+        {cfp?.structureLocked && (
+          <p className="locked-form-note">
+            This form is locked because it already has a final submission.
+          </p>
+        )}
+        <fieldset className="builder-fields" disabled={cfp?.structureLocked}>
+          <div className="field-pair">
+            <Field label="CFP name" name="cfp-name">
+              <input
+                id="cfp-name"
+                value={definition.name}
+                onChange={(event) =>
+                  setDefinition((current) => ({
+                    ...current,
+                    name: event.target.value,
+                  }))
+                }
+              />
+            </Field>
+            <Field label="Deadline" name="cfp-deadline">
+              <input
+                id="cfp-deadline"
+                type="datetime-local"
+                value={isoToEventLocalDateTime(definition.deadline, timezone)}
+                onChange={(event) => {
+                  const deadline = eventLocalDateTimeToIso(
+                    event.target.value,
+                    timezone,
+                  );
+                  setDefinition((current) => ({
+                    ...current,
+                    deadline: deadline ?? "",
+                  }));
+                  setValidationError(
+                    deadline
+                      ? undefined
+                      : "Choose a deadline that exists in the event timezone.",
+                  );
+                }}
+              />
+            </Field>
+          </div>
+          <Field
+            hint="Separate formats with commas"
+            label="Formats"
+            name="cfp-formats"
+          >
             <input
-              id="cfp-name"
-              value={definition.name}
+              id="cfp-formats"
+              value={definition.formats.join(", ")}
               onChange={(event) =>
                 setDefinition((current) => ({
                   ...current,
-                  name: event.target.value,
+                  formats: event.target.value
+                    .split(",")
+                    .map((value) => value.trim())
+                    .filter(Boolean),
                 }))
               }
             />
           </Field>
-          <Field label="Deadline" name="cfp-deadline">
-            <input
-              id="cfp-deadline"
-              type="datetime-local"
-              value={toDatetimeLocal(definition.deadline)}
-              onChange={(event) =>
+          <div className="core-field-note">
+            <strong>Always included</strong>
+            <span>Title · Abstract · Format · Track · Proposed speakers</span>
+          </div>
+          <div className="custom-field-heading">
+            <div>
+              <div className="eyebrow">Custom fields</div>
+              <p>Add only the information this event needs.</p>
+            </div>
+            <div className="field-type-actions">
+              <button type="button" onClick={() => addField("short_text")}>
+                + Short text
+              </button>
+              <button type="button" onClick={() => addField("long_text")}>
+                + Long text
+              </button>
+              <button type="button" onClick={() => addField("single_select")}>
+                + Single select
+              </button>
+              <button type="button" onClick={() => addField("file")}>
+                + File
+              </button>
+            </div>
+          </div>
+          {definition.customFields.map((field, index) => (
+            <CustomFieldEditor
+              allFields={definition.customFields}
+              field={field}
+              index={index}
+              key={index}
+              onChange={(next) => updateField(index, next)}
+              onRemove={() =>
                 setDefinition((current) => ({
                   ...current,
-                  deadline: event.target.value
-                    ? new Date(event.target.value).toISOString()
-                    : "",
+                  customFields: current.customFields.filter(
+                    (_, fieldIndex) => fieldIndex !== index,
+                  ),
                 }))
               }
             />
-          </Field>
-        </div>
-        <Field
-          hint="Separate formats with commas"
-          label="Formats"
-          name="cfp-formats"
-        >
-          <input
-            id="cfp-formats"
-            value={definition.formats.join(", ")}
-            onChange={(event) =>
-              setDefinition((current) => ({
-                ...current,
-                formats: event.target.value
-                  .split(",")
-                  .map((value) => value.trim())
-                  .filter(Boolean),
-              }))
-            }
-          />
-        </Field>
-        <div className="core-field-note">
-          <strong>Always included</strong>
-          <span>Title · Abstract · Format · Track · Proposed speakers</span>
-        </div>
-        <div className="custom-field-heading">
-          <div>
-            <div className="eyebrow">Custom fields</div>
-            <p>Add only the information this event needs.</p>
-          </div>
-          <div className="field-type-actions">
-            <button type="button" onClick={() => addField("short_text")}>
-              + Short text
-            </button>
-            <button type="button" onClick={() => addField("long_text")}>
-              + Long text
-            </button>
-            <button type="button" onClick={() => addField("single_select")}>
-              + Single select
-            </button>
-            <button type="button" onClick={() => addField("file")}>
-              + File
-            </button>
-          </div>
-        </div>
-        {definition.customFields.map((field, index) => (
-          <CustomFieldEditor
-            allFields={definition.customFields}
-            field={field}
-            index={index}
-            key={`${field.key}-${index}`}
-            onChange={(next) => updateField(index, next)}
-            onRemove={() =>
-              setDefinition((current) => ({
-                ...current,
-                customFields: current.customFields.filter(
-                  (_, fieldIndex) => fieldIndex !== index,
-                ),
-              }))
-            }
-          />
-        ))}
+          ))}
+        </fieldset>
         {(validationError || mutationError) && (
           <p className="form-error" role="alert">
             {validationError ?? mutationError?.message}
@@ -1265,7 +1345,7 @@ function CfpBuilder({
             <button
               className="open-button"
               disabled={open.isPending}
-              onClick={() => open.mutate({ slug, cfpId: cfp.id })}
+              onClick={saveAndOpen}
               type="button"
             >
               Open CFP
@@ -1451,7 +1531,22 @@ function PublicCfpPage() {
     trpc.cfps.publicByEventSlug.queryOptions({ slug }, { retry: false }),
   );
   const [step, setStep] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [coreAnswers, setCoreAnswers] = useState({
+    abstract: "",
+    format: "",
+    speakerEmail: "",
+    speakerName: "",
+    title: "",
+    track: "",
+  });
+  const [customAnswers, setCustomAnswers] = useState<Record<string, string>>(
+    {},
+  );
+
+  function advance(event: FormEvent) {
+    event.preventDefault();
+    if (step < 2) setStep((current) => current + 1);
+  }
 
   if (cfp.isPending)
     return <FullPageStatus label="Opening call for proposals" />;
@@ -1491,167 +1586,165 @@ function PublicCfpPage() {
           </ol>
         </aside>
         <section className="public-form-card">
-          {step === 0 && (
-            <>
-              <div className="eyebrow">01 · The idea</div>
-              <h2>What do you want to share?</h2>
-              <Field label="Title" name="public-title">
-                <input
-                  id="public-title"
-                  required
-                  value={answers.title ?? ""}
-                  onChange={(event) =>
-                    setAnswers((current) => ({
-                      ...current,
-                      title: event.target.value,
-                    }))
-                  }
-                />
-              </Field>
-              <Field label="Abstract" name="public-abstract">
-                <textarea
-                  id="public-abstract"
-                  required
-                  value={answers.abstract ?? ""}
-                  onChange={(event) =>
-                    setAnswers((current) => ({
-                      ...current,
-                      abstract: event.target.value,
-                    }))
-                  }
-                />
-              </Field>
-              <div className="field-pair">
-                <Field label="Format" name="public-format">
-                  <select
-                    id="public-format"
+          <form onSubmit={advance}>
+            {step === 0 && (
+              <>
+                <div className="eyebrow">01 · The idea</div>
+                <h2>What do you want to share?</h2>
+                <Field label="Title" name="public-title">
+                  <input
+                    id="public-title"
                     required
-                    value={answers.format ?? ""}
+                    value={coreAnswers.title}
                     onChange={(event) =>
-                      setAnswers((current) => ({
+                      setCoreAnswers((current) => ({
                         ...current,
-                        format: event.target.value,
-                      }))
-                    }
-                  >
-                    <option value="">Choose a format</option>
-                    {cfp.data.formats.map((format) => (
-                      <option key={format}>{format}</option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Track" name="public-track">
-                  <select
-                    id="public-track"
-                    required
-                    value={answers.track ?? ""}
-                    onChange={(event) =>
-                      setAnswers((current) => ({
-                        ...current,
-                        track: event.target.value,
-                      }))
-                    }
-                  >
-                    <option value="">Choose a track</option>
-                    {cfp.data.tracks.map((track) => (
-                      <option key={track.id} value={track.id}>
-                        {track.name}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
-            </>
-          )}
-          {step === 1 && (
-            <>
-              <div className="eyebrow">02 · The people</div>
-              <h2>Who will present?</h2>
-              <Field label="Proposed speaker name" name="speaker-name">
-                <input
-                  id="speaker-name"
-                  required
-                  value={answers.speakerName ?? ""}
-                  onChange={(event) =>
-                    setAnswers((current) => ({
-                      ...current,
-                      speakerName: event.target.value,
-                    }))
-                  }
-                />
-              </Field>
-              <Field label="Proposed speaker email" name="speaker-email">
-                <input
-                  id="speaker-email"
-                  required
-                  type="email"
-                  value={answers.speakerEmail ?? ""}
-                  onChange={(event) =>
-                    setAnswers((current) => ({
-                      ...current,
-                      speakerEmail: event.target.value,
-                    }))
-                  }
-                />
-              </Field>
-            </>
-          )}
-          {step === 2 && (
-            <>
-              <div className="eyebrow">03 · Event questions</div>
-              <h2>A few details for this event.</h2>
-              {cfp.data.customFields
-                .filter(
-                  (field) =>
-                    !field.condition ||
-                    answers[field.condition.fieldKey] ===
-                      field.condition.equals,
-                )
-                .map((field) => (
-                  <PublicCustomField
-                    field={field}
-                    key={field.key}
-                    value={answers[field.key] ?? ""}
-                    onChange={(value) =>
-                      setAnswers((current) => ({
-                        ...current,
-                        [field.key]: value,
+                        title: event.target.value,
                       }))
                     }
                   />
-                ))}
-              {cfp.data.customFields.length === 0 && (
-                <p className="muted">
-                  No extra questions. Your proposal is ready for the submission
-                  step.
-                </p>
+                </Field>
+                <Field label="Abstract" name="public-abstract">
+                  <textarea
+                    id="public-abstract"
+                    required
+                    value={coreAnswers.abstract}
+                    onChange={(event) =>
+                      setCoreAnswers((current) => ({
+                        ...current,
+                        abstract: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+                <div className="field-pair">
+                  <Field label="Format" name="public-format">
+                    <select
+                      id="public-format"
+                      required
+                      value={coreAnswers.format}
+                      onChange={(event) =>
+                        setCoreAnswers((current) => ({
+                          ...current,
+                          format: event.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">Choose a format</option>
+                      {cfp.data.formats.map((format) => (
+                        <option key={format}>{format}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Track" name="public-track">
+                    <select
+                      id="public-track"
+                      required
+                      value={coreAnswers.track}
+                      onChange={(event) =>
+                        setCoreAnswers((current) => ({
+                          ...current,
+                          track: event.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">Choose a track</option>
+                      {cfp.data.tracks.map((track) => (
+                        <option key={track.id} value={track.id}>
+                          {track.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+              </>
+            )}
+            {step === 1 && (
+              <>
+                <div className="eyebrow">02 · The people</div>
+                <h2>Who will present?</h2>
+                <Field label="Proposed speaker name" name="speaker-name">
+                  <input
+                    id="speaker-name"
+                    required
+                    value={coreAnswers.speakerName}
+                    onChange={(event) =>
+                      setCoreAnswers((current) => ({
+                        ...current,
+                        speakerName: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+                <Field label="Proposed speaker email" name="speaker-email">
+                  <input
+                    id="speaker-email"
+                    required
+                    type="email"
+                    value={coreAnswers.speakerEmail}
+                    onChange={(event) =>
+                      setCoreAnswers((current) => ({
+                        ...current,
+                        speakerEmail: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+              </>
+            )}
+            {step === 2 && (
+              <>
+                <div className="eyebrow">03 · Event questions</div>
+                <h2>A few details for this event.</h2>
+                {cfp.data.customFields
+                  .filter(
+                    (field) =>
+                      !field.condition ||
+                      customAnswers[field.condition.fieldKey] ===
+                        field.condition.equals,
+                  )
+                  .map((field) => (
+                    <PublicCustomField
+                      field={field}
+                      key={field.key}
+                      value={customAnswers[field.key] ?? ""}
+                      onChange={(value) =>
+                        setCustomAnswers((current) => ({
+                          ...current,
+                          [field.key]: value,
+                        }))
+                      }
+                    />
+                  ))}
+                {cfp.data.customFields.length === 0 && (
+                  <p className="muted">
+                    No extra questions. Your proposal is ready for the
+                    submission step.
+                  </p>
+                )}
+              </>
+            )}
+            <div className="public-form-actions">
+              {step > 0 && (
+                <button
+                  className="text-button"
+                  onClick={() => setStep((current) => current - 1)}
+                  type="button"
+                >
+                  Back
+                </button>
               )}
-            </>
-          )}
-          <div className="public-form-actions">
-            {step > 0 && (
-              <button
-                className="text-button"
-                onClick={() => setStep((current) => current - 1)}
-                type="button"
-              >
-                Back
-              </button>
-            )}
-            {step < steps.length - 1 ? (
-              <button
-                className="primary-button"
-                onClick={() => setStep((current) => current + 1)}
-                type="button"
-              >
-                Continue
-              </button>
-            ) : (
-              <button className="primary-button" disabled type="button">
-                Submission opens next
-              </button>
-            )}
-          </div>
+              {step < steps.length - 1 ? (
+                <button className="primary-button" type="submit">
+                  Continue
+                </button>
+              ) : (
+                <button className="primary-button" disabled type="button">
+                  Submission opens next
+                </button>
+              )}
+            </div>
+          </form>
         </section>
       </div>
     </main>
@@ -1743,13 +1836,6 @@ function newCustomField(type: CustomField["type"], index: number): CustomField {
   if (type === "file")
     return { ...base, type, acceptedTypes: ["application/pdf"], maxSizeMb: 10 };
   return { ...base, type };
-}
-
-function toDatetimeLocal(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 }
 
 function formatDeadline(value: string, timezone: string): string {
