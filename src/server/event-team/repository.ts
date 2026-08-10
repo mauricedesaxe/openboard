@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lte, or, sql } from "drizzle-orm";
 
 import type {
   EventRole,
@@ -20,12 +20,23 @@ const invitationLifetimeMs = 7 * 24 * 60 * 60 * 1000;
 export type CreateInvitationResult =
   | {
       ok: true;
+      outcome: "created";
       value: {
         id: InvitationId;
         email: string;
         eventName: string;
         role: EventRole;
         secret: string;
+        expiresAt: Date;
+      };
+    }
+  | {
+      ok: true;
+      outcome: "already_pending";
+      value: {
+        id: InvitationId;
+        email: string;
+        role: EventRole;
         expiresAt: Date;
       };
     }
@@ -88,10 +99,23 @@ export async function createInvitation(
     .limit(1);
   if (existingRole) return { ok: false, error: "role_already_granted" };
 
+  const now = new Date();
+  if (!input.replacesInvitationId) {
+    const pending = await findUsablePendingGrant(
+      database,
+      event.id,
+      input.email,
+      input.role,
+      now,
+    );
+    if (pending) {
+      return { ok: true, outcome: "already_pending", value: pending };
+    }
+  }
+
   const id = crypto.randomUUID() as InvitationId;
   const secret = createInvitationSecret();
   const secretHash = await hashInvitationSecret(secret);
-  const now = new Date();
   const expiresAt = new Date(now.getTime() + invitationLifetimeMs);
 
   try {
@@ -117,6 +141,7 @@ export async function createInvitation(
                 eq(invitations.email, input.email),
                 eq(invitations.role, input.role),
                 eq(invitations.status, "pending"),
+                lte(invitations.expiresAt, now),
               ),
         ),
       database.insert(invitations).values({
@@ -133,11 +158,24 @@ export async function createInvitation(
       }),
     ]);
   } catch {
+    if (!input.replacesInvitationId) {
+      const pending = await findUsablePendingGrant(
+        database,
+        event.id,
+        input.email,
+        input.role,
+        now,
+      );
+      if (pending) {
+        return { ok: true, outcome: "already_pending", value: pending };
+      }
+    }
     return { ok: false, error: "persistence_failed" };
   }
 
   return {
     ok: true,
+    outcome: "created",
     value: {
       id,
       email: input.email,
@@ -147,6 +185,34 @@ export async function createInvitation(
       expiresAt,
     },
   };
+}
+
+async function findUsablePendingGrant(
+  database: Database,
+  eventId: string,
+  email: string,
+  role: EventRole,
+  now: Date,
+) {
+  const [pending] = await database
+    .select({
+      id: invitations.id,
+      email: invitations.email,
+      role: invitations.role,
+      expiresAt: invitations.expiresAt,
+    })
+    .from(invitations)
+    .where(
+      and(
+        eq(invitations.eventId, eventId),
+        eq(invitations.email, email),
+        eq(invitations.role, role),
+        eq(invitations.status, "pending"),
+        gt(invitations.expiresAt, now),
+      ),
+    )
+    .limit(1);
+  return pending ? { ...pending, id: pending.id as InvitationId } : undefined;
 }
 
 export async function listEventTeam(
