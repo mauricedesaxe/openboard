@@ -6,6 +6,7 @@ import {
   Navigate,
   Route,
   Routes,
+  useLocation,
   useNavigate,
   useParams,
   useSearchParams,
@@ -30,11 +31,23 @@ import {
   listTimezones,
   type EventInput,
 } from "../shared/events";
+import {
+  proposalDraftSchema,
+  type ProposalContent,
+  type ProposalDraft,
+  type Submission,
+  type SubmissionId,
+} from "../shared/submissions";
 
 import { authClient } from "./auth";
 import { useTRPC } from "./trpc";
 
 export function App() {
+  const location = useLocation();
+  useEffect(() => {
+    window.scrollTo({ left: 0, top: 0 });
+  }, [location.pathname]);
+
   return (
     <Routes>
       <Route path="/events/:slug/cfp" element={<PublicCfpPage />} />
@@ -114,6 +127,10 @@ function AuthenticatedApp({ email }: { email: string }) {
           <Route path="events/new" element={<CreateEventPage />} />
           <Route path="events/:slug" element={<EventPage />} />
           <Route path="events/:slug/cfp/setup" element={<CfpSetupPage />} />
+          <Route
+            path="submissions/:submissionId"
+            element={<SubmissionPage />}
+          />
         </Routes>
       </main>
     </div>
@@ -124,6 +141,7 @@ function SignInPage() {
   const [searchParams] = useSearchParams();
   const returnTo = safeReturnTo(searchParams.get("returnTo"));
   const invitationSignIn = returnTo.startsWith("/invitations/");
+  const proposalSignIn = /^\/events\/[^/]+\/cfp$/.test(returnTo);
   const [email, setEmail] = useState(searchParams.get("email") ?? "");
   const [code, setCode] = useState("");
   const [step, setStep] = useState<"email" | "code">("email");
@@ -223,7 +241,11 @@ function SignInPage() {
         <div className="panel-number">01</div>
         <div>
           <div className="eyebrow">
-            {invitationSignIn ? "Invitation access" : "Owner access"}
+            {invitationSignIn
+              ? "Invitation access"
+              : proposalSignIn
+                ? "Proposal access"
+                : "Owner access"}
           </div>
           <h2>
             {step === "email" ? "Start with your email" : "Check your inbox"}
@@ -279,7 +301,9 @@ function SignInPage() {
                   ? "Verifying…"
                   : invitationSignIn
                     ? "Continue to invitation"
-                    : "Open my board"}
+                    : proposalSignIn
+                      ? "Return to proposal"
+                      : "Open my board"}
               </button>
               <button
                 className="text-button"
@@ -313,6 +337,7 @@ function SignInPage() {
 function EventIndex() {
   const trpc = useTRPC();
   const events = useQuery(trpc.events.list.queryOptions());
+  const submissions = useQuery(trpc.submissions.listOwn.queryOptions());
 
   return (
     <div className="page page-wide">
@@ -325,14 +350,22 @@ function EventIndex() {
           Create an event
         </Link>
       </section>
-      {events.isPending && <BoardStatus label="Loading events" />}
+      {(events.isPending || submissions.isPending) && (
+        <BoardStatus label="Loading your board" />
+      )}
       {events.isError && (
         <BoardStatus
           label="Events are unavailable"
           detail={events.error.message}
         />
       )}
-      {events.data?.length === 0 && (
+      {submissions.isError && (
+        <BoardStatus
+          label="Proposals are unavailable"
+          detail={submissions.error.message}
+        />
+      )}
+      {events.data?.length === 0 && submissions.data?.length === 0 && (
         <section className="empty-board">
           <span className="empty-number">00</span>
           <h2>No events yet</h2>
@@ -363,6 +396,33 @@ function EventIndex() {
             </Link>
           ))}
         </div>
+      )}
+      {submissions.data && submissions.data.length > 0 && (
+        <section className="owned-submissions">
+          <div className="page-heading">
+            <div>
+              <div className="eyebrow">Your proposals</div>
+              <h2>Keep your submissions current.</h2>
+            </div>
+          </div>
+          <div className="event-grid">
+            {submissions.data.map((submission, index) => (
+              <Link
+                className="event-card"
+                key={submission.id}
+                to={`/submissions/${submission.id}`}
+              >
+                <span className="card-index">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <h2>{submission.title}</h2>
+                <p>{submission.event.name}</p>
+                <span className="card-timezone">{submission.status}</span>
+                <span className="card-arrow">↗</span>
+              </Link>
+            ))}
+          </div>
+        </section>
       )}
     </div>
   );
@@ -1721,33 +1781,345 @@ function CustomFieldEditor({
   );
 }
 
+function SubmissionPage() {
+  const { submissionId = "" } = useParams();
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const submissionInput = { submissionId: submissionId as SubmissionId };
+  const submission = useQuery(
+    trpc.submissions.getOwn.queryOptions(submissionInput),
+  );
+  const cfp = useQuery(
+    trpc.cfps.publicByEventSlug.queryOptions(
+      { slug: submission.data?.event.slug ?? "unavailable" },
+      { enabled: Boolean(submission.data), retry: false },
+    ),
+  );
+  const [content, setContent] = useState<ProposalContent>();
+  const update = useMutation(
+    trpc.submissions.updateOwn.mutationOptions({
+      onSuccess: async (saved) => {
+        setContent(submissionContent(saved));
+        await queryClient.invalidateQueries(
+          trpc.submissions.getOwn.queryFilter(submissionInput),
+        );
+      },
+    }),
+  );
+  const withdraw = useMutation(
+    trpc.submissions.withdrawOwn.mutationOptions({
+      onSuccess: async () => {
+        await queryClient.invalidateQueries(
+          trpc.submissions.getOwn.queryFilter(submissionInput),
+        );
+      },
+    }),
+  );
+
+  if (submission.isPending) return <FullPageStatus label="Opening proposal" />;
+  if (submission.isError)
+    return (
+      <div className="page">
+        <BoardStatus
+          label="Proposal unavailable"
+          detail={submission.error.message}
+        />
+      </div>
+    );
+
+  const active = submission.data.status === "active";
+  const editable = active && submission.data.decision.status === "pending";
+  const initialContent = submissionContent(submission.data);
+  const currentContent = content ?? initialContent;
+
+  function changeContent(
+    update: (current: ProposalContent) => ProposalContent,
+  ) {
+    setContent((current) => update(current ?? initialContent));
+  }
+
+  function save(event: FormEvent) {
+    event.preventDefault();
+    update.mutate({
+      submissionId: submissionInput.submissionId,
+      ...currentContent,
+    });
+  }
+
+  return (
+    <div className="page submission-page">
+      <Link className="arrow-link" to="/">
+        ← My events
+      </Link>
+      <section className="submission-heading">
+        <div>
+          <div className="eyebrow">Proposal received</div>
+          <h1>{submission.data.title}</h1>
+          <p>
+            {submission.data.event.name} · {submission.data.cfp.name}
+          </p>
+        </div>
+        <div className={`submission-state ${active ? "active" : "withdrawn"}`}>
+          {active ? "Confirmation recorded" : "Withdrawn"}
+        </div>
+      </section>
+      {currentContent && (
+        <section className="form-board submission-form">
+          <form onSubmit={save}>
+            <div className="eyebrow">Your proposal</div>
+            <div className="field-pair">
+              <Field label="Title" name="submission-title">
+                <input
+                  disabled={!editable}
+                  id="submission-title"
+                  required
+                  value={currentContent.title}
+                  onChange={(event) =>
+                    changeContent((current) => ({
+                      ...current,
+                      title: event.target.value,
+                    }))
+                  }
+                />
+              </Field>
+              <Field label="Track" name="submission-track">
+                <select
+                  disabled={!editable || !cfp.data}
+                  id="submission-track"
+                  required
+                  value={currentContent.trackId}
+                  onChange={(event) =>
+                    changeContent((current) => ({
+                      ...current,
+                      trackId: event.target.value as ProposalContent["trackId"],
+                    }))
+                  }
+                >
+                  {(cfp.data?.tracks ?? [submission.data.track]).map(
+                    (track) => (
+                      <option key={track.id} value={track.id}>
+                        {track.name}
+                      </option>
+                    ),
+                  )}
+                </select>
+              </Field>
+            </div>
+            <Field label="Abstract" name="submission-abstract">
+              <textarea
+                disabled={!editable}
+                id="submission-abstract"
+                required
+                value={currentContent.abstract}
+                onChange={(event) =>
+                  changeContent((current) => ({
+                    ...current,
+                    abstract: event.target.value,
+                  }))
+                }
+              />
+            </Field>
+            <div className="field-pair">
+              <Field label="Format" name="submission-format">
+                <select
+                  disabled={!editable || !cfp.data}
+                  id="submission-format"
+                  required
+                  value={currentContent.format}
+                  onChange={(event) =>
+                    changeContent((current) => ({
+                      ...current,
+                      format: event.target.value,
+                    }))
+                  }
+                >
+                  {(cfp.data?.formats ?? [submission.data.format]).map(
+                    (format) => (
+                      <option key={format}>{format}</option>
+                    ),
+                  )}
+                </select>
+              </Field>
+              <Field label="Proposed speaker" name="submission-speaker">
+                <input
+                  disabled={!editable}
+                  id="submission-speaker"
+                  required
+                  value={currentContent.proposedSpeakers[0]?.name ?? ""}
+                  onChange={(event) =>
+                    changeContent((current) => ({
+                      ...current,
+                      proposedSpeakers: [
+                        {
+                          name: event.target.value,
+                          email: current.proposedSpeakers[0]?.email ?? "",
+                        },
+                      ],
+                    }))
+                  }
+                />
+              </Field>
+            </div>
+            <Field label="Speaker email" name="submission-speaker-email">
+              <input
+                disabled={!editable}
+                id="submission-speaker-email"
+                required
+                type="email"
+                value={currentContent.proposedSpeakers[0]?.email ?? ""}
+                onChange={(event) =>
+                  changeContent((current) => ({
+                    ...current,
+                    proposedSpeakers: [
+                      {
+                        name: current.proposedSpeakers[0]?.name ?? "",
+                        email: event.target.value,
+                      },
+                    ],
+                  }))
+                }
+              />
+            </Field>
+            {cfp.data &&
+              visibleCustomFields(
+                cfp.data.customFields,
+                currentContent.customAnswers,
+              ).map((field) => (
+                <PublicCustomField
+                  field={field}
+                  key={field.key}
+                  value={currentContent.customAnswers[field.key] ?? ""}
+                  onChange={(value) =>
+                    changeContent((current) => ({
+                      ...current,
+                      customAnswers: {
+                        ...current.customAnswers,
+                        [field.key]: value,
+                      },
+                    }))
+                  }
+                />
+              ))}
+            {(update.error || withdraw.error) && (
+              <p className="form-error" role="alert">
+                {update.error?.message ?? withdraw.error?.message}
+              </p>
+            )}
+            {editable && (
+              <div className="submission-actions">
+                <button
+                  className="primary-button"
+                  disabled={update.isPending || cfp.isPending}
+                  type="submit"
+                >
+                  {update.isPending ? "Saving…" : "Save proposal"}
+                </button>
+                <button
+                  className="text-button danger-button"
+                  disabled={withdraw.isPending}
+                  onClick={() =>
+                    withdraw.mutate({
+                      submissionId: submissionInput.submissionId,
+                    })
+                  }
+                  type="button"
+                >
+                  {withdraw.isPending ? "Withdrawing…" : "Withdraw proposal"}
+                </button>
+              </div>
+            )}
+          </form>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function PublicCfpPage() {
   const { slug = "" } = useParams();
+  const navigate = useNavigate();
   const trpc = useTRPC();
+  const session = authClient.useSession();
   const cfp = useQuery(
     trpc.cfps.publicByEventSlug.queryOptions(
       { slug },
       { refetchOnWindowFocus: false, retry: false, staleTime: Infinity },
     ),
   );
-  const [step, setStep] = useState(0);
-  const [coreAnswers, setCoreAnswers] = useState({
-    abstract: "",
-    format: "",
-    speakerEmail: "",
-    speakerName: "",
-    title: "",
-    track: "",
-  });
-  const [customAnswers, setCustomAnswers] = useState<Record<string, string>>(
-    {},
+  const [draft, setDraft] = useState<ProposalDraft>(() =>
+    loadProposalDraft(slug),
   );
+  const draftKey = proposalDraftKey(slug);
+  const submit = useMutation(
+    trpc.submissions.submit.mutationOptions({
+      onSuccess: (submission) => {
+        if (draftKey) window.localStorage.removeItem(draftKey);
+        void navigate(`/submissions/${submission.id}`);
+      },
+    }),
+  );
+  const { coreAnswers, customAnswers, step } = draft;
+
+  useEffect(() => {
+    window.localStorage.setItem(draftKey, JSON.stringify(draft));
+  }, [draft, draftKey]);
+
+  function setStep(update: number | ((current: number) => number)) {
+    setDraft((current) => ({
+      ...current,
+      step: typeof update === "function" ? update(current.step) : update,
+    }));
+  }
+
+  function setCoreAnswers(
+    update: (
+      current: ProposalDraft["coreAnswers"],
+    ) => ProposalDraft["coreAnswers"],
+  ) {
+    setDraft((current) => ({
+      ...current,
+      coreAnswers: update(current.coreAnswers),
+    }));
+  }
+
+  function setCustomAnswers(
+    update: (
+      current: ProposalDraft["customAnswers"],
+    ) => ProposalDraft["customAnswers"],
+  ) {
+    setDraft((current) => ({
+      ...current,
+      customAnswers: update(current.customAnswers),
+    }));
+  }
 
   function advance(event: FormEvent) {
     event.preventDefault();
     if (step < publicCfpSteps.length - 1) {
       setStep((current) => current + 1);
+      return;
     }
+
+    if (!session.data) {
+      const returnTo = `/events/${slug}/cfp`;
+      void navigate(`/sign-in?returnTo=${encodeURIComponent(returnTo)}`);
+      return;
+    }
+
+    if (!cfp.data) return;
+    submit.mutate({
+      slug,
+      cfpId: cfp.data.cfpId,
+      clientDraftId: draft.clientDraftId,
+      title: coreAnswers.title,
+      abstract: coreAnswers.abstract,
+      format: coreAnswers.format,
+      trackId: coreAnswers.track,
+      proposedSpeakers: [
+        { name: coreAnswers.speakerName, email: coreAnswers.speakerEmail },
+      ],
+      customAnswers,
+    });
   }
 
   if (cfp.isPending)
@@ -1935,11 +2307,24 @@ function PublicCfpPage() {
                   Continue
                 </button>
               ) : (
-                <button className="primary-button" disabled type="button">
-                  Submission opens next
+                <button
+                  className="primary-button"
+                  disabled={submit.isPending || session.isPending}
+                  type="submit"
+                >
+                  {submit.isPending
+                    ? "Submitting…"
+                    : session.data
+                      ? "Submit proposal"
+                      : "Sign in and submit"}
                 </button>
               )}
             </div>
+            {submit.error && (
+              <p className="form-error" role="alert">
+                {submit.error.message}
+              </p>
+            )}
           </form>
         </section>
       </div>
@@ -2018,6 +2403,54 @@ function emptyCfpDefinition(): CfpDefinitionInput {
     deadline: deadline.toISOString(),
     formats: ["Talk", "Workshop"],
     customFields: [],
+  };
+}
+
+function emptyProposalDraft(): ProposalDraft {
+  return {
+    clientDraftId: crypto.randomUUID(),
+    step: 0,
+    coreAnswers: {
+      abstract: "",
+      format: "",
+      speakerEmail: "",
+      speakerName: "",
+      title: "",
+      track: "",
+    },
+    customAnswers: {},
+  };
+}
+
+function loadProposalDraft(slug: string): ProposalDraft {
+  const key = proposalDraftKey(slug);
+  const stored = window.localStorage.getItem(key);
+  if (!stored) return emptyProposalDraft();
+
+  try {
+    const parsed = proposalDraftSchema.safeParse(JSON.parse(stored) as unknown);
+    if (parsed.success) return parsed.data;
+  } catch {
+    window.localStorage.removeItem(key);
+  }
+  return emptyProposalDraft();
+}
+
+function proposalDraftKey(slug: string): string {
+  return `openboard:proposal-draft:${slug}`;
+}
+
+function submissionContent(submission: Submission): ProposalContent {
+  return {
+    title: submission.title,
+    abstract: submission.abstract,
+    format: submission.format,
+    trackId: submission.track.id,
+    proposedSpeakers: submission.proposedSpeakers.map(({ name, email }) => ({
+      name,
+      email,
+    })),
+    customAnswers: submission.customAnswers,
   };
 }
 

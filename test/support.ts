@@ -105,7 +105,9 @@ export async function callTrpc(
 
   const path =
     type === "query"
-      ? `/api/trpc/${procedure}?input=${encodeURIComponent(JSON.stringify(input))}`
+      ? input === undefined
+        ? `/api/trpc/${procedure}`
+        : `/api/trpc/${procedure}?input=${encodeURIComponent(JSON.stringify(input))}`
       : `/api/trpc/${procedure}`;
   const response = await workerFetch(
     path,
