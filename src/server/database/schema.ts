@@ -203,15 +203,71 @@ export const reviewerAssignments = sqliteTable(
   ],
 );
 
+export const tracks = sqliteTable(
+  "tracks",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    position: integer("position").notNull(),
+    archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("tracks_event_id_idx").on(table.eventId)],
+);
+
+export const rooms = sqliteTable(
+  "rooms",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    position: integer("position").notNull(),
+    archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("rooms_event_id_idx").on(table.eventId)],
+);
+
+export const cfps = sqliteTable(
+  "cfps",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    deadline: text("deadline").notNull(),
+    status: text("status", { enum: ["draft", "open", "closed"] }).notNull(),
+    formatsJson: text("formats_json").notNull(),
+    customFieldsJson: text("custom_fields_json").notNull(),
+    structureLockedAt: integer("structure_locked_at", {
+      mode: "timestamp_ms",
+    }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("cfps_event_id_idx").on(table.eventId)],
+);
+
 export const schema = {
   account,
   agendas,
   eventRoles,
+  cfps,
   events,
   invitations,
   rateLimit,
   reviewerAssignments,
+  rooms,
   session,
+  tracks,
   user,
   verification,
 };

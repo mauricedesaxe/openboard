@@ -2,6 +2,12 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 import {
+  cfpDefinitionInputSchema,
+  type CfpId,
+  type RoomId,
+  type TrackId,
+} from "../shared/cfps";
+import {
   invitationSecretInputSchema,
   inviteEventTeamSchema,
   revokeEventRoleSchema,
@@ -9,6 +15,13 @@ import {
 } from "../shared/event-team";
 import { eventInputSchema, type UserId } from "../shared/events";
 
+import {
+  createDraftCfp,
+  findPublicCfp,
+  getCfpSetup,
+  openCfp,
+  updateDraftCfp,
+} from "./cfps/repository";
 import type { AppConfig } from "./config";
 import type { Database } from "./database/client";
 import { sendEventInvitation } from "./event-team/delivery";
@@ -28,6 +41,18 @@ import {
   renameOwnedEvent,
 } from "./events/repository";
 import type { Auth } from "./identity/auth";
+import {
+  archiveRoom,
+  archiveTrack,
+  createRoom,
+  createTrack,
+  listRooms,
+  listTracks,
+  reorderRooms,
+  reorderTracks,
+  updateRoom,
+  updateTrack,
+} from "./program-setup/repository";
 
 type Context = {
   auth: Auth;
@@ -63,6 +88,14 @@ const authenticatedProcedure = trpc.procedure.use(async ({ ctx, next }) => {
     },
   });
 });
+
+const slugInput = z.object({ slug: eventInputSchema.shape.slug });
+const optionNameInput = slugInput.extend({
+  name: z.string().trim().min(2).max(120),
+});
+const trackIdSchema = z.uuid();
+const roomIdSchema = z.uuid();
+const cfpIdSchema = z.uuid();
 
 export const appRouter = trpc.router({
   events: trpc.router({
@@ -255,7 +288,236 @@ export const appRouter = trpc.router({
         return result.value;
       }),
   }),
+  tracks: trpc.router({
+    list: authenticatedProcedure
+      .input(slugInput)
+      .query(async ({ ctx, input }) => {
+        const result = await listTracks(ctx.database, ctx.userId, input.slug);
+        if (!result) throwCfpItemNotFound();
+        return result;
+      }),
+    create: authenticatedProcedure
+      .input(optionNameInput)
+      .mutation(async ({ ctx, input }) => {
+        const result = await createTrack(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.name,
+        );
+        if (!result) throwCfpItemNotFound();
+        return result;
+      }),
+    update: authenticatedProcedure
+      .input(optionNameInput.extend({ trackId: trackIdSchema }))
+      .mutation(async ({ ctx, input }) => {
+        const result = await updateTrack(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.trackId as TrackId,
+          input.name,
+        );
+        if (!result) throwCfpItemNotFound();
+        return result;
+      }),
+    archive: authenticatedProcedure
+      .input(slugInput.extend({ trackId: trackIdSchema }))
+      .mutation(async ({ ctx, input }) => {
+        const archived = await archiveTrack(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.trackId as TrackId,
+        );
+        if (!archived) throwCfpItemNotFound();
+        return { archived: true as const };
+      }),
+    reorder: authenticatedProcedure
+      .input(
+        slugInput.extend({
+          orderedIds: z
+            .array(trackIdSchema)
+            .refine((ids) => new Set(ids).size === ids.length),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const result = await reorderTracks(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.orderedIds as TrackId[],
+        );
+        handleReorderResult(result);
+        return { reordered: true as const };
+      }),
+  }),
+  rooms: trpc.router({
+    list: authenticatedProcedure
+      .input(slugInput)
+      .query(async ({ ctx, input }) => {
+        const result = await listRooms(ctx.database, ctx.userId, input.slug);
+        if (!result) throwCfpItemNotFound();
+        return result;
+      }),
+    create: authenticatedProcedure
+      .input(optionNameInput)
+      .mutation(async ({ ctx, input }) => {
+        const result = await createRoom(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.name,
+        );
+        if (!result) throwCfpItemNotFound();
+        return result;
+      }),
+    update: authenticatedProcedure
+      .input(optionNameInput.extend({ roomId: roomIdSchema }))
+      .mutation(async ({ ctx, input }) => {
+        const result = await updateRoom(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.roomId as RoomId,
+          input.name,
+        );
+        if (!result) throwCfpItemNotFound();
+        return result;
+      }),
+    archive: authenticatedProcedure
+      .input(slugInput.extend({ roomId: roomIdSchema }))
+      .mutation(async ({ ctx, input }) => {
+        const archived = await archiveRoom(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.roomId as RoomId,
+        );
+        if (!archived) throwCfpItemNotFound();
+        return { archived: true as const };
+      }),
+    reorder: authenticatedProcedure
+      .input(
+        slugInput.extend({
+          orderedIds: z
+            .array(roomIdSchema)
+            .refine((ids) => new Set(ids).size === ids.length),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const result = await reorderRooms(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.orderedIds as RoomId[],
+        );
+        handleReorderResult(result);
+        return { reordered: true as const };
+      }),
+  }),
+  cfps: trpc.router({
+    getSetup: authenticatedProcedure
+      .input(slugInput)
+      .query(async ({ ctx, input }) => {
+        const result = await getCfpSetup(ctx.database, ctx.userId, input.slug);
+        if (result === undefined) throwCfpItemNotFound();
+        return result;
+      }),
+    createDraft: authenticatedProcedure
+      .input(slugInput.extend(cfpDefinitionInputSchema.shape))
+      .mutation(async ({ ctx, input }) => {
+        const result = await createDraftCfp(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input,
+        );
+        if (!result.ok) throwCfpWriteError(result.error);
+        return result.value;
+      }),
+    updateDraft: authenticatedProcedure
+      .input(
+        slugInput.extend(cfpDefinitionInputSchema.shape).extend({
+          cfpId: cfpIdSchema,
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const result = await updateDraftCfp(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.cfpId as CfpId,
+          input,
+        );
+        if (!result.ok) throwCfpWriteError(result.error);
+        return result.value;
+      }),
+    open: authenticatedProcedure
+      .input(slugInput.extend({ cfpId: cfpIdSchema }))
+      .mutation(async ({ ctx, input }) => {
+        const result = await openCfp(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.cfpId as CfpId,
+        );
+        if (!result.ok) throwCfpWriteError(result.error);
+        return result.value;
+      }),
+    publicByEventSlug: trpc.procedure
+      .input(slugInput)
+      .query(async ({ ctx, input }) => {
+        const result = await findPublicCfp(ctx.database, input.slug);
+        if (!result) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "This call for proposals is not open.",
+          });
+        }
+        return result;
+      }),
+  }),
 });
+
+function throwCfpItemNotFound(): never {
+  throw new TRPCError({ code: "NOT_FOUND", message: "Event item not found." });
+}
+
+function handleReorderResult(
+  result: "ok" | "not_found" | "invalid_order",
+): void {
+  if (result === "not_found") throwCfpItemNotFound();
+  if (result === "invalid_order") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "The order must contain every active item once.",
+    });
+  }
+}
+
+function throwCfpWriteError(
+  error:
+    "already_open" | "not_found" | "persistence_failed" | "structure_locked",
+): never {
+  if (error === "not_found") throwCfpItemNotFound();
+  if (error === "already_open") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "This event already has an open call for proposals.",
+    });
+  }
+  if (error === "structure_locked") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "The form structure is locked after the first submission.",
+    });
+  }
+  throw new TRPCError({
+    code: "INTERNAL_SERVER_ERROR",
+    message: "The call for proposals could not be saved.",
+  });
+}
 
 function throwInvitationWriteError(
   error:
