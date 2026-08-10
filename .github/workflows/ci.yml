@@ -22,14 +22,14 @@ jobs:
 
   preview:
     needs: check
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    concurrency:
+      group: preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -49,28 +49,42 @@ jobs:
         id: auth-secret
         run: echo "value=$(openssl rand -base64 48)" >> "$GITHUB_OUTPUT"
       - name: Apply migrations to the shared preview D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm exec wrangler d1 migrations apply openboard-preview --remote --config wrangler.preview.jsonc
       - name: Deploy the preview worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm exec wrangler deploy --config wrangler.preview.jsonc
       - name: Set the preview auth secret
-        run: echo "$SECRET_VALUE" | pnpm exec wrangler secret put BETTER_AUTH_SECRET --config wrangler.preview.jsonc
         env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           SECRET_VALUE: ${{ steps.auth-secret.outputs.value }}
+        run: echo "$SECRET_VALUE" | pnpm exec wrangler secret put BETTER_AUTH_SECRET --config wrangler.preview.jsonc
       - name: Redeploy with the secret applied
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm exec wrangler deploy --config wrangler.preview.jsonc
-      - name: Verify the preview serves the app
+      - name: Verify the preview serves the app and boots auth
         run: |
           URL=$(cat preview-url.txt)
           for attempt in 1 2 3 4 5; do
             STATUS=$(curl -sS --max-time 60 -o /tmp/preview-body.html -w "%{http_code}" "$URL")
-            if [ "$STATUS" = "200" ] && grep -q 'id="root"' /tmp/preview-body.html; then
+            AUTH_STATUS=$(curl -sS --max-time 60 -o /tmp/auth-session.json -w "%{http_code}" "$URL/api/auth/get-session")
+            if [ "$STATUS" = "200" ] && grep -q 'id="root"' /tmp/preview-body.html \
+              && [ "$AUTH_STATUS" = "200" ]; then
               echo "Preview OK: $URL"
               exit 0
             fi
-            echo "attempt $attempt of 5: HTTP $STATUS"
+            echo "attempt $attempt of 5: HTTP $STATUS, auth $AUTH_STATUS"
             sleep 10
           done
-          echo "preview did not serve the SPA"
+          echo "preview did not serve the SPA or boot auth"
+          cat /tmp/auth-session.json 2>/dev/null
           exit 1
       - name: Post the preview URL on the PR
         uses: actions/github-script@v7
