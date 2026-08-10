@@ -24,15 +24,9 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
     .fill("This browser workflow keeps every local answer through sign-in.");
   await page.getByLabel("Format").selectOption("Talk");
   await page.getByLabel("Track").selectOption({ label: "Web systems" });
-  const proposalStepStartedAt = await page.evaluate(() => performance.now());
-  await page.getByRole("button", { name: "Continue" }).click();
-  await expect(
-    page.getByRole("textbox", { name: "Proposed speaker name" }),
-  ).toBeVisible();
   expect(
-    await page.evaluate(
-      (startedAt) => performance.now() - startedAt,
-      proposalStepStartedAt,
+    await measureLocalTransition(page, "#speaker-name", () =>
+      page.getByRole("button", { name: "Continue" }).click(),
     ),
   ).toBeLessThan(400);
   expect(trpcRequests).toEqual([]);
@@ -43,13 +37,9 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   await page
     .getByRole("textbox", { name: "Proposed speaker email" })
     .fill(`browser-speaker-${suffix}@example.com`);
-  const speakerStepStartedAt = await page.evaluate(() => performance.now());
-  await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page.getByLabel("Audience")).toBeVisible();
   expect(
-    await page.evaluate(
-      (startedAt) => performance.now() - startedAt,
-      speakerStepStartedAt,
+    await measureLocalTransition(page, "#audience", () =>
+      page.getByRole("button", { name: "Continue" }).click(),
     ),
   ).toBeLessThan(400);
   await page.getByLabel("Audience").selectOption("Experienced");
@@ -86,11 +76,34 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
     true,
   );
   await expect(page.getByText("Decision: pending")).toBeVisible();
+  await expect(page.getByText("Confirmation: recorded")).toBeVisible();
   await page.reload();
   await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(
     "A resumed proposal",
   );
 });
+
+async function measureLocalTransition(
+  page: Page,
+  selector: string,
+  transition: () => Promise<void>,
+): Promise<number> {
+  await page.evaluate((nextSelector) => {
+    delete document.body.dataset.transitionDuration;
+    const startedAt = performance.now();
+    const observer = new MutationObserver(() => {
+      if (!document.querySelector(nextSelector)) return;
+      document.body.dataset.transitionDuration = String(
+        performance.now() - startedAt,
+      );
+      observer.disconnect();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }, selector);
+  await transition();
+  await page.waitForSelector(selector);
+  return page.evaluate(() => Number(document.body.dataset.transitionDuration));
+}
 
 async function signIn(page: Page, email: string, buttonName: string) {
   await page.getByRole("textbox", { name: "Work email" }).fill(email);

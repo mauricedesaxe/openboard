@@ -36,12 +36,12 @@ export function isoToEventLocalDateTime(
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
-export function dateTimeFallsAfterDate(
-  value: string,
-  date: string,
+export function instantFallsAfterLocalDate(
+  instant: string,
+  localDate: string,
   timezone: string,
 ): boolean {
-  return isoToEventLocalDateTime(value, timezone).slice(0, 10) > date;
+  return isoToEventLocalDateTime(instant, timezone).slice(0, 10) > localDate;
 }
 
 function datePartsAsUtc(date: Date, timezone: string): number {
