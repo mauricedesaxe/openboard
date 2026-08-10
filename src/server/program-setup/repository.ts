@@ -23,6 +23,8 @@ type EventOption = {
 };
 
 type OptionKind = "room" | "track";
+type ReorderResult = "invalid_order" | "not_found" | "ok";
+type TrackReorderResult = ReorderResult | "structure_locked";
 
 type OptionMutationResult<T> =
   | { ok: true; value: T }
@@ -190,7 +192,7 @@ export async function reorderTracks(
   userId: UserId,
   slug: string,
   orderedIds: TrackId[],
-): Promise<"ok" | "not_found" | "invalid_order" | "structure_locked"> {
+): Promise<TrackReorderResult> {
   return reorderEventOptions(database, userId, slug, "track", orderedIds);
 }
 
@@ -303,7 +305,7 @@ export async function reorderRooms(
   userId: UserId,
   slug: string,
   orderedIds: RoomId[],
-): Promise<"ok" | "not_found" | "invalid_order" | "structure_locked"> {
+): Promise<ReorderResult> {
   return reorderEventOptions(database, userId, slug, "room", orderedIds);
 }
 
@@ -340,9 +342,23 @@ async function reorderEventOptions(
   database: Database,
   userId: UserId,
   slug: string,
+  kind: "room",
+  orderedIds: RoomId[],
+): Promise<ReorderResult>;
+async function reorderEventOptions(
+  database: Database,
+  userId: UserId,
+  slug: string,
+  kind: "track",
+  orderedIds: TrackId[],
+): Promise<TrackReorderResult>;
+async function reorderEventOptions(
+  database: Database,
+  userId: UserId,
+  slug: string,
   kind: OptionKind,
   orderedIds: (RoomId | TrackId)[],
-): Promise<"ok" | "not_found" | "invalid_order" | "structure_locked"> {
+): Promise<TrackReorderResult> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return "not_found";
 

@@ -94,9 +94,9 @@ const slugInput = z.object({ slug: eventInputSchema.shape.slug });
 const optionNameInput = slugInput.extend({
   name: eventOptionNameSchema,
 });
-const trackIdSchema = z.uuid();
-const roomIdSchema = z.uuid();
-const cfpIdSchema = z.uuid();
+const trackIdSchema = z.uuid().transform((value) => value as TrackId);
+const roomIdSchema = z.uuid().transform((value) => value as RoomId);
+const cfpIdSchema = z.uuid().transform((value) => value as CfpId);
 
 export const appRouter = trpc.router({
   events: trpc.router({
@@ -315,7 +315,7 @@ export const appRouter = trpc.router({
           ctx.database,
           ctx.userId,
           input.slug,
-          input.trackId as TrackId,
+          input.trackId,
           input.name,
         );
         return unwrapOptionMutation(result);
@@ -327,7 +327,7 @@ export const appRouter = trpc.router({
           ctx.database,
           ctx.userId,
           input.slug,
-          input.trackId as TrackId,
+          input.trackId,
         );
         return unwrapOptionMutation(result);
       }),
@@ -344,9 +344,9 @@ export const appRouter = trpc.router({
           ctx.database,
           ctx.userId,
           input.slug,
-          input.orderedIds as TrackId[],
+          input.orderedIds,
         );
-        handleReorderResult(result);
+        handleTrackReorderResult(result);
         return { reordered: true as const };
       }),
   }),
@@ -376,7 +376,7 @@ export const appRouter = trpc.router({
           ctx.database,
           ctx.userId,
           input.slug,
-          input.roomId as RoomId,
+          input.roomId,
           input.name,
         );
         return unwrapOptionMutation(result);
@@ -388,7 +388,7 @@ export const appRouter = trpc.router({
           ctx.database,
           ctx.userId,
           input.slug,
-          input.roomId as RoomId,
+          input.roomId,
         );
         if (!archived) throwCfpItemNotFound();
         return { archived: true as const };
@@ -406,7 +406,7 @@ export const appRouter = trpc.router({
           ctx.database,
           ctx.userId,
           input.slug,
-          input.orderedIds as RoomId[],
+          input.orderedIds,
         );
         handleReorderResult(result);
         return { reordered: true as const };
@@ -443,7 +443,7 @@ export const appRouter = trpc.router({
           ctx.database,
           ctx.userId,
           input.slug,
-          input.cfpId as CfpId,
+          input.cfpId,
           input,
         );
         if (!result.ok) throwCfpWriteError(result.error);
@@ -460,7 +460,7 @@ export const appRouter = trpc.router({
           ctx.database,
           ctx.userId,
           input.slug,
-          input.cfpId as CfpId,
+          input.cfpId,
           input,
         );
         if (!result.ok) throwCfpWriteError(result.error);
@@ -486,7 +486,7 @@ function throwCfpItemNotFound(): never {
 }
 
 function handleReorderResult(
-  result: "ok" | "not_found" | "invalid_order" | "structure_locked",
+  result: "ok" | "not_found" | "invalid_order",
 ): void {
   if (result === "not_found") throwCfpItemNotFound();
   if (result === "invalid_order") {
@@ -495,12 +495,18 @@ function handleReorderResult(
       message: "The order must contain every active item once.",
     });
   }
+}
+
+function handleTrackReorderResult(
+  result: "ok" | "not_found" | "invalid_order" | "structure_locked",
+): void {
   if (result === "structure_locked") {
     throw new TRPCError({
       code: "CONFLICT",
       message: "Tracks are locked after the first final submission.",
     });
   }
+  handleReorderResult(result);
 }
 
 function unwrapOptionMutation<T>(

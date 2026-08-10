@@ -123,24 +123,6 @@ export function nextCustomFieldKey(fields: CustomField[]): string {
   return `question_${index}`;
 }
 
-export function replaceCustomField(
-  fields: CustomField[],
-  index: number,
-  nextField: CustomField,
-): CustomField[] {
-  const previousKey = fields[index]?.key;
-  return fields.map((field, fieldIndex) => {
-    if (fieldIndex === index) return nextField;
-    if (previousKey && field.condition?.fieldKey === previousKey) {
-      return {
-        ...field,
-        condition: { ...field.condition, fieldKey: nextField.key },
-      };
-    }
-    return field;
-  });
-}
-
 export function removeCustomField(
   fields: CustomField[],
   index: number,
