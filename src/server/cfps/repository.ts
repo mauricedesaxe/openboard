@@ -12,7 +12,7 @@ import {
 import type { UserId } from "../../shared/events";
 import type { Database } from "../database/client";
 import { cfps, events, tracks } from "../database/schema";
-import { findOwnedEvent } from "../events/repository";
+import { findEventForOrganizer } from "../events/repository";
 
 type CfpWriteResult =
   | { ok: true; value: Cfp }
@@ -20,6 +20,8 @@ type CfpWriteResult =
       ok: false;
       error:
         | "already_open"
+        | "already_draft"
+        | "missing_track"
         | "not_found"
         | "persistence_failed"
         | "structure_locked";
@@ -30,7 +32,7 @@ export async function getCfpSetup(
   userId: UserId,
   slug: string,
 ): Promise<Cfp | null | undefined> {
-  const event = await findOwnedEvent(database, userId, slug);
+  const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return undefined;
 
   const [row] = await database
@@ -48,8 +50,15 @@ export async function createDraftCfp(
   slug: string,
   input: CfpDefinitionInput,
 ): Promise<CfpWriteResult> {
-  const event = await findOwnedEvent(database, userId, slug);
+  const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
+
+  const [currentDraft] = await database
+    .select({ id: cfps.id })
+    .from(cfps)
+    .where(and(eq(cfps.eventId, event.id), eq(cfps.status, "draft")))
+    .limit(1);
+  if (currentDraft) return { ok: false, error: "already_draft" };
 
   const id = crypto.randomUUID() as CfpId;
   const now = new Date();
@@ -65,7 +74,10 @@ export async function createDraftCfp(
       createdAt: now,
       updatedAt: now,
     });
-  } catch {
+  } catch (error: unknown) {
+    if (String(error).includes("UNIQUE constraint failed")) {
+      return { ok: false, error: "already_draft" };
+    }
     return { ok: false, error: "persistence_failed" };
   }
 
@@ -87,7 +99,7 @@ export async function updateDraftCfp(
   cfpId: CfpId,
   input: CfpDefinitionInput,
 ): Promise<CfpWriteResult> {
-  const event = await findOwnedEvent(database, userId, slug);
+  const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
 
   const [existing] = await database
@@ -126,28 +138,54 @@ export async function updateDraftCfp(
   };
 }
 
-export async function openCfp(
+export async function saveAndOpenCfp(
   database: Database,
   userId: UserId,
   slug: string,
   cfpId: CfpId,
+  input: CfpDefinitionInput,
 ): Promise<CfpWriteResult> {
-  const event = await findOwnedEvent(database, userId, slug);
+  const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
 
   const [currentOpen] = await database
-    .select({ id: cfps.id })
+    .select()
     .from(cfps)
     .where(and(eq(cfps.eventId, event.id), eq(cfps.status, "open")))
     .limit(1);
   if (currentOpen && currentOpen.id !== cfpId) {
     return { ok: false, error: "already_open" };
   }
+  if (currentOpen) return { ok: true, value: parseCfp(currentOpen) };
+
+  const [target] = await database
+    .select({ lockedAt: cfps.structureLockedAt, status: cfps.status })
+    .from(cfps)
+    .where(and(eq(cfps.id, cfpId), eq(cfps.eventId, event.id)))
+    .limit(1);
+  if (!target || target.status !== "draft") {
+    return { ok: false, error: "not_found" };
+  }
+  if (target.lockedAt) return { ok: false, error: "structure_locked" };
+
+  const [activeTrack] = await database
+    .select({ id: tracks.id })
+    .from(tracks)
+    .where(and(eq(tracks.eventId, event.id), isNull(tracks.archivedAt)))
+    .limit(1);
+  if (!activeTrack) return { ok: false, error: "missing_track" };
 
   try {
     const result = await database
       .update(cfps)
-      .set({ status: "open", updatedAt: new Date() })
+      .set({
+        name: input.name,
+        deadline: input.deadline,
+        status: "open",
+        formatsJson: JSON.stringify(input.formats),
+        customFieldsJson: JSON.stringify(input.customFields),
+        updatedAt: new Date(),
+      })
       .where(
         and(
           eq(cfps.id, cfpId),

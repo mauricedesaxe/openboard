@@ -90,6 +90,15 @@ export async function findEventForUser(
   return combineAccessibleRows(rows, userId)[0];
 }
 
+export async function findEventForOrganizer(
+  database: Database,
+  userId: UserId,
+  slug: string,
+): Promise<Event | undefined> {
+  const event = await findEventForUser(database, userId, slug);
+  return event?.access === "reviewer" ? undefined : event;
+}
+
 export async function listOwnedEvents(
   database: Database,
   ownerUserId: UserId,

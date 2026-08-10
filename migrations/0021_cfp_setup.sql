@@ -39,3 +39,6 @@ CREATE INDEX cfps_event_id_idx ON cfps(event_id);
 CREATE UNIQUE INDEX cfps_one_open_per_event_idx
   ON cfps(event_id)
   WHERE status = 'open';
+CREATE UNIQUE INDEX cfps_one_draft_per_event_idx
+  ON cfps(event_id)
+  WHERE status = 'draft';
