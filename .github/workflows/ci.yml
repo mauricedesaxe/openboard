@@ -61,14 +61,22 @@ jobs:
       - name: Verify the preview serves the app
         run: |
           URL=$(cat preview-url.txt)
-          STATUS=$(curl -sS --max-time 60 -o /tmp/preview-body.html -w "%{http_code}" "$URL")
-          test "$STATUS" = "200" || { echo "preview returned HTTP $STATUS"; exit 1; }
-          grep -q 'id="root"' /tmp/preview-body.html || { echo "preview did not serve the SPA"; exit 1; }
-          echo "Preview OK: $URL"
+          for attempt in 1 2 3 4 5; do
+            STATUS=$(curl -sS --max-time 60 -o /tmp/preview-body.html -w "%{http_code}" "$URL")
+            if [ "$STATUS" = "200" ] && grep -q 'id="root"' /tmp/preview-body.html; then
+              echo "Preview OK: $URL"
+              exit 0
+            fi
+            echo "attempt $attempt of 5: HTTP $STATUS"
+            sleep 10
+          done
+          echo "preview did not serve the SPA"
+          exit 1
       - name: Post the preview URL on the PR
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require("fs");
             const url = fs.readFileSync("preview-url.txt", "utf8").trim();
             const marker = "<!-- openboard-preview -->";
             const body = `${marker}\nPreview: ${url}`;
