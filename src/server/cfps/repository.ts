@@ -107,13 +107,13 @@ export async function updateDraftCfp(
     .from(cfps)
     .where(and(eq(cfps.id, cfpId), eq(cfps.eventId, event.id)))
     .limit(1);
-  if (!existing || existing.status === "closed") {
+  if (!existing) {
     return { ok: false, error: "not_found" };
   }
   if (existing.lockedAt) return { ok: false, error: "structure_locked" };
 
   try {
-    await database
+    const result = await database
       .update(cfps)
       .set({
         name: input.name,
@@ -122,7 +122,16 @@ export async function updateDraftCfp(
         customFieldsJson: JSON.stringify(input.customFields),
         updatedAt: new Date(),
       })
-      .where(and(eq(cfps.id, cfpId), eq(cfps.eventId, event.id)));
+      .where(
+        and(
+          eq(cfps.id, cfpId),
+          eq(cfps.eventId, event.id),
+          isNull(cfps.structureLockedAt),
+        ),
+      );
+    if (result.meta.changes === 0) {
+      return { ok: false, error: "structure_locked" };
+    }
   } catch {
     return { ok: false, error: "persistence_failed" };
   }

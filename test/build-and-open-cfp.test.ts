@@ -324,6 +324,24 @@ describe("build and open a conditional CFP", () => {
       ],
     });
     expect(publicForm.customFields).toEqual(draftInput.customFields);
+    expect(
+      (
+        await callTrpc(
+          "tracks.archive",
+          { slug, trackId: data.id },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await callTrpc(
+          "tracks.archive",
+          { slug, trackId: web.id },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(409);
 
     const secondDraft = getResult(
       (
@@ -386,5 +404,32 @@ describe("build and open a conditional CFP", () => {
       owner.cookie,
     );
     expect(lockedEdit.status).toBe(409);
+    expect(
+      (
+        await callTrpc(
+          "tracks.create",
+          { slug, name: "Locked track" },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await callTrpc(
+          "tracks.update",
+          { slug, trackId: web.id, name: "Locked rename" },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await callTrpc(
+          "tracks.reorder",
+          { slug, orderedIds: [web.id] },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(409);
   });
 });

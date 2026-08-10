@@ -244,7 +244,7 @@ export const cfps = sqliteTable(
       .references(() => events.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     deadline: text("deadline").notNull(),
-    status: text("status", { enum: ["draft", "open", "closed"] }).notNull(),
+    status: text("status", { enum: ["draft", "open"] }).notNull(),
     formatsJson: text("formats_json").notNull(),
     customFieldsJson: text("custom_fields_json").notNull(),
     structureLockedAt: integer("structure_locked_at", {

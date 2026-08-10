@@ -27,7 +27,7 @@ CREATE TABLE cfps (
   event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   deadline TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('draft', 'open', 'closed')),
+  status TEXT NOT NULL CHECK (status IN ('draft', 'open')),
   formats_json TEXT NOT NULL,
   custom_fields_json TEXT NOT NULL,
   structure_locked_at INTEGER,
