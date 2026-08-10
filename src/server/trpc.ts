@@ -293,8 +293,7 @@ export const appRouter = trpc.router({
           input.slug,
           input.name,
         );
-        if (!result) throwCfpItemNotFound();
-        return result;
+        return unwrapTrackMutation(result);
       }),
     update: authenticatedProcedure
       .input(optionNameInput.extend({ trackId: trackIdSchema }))
@@ -306,20 +305,18 @@ export const appRouter = trpc.router({
           input.trackId as TrackId,
           input.name,
         );
-        if (!result) throwCfpItemNotFound();
-        return result;
+        return unwrapTrackMutation(result);
       }),
     archive: authenticatedProcedure
       .input(slugInput.extend({ trackId: trackIdSchema }))
       .mutation(async ({ ctx, input }) => {
-        const archived = await archiveTrack(
+        const result = await archiveTrack(
           ctx.database,
           ctx.userId,
           input.slug,
           input.trackId as TrackId,
         );
-        if (!archived) throwCfpItemNotFound();
-        return { archived: true as const };
+        return unwrapTrackMutation(result);
       }),
     reorder: authenticatedProcedure
       .input(
@@ -478,7 +475,7 @@ function throwCfpItemNotFound(): never {
 }
 
 function handleReorderResult(
-  result: "ok" | "not_found" | "invalid_order",
+  result: "ok" | "not_found" | "invalid_order" | "structure_locked",
 ): void {
   if (result === "not_found") throwCfpItemNotFound();
   if (result === "invalid_order") {
@@ -487,6 +484,34 @@ function handleReorderResult(
       message: "The order must contain every active item once.",
     });
   }
+  if (result === "structure_locked") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "Tracks are locked after the first final submission.",
+    });
+  }
+}
+
+function unwrapTrackMutation<T>(
+  result:
+    | { ok: true; value: T }
+    | {
+        ok: false;
+        error: "last_open_track" | "not_found" | "structure_locked";
+      },
+): T {
+  if (result.ok) return result.value;
+  if (result.error === "not_found") throwCfpItemNotFound();
+  if (result.error === "last_open_track") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "An open call for proposals must keep at least one track.",
+    });
+  }
+  throw new TRPCError({
+    code: "CONFLICT",
+    message: "Tracks are locked after the first final submission.",
+  });
 }
 
 function throwCfpWriteError(

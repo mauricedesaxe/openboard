@@ -83,8 +83,10 @@ export const customFieldsSchema = z
       }
 
       if (field.condition) {
-        const source = priorFields.get(field.condition.fieldKey);
-        if (source?.type !== "single_select") {
+        const source = conditionSourceFields(fields, index).find(
+          (candidate) => candidate.key === field.condition?.fieldKey,
+        );
+        if (!source) {
           context.addIssue({
             code: "custom",
             message: "Conditions must use an earlier single-select field.",
@@ -105,6 +107,15 @@ export const customFieldsSchema = z
 
 export type CustomField = z.infer<typeof customFieldSchema>;
 
+export function conditionSourceFields(fields: CustomField[], index: number) {
+  return fields
+    .slice(0, index)
+    .filter(
+      (field): field is Extract<CustomField, { type: "single_select" }> =>
+        field.type === "single_select",
+    );
+}
+
 export const cfpDefinitionInputSchema = z.object({
   name: nameSchema,
   deadline: z.iso.datetime({ offset: true }),
@@ -120,7 +131,7 @@ export const cfpDefinitionInputSchema = z.object({
 
 export type CfpDefinitionInput = z.infer<typeof cfpDefinitionInputSchema>;
 
-export const cfpStatusSchema = z.enum(["draft", "open", "closed"]);
+export const cfpStatusSchema = z.enum(["draft", "open"]);
 
 export const cfpSchema = cfpDefinitionInputSchema.extend({
   id: z.string().transform((value) => value as CfpId),

@@ -1,9 +1,18 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  eq,
+  isNotNull,
+  isNull,
+  notExists,
+  sql,
+} from "drizzle-orm";
 
 import type { RoomId, TrackId } from "../../shared/cfps";
 import type { UserId } from "../../shared/events";
 import type { Database } from "../database/client";
-import { rooms, tracks } from "../database/schema";
+import { cfps, rooms, tracks } from "../database/schema";
 import { findEventForOrganizer } from "../events/repository";
 
 type EventOption = {
@@ -13,6 +22,13 @@ type EventOption = {
 };
 
 type OptionKind = "room" | "track";
+
+type TrackMutationResult<T> =
+  | { ok: true; value: T }
+  | {
+      ok: false;
+      error: "last_open_track" | "not_found" | "structure_locked";
+    };
 
 export async function listTracks(
   database: Database,
@@ -27,8 +43,31 @@ export async function createTrack(
   userId: UserId,
   slug: string,
   name: string,
-): Promise<EventOption | undefined> {
-  return createEventOption(database, userId, slug, "track", name);
+): Promise<TrackMutationResult<EventOption>> {
+  const event = await findEventForOrganizer(database, userId, slug);
+  if (!event) return { ok: false, error: "not_found" };
+
+  const id = crypto.randomUUID() as TrackId;
+  const now = Date.now();
+  const result = await database.run(sql`
+    INSERT INTO tracks (id, event_id, name, position, created_at, updated_at)
+    SELECT ${id}, ${event.id}, ${name}, next_position, ${now}, ${now}
+    FROM (
+      SELECT COALESCE(MAX(position), -1) + 1 AS next_position
+      FROM tracks
+      WHERE event_id = ${event.id}
+    )
+    WHERE NOT EXISTS (
+      SELECT 1 FROM cfps
+      WHERE event_id = ${event.id} AND structure_locked_at IS NOT NULL
+    )
+  `);
+  if (result.meta.changes === 0) {
+    return { ok: false, error: "structure_locked" };
+  }
+
+  const value = await findEventOption(database, event.id, "track", id);
+  return value ? { ok: true, value } : { ok: false, error: "not_found" };
 }
 
 export async function updateTrack(
@@ -37,8 +76,32 @@ export async function updateTrack(
   slug: string,
   id: TrackId,
   name: string,
-): Promise<EventOption | undefined> {
-  return updateEventOption(database, userId, slug, "track", id, name);
+): Promise<TrackMutationResult<EventOption>> {
+  const event = await findEventForOrganizer(database, userId, slug);
+  if (!event) return { ok: false, error: "not_found" };
+
+  const result = await database
+    .update(tracks)
+    .set({ name, updatedAt: new Date() })
+    .where(
+      and(
+        eq(tracks.id, id),
+        eq(tracks.eventId, event.id),
+        isNull(tracks.archivedAt),
+        noLockedCfp(database, event.id),
+      ),
+    );
+  if (result.meta.changes === 0) {
+    return {
+      ok: false,
+      error: (await hasLockedCfp(database, event.id))
+        ? "structure_locked"
+        : "not_found",
+    };
+  }
+
+  const value = await findEventOption(database, event.id, "track", id);
+  return value ? { ok: true, value } : { ok: false, error: "not_found" };
 }
 
 export async function archiveTrack(
@@ -46,8 +109,45 @@ export async function archiveTrack(
   userId: UserId,
   slug: string,
   id: TrackId,
-): Promise<boolean> {
-  return archiveEventOption(database, userId, slug, "track", id);
+): Promise<TrackMutationResult<{ archived: true }>> {
+  const event = await findEventForOrganizer(database, userId, slug);
+  if (!event) return { ok: false, error: "not_found" };
+
+  const now = Date.now();
+  const result = await database.run(sql`
+    UPDATE tracks
+    SET archived_at = ${now}, updated_at = ${now}
+    WHERE id = ${id}
+      AND event_id = ${event.id}
+      AND archived_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM cfps
+        WHERE event_id = ${event.id} AND structure_locked_at IS NOT NULL
+      )
+      AND (
+        NOT EXISTS (
+          SELECT 1 FROM cfps
+          WHERE event_id = ${event.id} AND status = 'open'
+        )
+        OR (
+          SELECT COUNT(*) FROM tracks
+          WHERE event_id = ${event.id} AND archived_at IS NULL
+        ) > 1
+      )
+  `);
+  if (result.meta.changes > 0) {
+    return { ok: true, value: { archived: true } };
+  }
+  if (await hasLockedCfp(database, event.id)) {
+    return { ok: false, error: "structure_locked" };
+  }
+  if (
+    (await hasOpenCfp(database, event.id)) &&
+    (await activeTrackCount(database, event.id)) <= 1
+  ) {
+    return { ok: false, error: "last_open_track" };
+  }
+  return { ok: false, error: "not_found" };
 }
 
 export async function reorderTracks(
@@ -55,7 +155,7 @@ export async function reorderTracks(
   userId: UserId,
   slug: string,
   orderedIds: TrackId[],
-): Promise<"ok" | "not_found" | "invalid_order"> {
+): Promise<"ok" | "not_found" | "invalid_order" | "structure_locked"> {
   return reorderEventOptions(database, userId, slug, "track", orderedIds);
 }
 
@@ -100,7 +200,7 @@ export async function reorderRooms(
   userId: UserId,
   slug: string,
   orderedIds: RoomId[],
-): Promise<"ok" | "not_found" | "invalid_order"> {
+): Promise<"ok" | "not_found" | "invalid_order" | "structure_locked"> {
   return reorderEventOptions(database, userId, slug, "room", orderedIds);
 }
 
@@ -246,7 +346,7 @@ async function reorderEventOptions(
   slug: string,
   kind: OptionKind,
   orderedIds: (RoomId | TrackId)[],
-): Promise<"ok" | "not_found" | "invalid_order"> {
+): Promise<"ok" | "not_found" | "invalid_order" | "structure_locked"> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return "not_found";
 
@@ -258,6 +358,9 @@ async function reorderEventOptions(
   ) {
     return "invalid_order";
   }
+  if (kind === "track" && (await hasLockedCfp(database, event.id))) {
+    return "structure_locked";
+  }
 
   const now = new Date();
   if (kind === "track") {
@@ -265,9 +368,20 @@ async function reorderEventOptions(
       database
         .update(tracks)
         .set({ position, updatedAt: now })
-        .where(and(eq(tracks.id, id), eq(tracks.eventId, event.id))),
+        .where(
+          and(
+            eq(tracks.id, id),
+            eq(tracks.eventId, event.id),
+            noLockedCfp(database, event.id),
+          ),
+        ),
     );
-    if (first) await database.batch([first, ...rest]);
+    if (first) {
+      const results = await database.batch([first, ...rest]);
+      if (results.some((result) => result.meta.changes === 0)) {
+        return "structure_locked";
+      }
+    }
   } else {
     const [first, ...rest] = orderedIds.map((id, position) =>
       database
@@ -279,6 +393,50 @@ async function reorderEventOptions(
   }
 
   return "ok";
+}
+
+function noLockedCfp(database: Database, eventId: string) {
+  return notExists(
+    database
+      .select({ id: cfps.id })
+      .from(cfps)
+      .where(and(eq(cfps.eventId, eventId), isNotNull(cfps.structureLockedAt))),
+  );
+}
+
+async function hasLockedCfp(
+  database: Database,
+  eventId: string,
+): Promise<boolean> {
+  const [row] = await database
+    .select({ id: cfps.id })
+    .from(cfps)
+    .where(and(eq(cfps.eventId, eventId), isNotNull(cfps.structureLockedAt)))
+    .limit(1);
+  return Boolean(row);
+}
+
+async function hasOpenCfp(
+  database: Database,
+  eventId: string,
+): Promise<boolean> {
+  const [row] = await database
+    .select({ id: cfps.id })
+    .from(cfps)
+    .where(and(eq(cfps.eventId, eventId), eq(cfps.status, "open")))
+    .limit(1);
+  return Boolean(row);
+}
+
+async function activeTrackCount(
+  database: Database,
+  eventId: string,
+): Promise<number> {
+  const [row] = await database
+    .select({ value: count() })
+    .from(tracks)
+    .where(and(eq(tracks.eventId, eventId), isNull(tracks.archivedAt)));
+  return row?.value ?? 0;
 }
 
 async function findEventOption(
