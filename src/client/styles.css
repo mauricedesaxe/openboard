@@ -368,11 +368,15 @@ a {
   font-family: "DM Mono";
   font-size: 13px;
 }
+.slug-input:focus-within {
+  border-bottom-width: 3px;
+}
 .slug-input span {
   color: rgba(27, 39, 36, 0.5);
 }
 .slug-input input {
   border: 0;
+  padding-bottom: 14px;
   padding-left: 3px;
   font-family: "DM Mono";
 }
@@ -419,11 +423,6 @@ a {
   max-width: 590px;
   color: rgba(244, 239, 227, 0.65);
   line-height: 1.6;
-}
-.agenda-id {
-  font: 11px "DM Mono";
-  white-space: nowrap;
-  color: var(--orange);
 }
 .full-status {
   min-height: 100vh;

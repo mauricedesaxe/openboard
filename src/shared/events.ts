@@ -24,8 +24,8 @@ export const eventInputSchema = z
         /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
         "Use lowercase letters, numbers, and hyphens.",
       ),
-    startsOn: z.iso.date(),
-    endsOn: z.iso.date(),
+    startsOn: z.iso.date({ error: "Choose a start date." }),
+    endsOn: z.iso.date({ error: "Choose an end date." }),
     timezone: z
       .string()
       .refine(
@@ -33,9 +33,25 @@ export const eventInputSchema = z
         "Choose an IANA timezone.",
       ),
   })
-  .refine(({ startsOn, endsOn }) => startsOn <= endsOn, {
-    message: "The end date must be on or after the start date.",
-    path: ["endsOn"],
+  .superRefine(({ startsOn, endsOn, timezone }, context) => {
+    if (
+      supportedTimezones.has(timezone) &&
+      startsOn < dateInTimezone(new Date(), timezone)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Choose today or a future date.",
+        path: ["startsOn"],
+      });
+    }
+
+    if (startsOn > endsOn) {
+      context.addIssue({
+        code: "custom",
+        message: "The end date must be on or after the start date.",
+        path: ["endsOn"],
+      });
+    }
   });
 
 export type EventInput = z.infer<typeof eventInputSchema>;
@@ -49,5 +65,20 @@ export const eventSchema = eventInputSchema.extend({
 export type Event = z.infer<typeof eventSchema>;
 
 export function listTimezones(): string[] {
-  return [...supportedTimezones].sort();
+  return [
+    "UTC",
+    ...[...supportedTimezones].filter((timezone) => timezone !== "UTC").sort(),
+  ];
+}
+
+function dateInTimezone(date: Date, timezone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: timezone,
+    year: "numeric",
+  }).formatToParts(date);
+  const value = (type: "day" | "month" | "year") =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  return `${value("year")}-${value("month")}-${value("day")}`;
 }

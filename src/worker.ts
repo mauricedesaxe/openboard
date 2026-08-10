@@ -10,7 +10,7 @@ import {
 import { appRouter, createTrpcContext } from "./server/trpc";
 
 export default {
-  async fetch(request, environment, executionContext): Promise<Response> {
+  async fetch(request, environment): Promise<Response> {
     const configResult = parseConfig(environment);
     if (!configResult.ok) {
       return Response.json(
@@ -21,7 +21,7 @@ export default {
 
     const config = configResult.value;
     const database = createDatabase(environment.DB);
-    const auth = createAuth({ config, database, executionContext });
+    const auth = createAuth({ config, database });
     const url = new URL(request.url);
 
     if (url.pathname.startsWith("/api/auth/")) {
