@@ -424,6 +424,108 @@ a {
   color: rgba(244, 239, 227, 0.65);
   line-height: 1.6;
 }
+.team-board {
+  margin-top: 50px;
+  border: 1px solid var(--ink);
+  padding: clamp(30px, 5vw, 64px);
+  box-shadow: 10px 10px 0 var(--acid);
+}
+.team-heading {
+  display: grid;
+  grid-template-columns: 0.85fr 1.15fr;
+  gap: clamp(36px, 7vw, 90px);
+  padding-bottom: 50px;
+  border-bottom: 1px solid var(--line);
+}
+.team-heading h2 {
+  margin: 14px 0 12px;
+  font:
+    600 clamp(34px, 4vw, 54px)/0.95 "Newsreader",
+    serif;
+  letter-spacing: -0.04em;
+}
+.team-heading p {
+  color: rgba(27, 39, 36, 0.65);
+  line-height: 1.6;
+}
+.invite-form {
+  align-self: start;
+}
+.team-actions,
+.invitation-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+.team-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 50px;
+  padding-top: 45px;
+}
+.team-list {
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.team-row {
+  min-height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--line);
+}
+.team-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.team-row .team-row-actions {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 14px;
+}
+.team-row strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.team-row span {
+  color: rgba(27, 39, 36, 0.6);
+  font: 10px "DM Mono";
+  text-transform: uppercase;
+}
+.invitation-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 30px;
+  background:
+    linear-gradient(rgba(27, 39, 36, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(27, 39, 36, 0.1) 1px, transparent 1px),
+    var(--paper);
+  background-size: 32px 32px;
+}
+.invitation-card {
+  width: min(650px, 100%);
+  border: 1px solid var(--ink);
+  padding: clamp(35px, 7vw, 80px);
+  background: var(--paper);
+  box-shadow: 12px 12px 0 var(--acid);
+}
+.invitation-card h1 {
+  margin: 20px 0;
+  font:
+    600 clamp(48px, 7vw, 78px)/0.9 "Newsreader",
+    serif;
+  letter-spacing: -0.05em;
+}
+.invitation-card p {
+  margin: 0 0 30px;
+  line-height: 1.65;
+}
 .full-status {
   min-height: 100vh;
   display: grid;
@@ -448,7 +550,9 @@ a {
 
 @media (max-width: 800px) {
   .signin-page,
-  .create-layout {
+  .create-layout,
+  .team-heading,
+  .team-columns {
     grid-template-columns: 1fr;
   }
   .signin-intro {

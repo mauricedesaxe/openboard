@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   index,
   integer,
@@ -113,11 +114,103 @@ export const agendas = sqliteTable("agendas", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+export const invitations = sqliteTable(
+  "invitations",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    role: text("role", { enum: ["organizer", "reviewer"] }).notNull(),
+    secretHash: text("secret_hash").notNull().unique(),
+    status: text("status", {
+      enum: ["pending", "accepted", "declined", "revoked"],
+    }).notNull(),
+    invitedByUserId: text("invited_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    replacementForInvitationId: text("replacement_for_invitation_id"),
+    acceptedByUserId: text("accepted_by_user_id").references(() => user.id),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("invitations_event_id_idx").on(table.eventId),
+    index("invitations_email_idx").on(table.email),
+    uniqueIndex("invitations_pending_grant_idx")
+      .on(table.eventId, table.email, table.role)
+      .where(sql`${table.status} = 'pending'`),
+  ],
+);
+
+export const eventRoles = sqliteTable(
+  "event_roles",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id),
+    role: text("role", { enum: ["organizer", "reviewer"] }).notNull(),
+    invitationId: text("invitation_id").references(() => invitations.id),
+    grantedByUserId: text("granted_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+    revokedByUserId: text("revoked_by_user_id").references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("event_roles_event_id_idx").on(table.eventId),
+    index("event_roles_user_id_idx").on(table.userId),
+    uniqueIndex("event_roles_active_grant_idx")
+      .on(table.eventId, table.userId, table.role)
+      .where(sql`${table.revokedAt} IS NULL`),
+  ],
+);
+
+export const reviewerAssignments = sqliteTable(
+  "reviewer_assignments",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    reviewRoundId: text("review_round_id").notNull(),
+    submissionId: text("submission_id").notNull(),
+    reviewerUserId: text("reviewer_user_id")
+      .notNull()
+      .references(() => user.id),
+    assignedByUserId: text("assigned_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+    revokedByUserId: text("revoked_by_user_id").references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("reviewer_assignments_event_reviewer_idx").on(
+      table.eventId,
+      table.reviewerUserId,
+    ),
+    uniqueIndex("reviewer_assignments_active_idx")
+      .on(table.reviewRoundId, table.submissionId, table.reviewerUserId)
+      .where(sql`${table.revokedAt} IS NULL`),
+  ],
+);
+
 export const schema = {
   account,
   agendas,
+  eventRoles,
   events,
+  invitations,
   rateLimit,
+  reviewerAssignments,
   session,
   user,
   verification,

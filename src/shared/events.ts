@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export type EventId = string & { readonly __brand: "EventId" };
 export type UserId = string & { readonly __brand: "UserId" };
+export type EventAccess = "owner" | "organizer" | "reviewer";
 
 const supportedTimezones = new Set([
   "UTC",
@@ -60,6 +61,7 @@ export const eventSchema = eventInputSchema.extend({
   id: z.string().transform((value) => value as EventId),
   ownerUserId: z.string().transform((value) => value as UserId),
   agendaId: z.string(),
+  access: z.enum(["owner", "organizer", "reviewer"]),
 });
 
 export type Event = z.infer<typeof eventSchema>;

@@ -8,8 +8,10 @@ import {
   Routes,
   useNavigate,
   useParams,
+  useSearchParams,
 } from "react-router";
 
+import type { EventRole, InvitationId } from "../shared/event-team";
 import {
   eventInputSchema,
   listTimezones,
@@ -33,8 +35,17 @@ export function App() {
   return (
     <Routes>
       <Route
+        path="/invitations/:secret"
+        element={
+          <InvitationPage
+            email={session.data?.user.email}
+            signedIn={Boolean(session.data)}
+          />
+        }
+      />
+      <Route
         path="/sign-in"
-        element={session.data ? <Navigate to="/" replace /> : <SignInPage />}
+        element={<SignInRoute signedIn={Boolean(session.data)} />}
       />
       <Route
         path="/*"
@@ -48,6 +59,12 @@ export function App() {
       />
     </Routes>
   );
+}
+
+function SignInRoute({ signedIn }: { signedIn: boolean }) {
+  const [searchParams] = useSearchParams();
+  const returnTo = safeReturnTo(searchParams.get("returnTo"));
+  return signedIn ? <Navigate to={returnTo} replace /> : <SignInPage />;
 }
 
 function AuthenticatedApp({ email }: { email: string }) {
@@ -82,7 +99,9 @@ function AuthenticatedApp({ email }: { email: string }) {
 
 function SignInPage() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
+  const [searchParams] = useSearchParams();
+  const returnTo = safeReturnTo(searchParams.get("returnTo"));
+  const [email, setEmail] = useState(searchParams.get("email") ?? "");
   const [code, setCode] = useState("");
   const [step, setStep] = useState<"email" | "code">("email");
   const [devCode, setDevCode] = useState<string>();
@@ -151,7 +170,7 @@ function SignInPage() {
       return;
     }
 
-    void navigate("/", { replace: true });
+    void navigate(returnTo, { replace: true });
   }
 
   return (
@@ -488,7 +507,339 @@ function EventPage() {
           </p>
         </div>
       </section>
+      {event.data.access === "owner" && (
+        <EventTeamPanel slug={event.data.slug} />
+      )}
     </div>
+  );
+}
+
+function EventTeamPanel({ slug }: { slug: string }) {
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const team = useQuery(trpc.eventTeam.list.queryOptions({ slug }));
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<EventRole>("organizer");
+  const [replacement, setReplacement] = useState<{
+    id: InvitationId;
+    email: string;
+    role: EventRole;
+  }>();
+  const invite = useMutation(
+    trpc.eventTeam.invite.mutationOptions({
+      onSuccess: async () => {
+        setEmail("");
+        setReplacement(undefined);
+        await queryClient.invalidateQueries(
+          trpc.eventTeam.list.queryFilter({ slug }),
+        );
+      },
+    }),
+  );
+  const revoke = useMutation(
+    trpc.eventTeam.revokeRole.mutationOptions({
+      onSuccess: async () => {
+        await queryClient.invalidateQueries(
+          trpc.eventTeam.list.queryFilter({ slug }),
+        );
+        await queryClient.invalidateQueries(trpc.events.list.queryFilter());
+      },
+    }),
+  );
+  const revokeInvitation = useMutation(
+    trpc.eventTeam.revokeInvitation.mutationOptions({
+      onSuccess: async () => {
+        await queryClient.invalidateQueries(
+          trpc.eventTeam.list.queryFilter({ slug }),
+        );
+      },
+    }),
+  );
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    invite.mutate({
+      slug,
+      email,
+      role,
+      ...(replacement ? { replacesInvitationId: replacement.id } : {}),
+    });
+  }
+
+  function editInvitation(invitation: {
+    id: string;
+    email: string;
+    role: EventRole;
+  }) {
+    setReplacement({
+      id: invitation.id as InvitationId,
+      email: invitation.email,
+      role: invitation.role,
+    });
+    setEmail(invitation.email);
+    setRole(invitation.role);
+  }
+
+  return (
+    <section className="team-board">
+      <div className="team-heading">
+        <div>
+          <div className="eyebrow">Event team</div>
+          <h2>Invite the people who move the program.</h2>
+          <p>
+            Organizer and reviewer access stays additive. You can remove either
+            role without removing the person or their history.
+          </p>
+        </div>
+        <form className="invite-form" onSubmit={submit}>
+          <div className="field-pair">
+            <Field label="Email address" name="team-email">
+              <input
+                id="team-email"
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="teammate@example.com"
+                required
+                type="email"
+                value={email}
+              />
+            </Field>
+            <Field label="Event role" name="team-role">
+              <select
+                id="team-role"
+                onChange={(event) => setRole(event.target.value as EventRole)}
+                value={role}
+              >
+                <option value="organizer">Organizer</option>
+                <option value="reviewer">Reviewer</option>
+              </select>
+            </Field>
+          </div>
+          {(invite.error || revoke.error || revokeInvitation.error) && (
+            <p className="form-error" role="alert">
+              {invite.error?.message ??
+                revoke.error?.message ??
+                revokeInvitation.error?.message}
+            </p>
+          )}
+          <div className="team-actions">
+            <button
+              className="primary-button"
+              disabled={invite.isPending}
+              type="submit"
+            >
+              {invite.isPending
+                ? "Sending…"
+                : replacement
+                  ? "Send replacement"
+                  : "Send invitation"}
+            </button>
+            {replacement && (
+              <button
+                className="text-button"
+                onClick={() => {
+                  setReplacement(undefined);
+                  setEmail("");
+                }}
+                type="button"
+              >
+                Cancel correction
+              </button>
+            )}
+          </div>
+        </form>
+      </div>
+
+      {team.isPending && <BoardStatus label="Loading event team" />}
+      {team.isError && (
+        <BoardStatus
+          label="Event team unavailable"
+          detail={team.error.message}
+        />
+      )}
+      {team.data && (
+        <div className="team-columns">
+          <div>
+            <div className="eyebrow">Active access</div>
+            <div className="team-list">
+              <div className="team-row">
+                <div>
+                  <strong>{team.data.owner?.email}</strong>
+                  <span>Event owner</span>
+                </div>
+              </div>
+              {team.data.roles.map((member) => (
+                <div className="team-row" key={member.id}>
+                  <div>
+                    <strong>{member.email}</strong>
+                    <span>{member.role}</span>
+                  </div>
+                  <button
+                    className="text-button"
+                    disabled={revoke.isPending}
+                    onClick={() =>
+                      revoke.mutate({
+                        slug,
+                        roleId: member.id,
+                      })
+                    }
+                    type="button"
+                  >
+                    Revoke
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="eyebrow">Invitation history</div>
+            <div className="team-list">
+              {team.data.invitations.length === 0 && (
+                <p className="muted">No invitations sent yet.</p>
+              )}
+              {team.data.invitations.map((invitation) => {
+                const displayStatus =
+                  invitation.status === "pending" && !invitation.usable
+                    ? "expired"
+                    : invitation.status;
+                return (
+                  <div className="team-row" key={invitation.id}>
+                    <div>
+                      <strong>{invitation.email}</strong>
+                      <span>
+                        {invitation.role} · {displayStatus}
+                      </span>
+                    </div>
+                    {invitation.usable && (
+                      <div className="team-row-actions">
+                        <button
+                          className="text-button"
+                          onClick={() => editInvitation(invitation)}
+                          type="button"
+                        >
+                          Correct or resend
+                        </button>
+                        <button
+                          className="text-button"
+                          disabled={revokeInvitation.isPending}
+                          onClick={() =>
+                            revokeInvitation.mutate({
+                              slug,
+                              invitationId: invitation.id,
+                            })
+                          }
+                          type="button"
+                        >
+                          Revoke
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function InvitationPage({
+  email,
+  signedIn,
+}: {
+  email?: string | undefined;
+  signedIn: boolean;
+}) {
+  const { secret = "" } = useParams();
+  const navigate = useNavigate();
+  const trpc = useTRPC();
+  const invitation = useQuery(trpc.invitations.get.queryOptions({ secret }));
+  const accept = useMutation(
+    trpc.invitations.accept.mutationOptions({
+      onSuccess: (result) => {
+        void navigate(`/events/${result.eventSlug}`, { replace: true });
+      },
+    }),
+  );
+  const decline = useMutation(trpc.invitations.decline.mutationOptions());
+
+  if (invitation.isPending) {
+    return <FullPageStatus label="Opening invitation" />;
+  }
+  if (invitation.isError) {
+    return (
+      <main className="invitation-page">
+        <section className="invitation-card">
+          <div className="eyebrow">Invitation unavailable</div>
+          <h1>This invitation can’t be used.</h1>
+          <p>{invitation.error.message}</p>
+          <Link className="arrow-link" to="/">
+            Open OpenBoard
+          </Link>
+        </section>
+      </main>
+    );
+  }
+  if (decline.isSuccess) {
+    return (
+      <main className="invitation-page">
+        <section className="invitation-card">
+          <div className="eyebrow">Invitation declined</div>
+          <h1>No event access was added.</h1>
+          <p>You don’t need an account, and this invitation can’t be reused.</p>
+        </section>
+      </main>
+    );
+  }
+
+  const returnTo = `/invitations/${secret}`;
+  const signInUrl = `/sign-in?returnTo=${encodeURIComponent(returnTo)}&email=${encodeURIComponent(invitation.data.email)}`;
+  return (
+    <main className="invitation-page">
+      <section className="invitation-card">
+        <div className="eyebrow">Event invitation</div>
+        <h1>Join {invitation.data.eventName}.</h1>
+        <p>
+          You were invited as an <strong>{invitation.data.role}</strong> through{" "}
+          <strong>{invitation.data.email}</strong>.
+        </p>
+        {signedIn && email !== invitation.data.email && (
+          <p className="form-error" role="alert">
+            Sign out and use {invitation.data.email} to accept this invitation.
+          </p>
+        )}
+        {(accept.error || decline.error) && (
+          <p className="form-error" role="alert">
+            {accept.error?.message ?? decline.error?.message}
+          </p>
+        )}
+        <div className="invitation-actions">
+          {signedIn ? (
+            <button
+              className="primary-button"
+              disabled={accept.isPending || email !== invitation.data.email}
+              onClick={() => accept.mutate({ secret })}
+              type="button"
+            >
+              {accept.isPending ? "Accepting…" : "Accept invitation"}
+            </button>
+          ) : (
+            <Link className="primary-button link-button" to={signInUrl}>
+              Verify email and accept
+            </Link>
+          )}
+          <button
+            className="text-button"
+            disabled={decline.isPending}
+            onClick={() => decline.mutate({ secret })}
+            type="button"
+          >
+            {decline.isPending ? "Declining…" : "Decline invitation"}
+          </button>
+        </div>
+      </section>
+    </main>
   );
 }
 
@@ -573,4 +924,8 @@ function formatEventValidationError(
   const label =
     typeof field === "string" ? labels[field as keyof EventInput] : undefined;
   return label ? `${label}: ${issue.message}` : issue.message;
+}
+
+function safeReturnTo(value: string | null): string {
+  return value?.startsWith("/") && !value.startsWith("//") ? value : "/";
 }

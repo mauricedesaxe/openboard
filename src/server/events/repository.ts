@@ -1,8 +1,14 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 
-import type { Event, EventId, EventInput, UserId } from "../../shared/events";
+import type {
+  Event,
+  EventAccess,
+  EventId,
+  EventInput,
+  UserId,
+} from "../../shared/events";
 import type { Database } from "../database/client";
-import { agendas, events } from "../database/schema";
+import { agendas, eventRoles, events } from "../database/schema";
 
 export type EventWriteResult =
   | { ok: true; value: Event }
@@ -47,7 +53,7 @@ export async function createEvent(
 
   return {
     ok: true,
-    value: { ...input, id, ownerUserId, agendaId },
+    value: { ...input, id, ownerUserId, agendaId, access: "owner" },
   };
 }
 
@@ -72,7 +78,16 @@ export async function findOwnedEvent(
     .where(and(eq(events.ownerUserId, ownerUserId), eq(events.slug, slug)))
     .limit(1);
 
-  return row as Event | undefined;
+  return row ? ({ ...row, access: "owner" } as Event) : undefined;
+}
+
+export async function findEventForUser(
+  database: Database,
+  userId: UserId,
+  slug: string,
+): Promise<Event | undefined> {
+  const rows = await selectAccessibleEvents(database, userId, slug);
+  return combineAccessibleRows(rows, userId)[0];
 }
 
 export async function listOwnedEvents(
@@ -95,7 +110,15 @@ export async function listOwnedEvents(
     .where(eq(events.ownerUserId, ownerUserId))
     .orderBy(events.startsOn);
 
-  return rows as Event[];
+  return rows.map((row) => ({ ...row, access: "owner" })) as Event[];
+}
+
+export async function listEventsForUser(
+  database: Database,
+  userId: UserId,
+): Promise<Event[]> {
+  const rows = await selectAccessibleEvents(database, userId);
+  return combineAccessibleRows(rows, userId);
 }
 
 export async function renameOwnedEvent(
@@ -114,4 +137,55 @@ export async function renameOwnedEvent(
   }
 
   return findOwnedEvent(database, ownerUserId, slug);
+}
+
+function selectAccessibleEvents(
+  database: Database,
+  userId: UserId,
+  slug?: string,
+) {
+  const access = or(
+    eq(events.ownerUserId, userId),
+    and(eq(eventRoles.userId, userId), isNull(eventRoles.revokedAt)),
+  );
+  return database
+    .select({
+      id: events.id,
+      ownerUserId: events.ownerUserId,
+      name: events.name,
+      slug: events.slug,
+      startsOn: events.startsOn,
+      endsOn: events.endsOn,
+      timezone: events.timezone,
+      agendaId: agendas.id,
+      role: eventRoles.role,
+    })
+    .from(events)
+    .innerJoin(agendas, eq(agendas.eventId, events.id))
+    .leftJoin(
+      eventRoles,
+      and(eq(eventRoles.eventId, events.id), eq(eventRoles.userId, userId)),
+    )
+    .where(slug ? and(access, eq(events.slug, slug)) : access)
+    .orderBy(events.startsOn);
+}
+
+function combineAccessibleRows(
+  rows: Awaited<ReturnType<typeof selectAccessibleEvents>>,
+  userId: UserId,
+): Event[] {
+  const accessible = new Map<EventId, Event>();
+  for (const { role, ...row } of rows) {
+    const access: EventAccess =
+      row.ownerUserId === userId
+        ? "owner"
+        : role === "organizer"
+          ? "organizer"
+          : "reviewer";
+    const current = accessible.get(row.id as EventId);
+    if (!current || access === "owner" || access === "organizer") {
+      accessible.set(row.id as EventId, { ...row, access } as Event);
+    }
+  }
+  return [...accessible.values()];
 }

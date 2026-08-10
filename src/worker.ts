@@ -3,6 +3,7 @@ import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { parseConfig } from "./server/config";
 import { createDatabase } from "./server/database/client";
 import type { Environment } from "./server/environment";
+import { getCapturedInvitationSecret } from "./server/event-team/delivery";
 import {
   createAuth,
   getCapturedAuthenticationCode,
@@ -40,6 +41,20 @@ export default {
       return code
         ? Response.json({ code })
         : Response.json({ code: "CODE_NOT_FOUND" }, { status: 404 });
+    }
+
+    if (url.pathname === "/api/dev/invitation-secret") {
+      if (config.appEnv !== "local" && config.appEnv !== "test") {
+        return new Response("Not found", { status: 404 });
+      }
+
+      const email = url.searchParams.get("email");
+      const secret = email
+        ? getCapturedInvitationSecret(config, email)
+        : undefined;
+      return secret
+        ? Response.json({ secret })
+        : Response.json({ code: "SECRET_NOT_FOUND" }, { status: 404 });
     }
 
     if (url.pathname.startsWith("/api/trpc")) {
