@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  dateTimeFallsAfterDate,
   eventLocalDateTimeToIso,
   isoToEventLocalDateTime,
 } from "../src/shared/date-time";
@@ -25,5 +26,22 @@ describe("event deadline timezones", () => {
     expect(
       eventLocalDateTimeToIso("2027-03-28T02:30", "Europe/Berlin"),
     ).toBeUndefined();
+  });
+
+  test("compares an instant with the event end date", () => {
+    expect(
+      dateTimeFallsAfterDate(
+        "2027-08-12T23:30:00Z",
+        "2027-08-12",
+        "Europe/Berlin",
+      ),
+    ).toBe(true);
+    expect(
+      dateTimeFallsAfterDate(
+        "2027-08-12T21:30:00Z",
+        "2027-08-12",
+        "Europe/Berlin",
+      ),
+    ).toBe(false);
   });
 });

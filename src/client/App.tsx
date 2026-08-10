@@ -22,6 +22,7 @@ import {
   type CustomField,
 } from "../shared/cfps";
 import {
+  dateTimeFallsAfterDate,
   eventLocalDateTimeToIso,
   isoToEventLocalDateTime,
 } from "../shared/date-time";
@@ -1449,10 +1450,7 @@ function CfpBuilder({
       setValidationError(cfpValidationError(parsed.error.issues[0]));
       return undefined;
     }
-    if (
-      isoToEventLocalDateTime(parsed.data.deadline, timezone).slice(0, 10) >
-      endsOn
-    ) {
+    if (dateTimeFallsAfterDate(parsed.data.deadline, endsOn, timezone)) {
       setValidationError({
         message: "Choose a deadline on or before the event end date.",
         path: ["deadline"],

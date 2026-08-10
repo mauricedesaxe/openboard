@@ -9,7 +9,7 @@ import {
   type CfpFormContract,
   type CfpId,
 } from "../../shared/cfps";
-import { isoToEventLocalDateTime } from "../../shared/date-time";
+import { dateTimeFallsAfterDate } from "../../shared/date-time";
 import type { UserId } from "../../shared/events";
 import type { Database } from "../database/client";
 import { cfps, events, tracks } from "../database/schema";
@@ -57,7 +57,7 @@ export async function createDraftCfp(
 ): Promise<CfpWriteResult> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
-  if (deadlineFallsAfterEvent(input.deadline, event.endsOn, event.timezone)) {
+  if (dateTimeFallsAfterDate(input.deadline, event.endsOn, event.timezone)) {
     return { ok: false, error: "deadline_after_event" };
   }
 
@@ -109,7 +109,7 @@ export async function updateDraftCfp(
 ): Promise<CfpWriteResult> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
-  if (deadlineFallsAfterEvent(input.deadline, event.endsOn, event.timezone)) {
+  if (dateTimeFallsAfterDate(input.deadline, event.endsOn, event.timezone)) {
     return { ok: false, error: "deadline_after_event" };
   }
 
@@ -148,9 +148,22 @@ export async function updateDraftCfp(
             }),
         updatedAt: new Date(),
       })
-      .where(and(eq(cfps.id, cfpId), eq(cfps.eventId, event.id)));
+      .where(
+        and(
+          eq(cfps.id, cfpId),
+          eq(cfps.eventId, event.id),
+          existing.lockedAt ? undefined : isNull(cfps.structureLockedAt),
+        ),
+      );
     if (result.meta.changes === 0) {
-      return { ok: false, error: "not_found" };
+      const [latest] = await database
+        .select({ lockedAt: cfps.structureLockedAt })
+        .from(cfps)
+        .where(and(eq(cfps.id, cfpId), eq(cfps.eventId, event.id)))
+        .limit(1);
+      return latest?.lockedAt
+        ? { ok: false, error: "structure_locked" }
+        : { ok: false, error: "not_found" };
     }
   } catch {
     return { ok: false, error: "persistence_failed" };
@@ -176,7 +189,7 @@ export async function saveAndOpenCfp(
 ): Promise<CfpWriteResult> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
-  if (deadlineFallsAfterEvent(input.deadline, event.endsOn, event.timezone)) {
+  if (dateTimeFallsAfterDate(input.deadline, event.endsOn, event.timezone)) {
     return { ok: false, error: "deadline_after_event" };
   }
   if (new Date(input.deadline) <= new Date()) {
@@ -341,12 +354,4 @@ function parseCfpStatus(
 ): Cfp | null {
   const row = rows.find((candidate) => candidate.status === status);
   return row ? parseCfp(row) : null;
-}
-
-function deadlineFallsAfterEvent(
-  deadline: string,
-  endsOn: string,
-  timezone: string,
-): boolean {
-  return isoToEventLocalDateTime(deadline, timezone).slice(0, 10) > endsOn;
 }
