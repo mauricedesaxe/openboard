@@ -74,10 +74,6 @@ a {
   background: transparent;
   cursor: pointer;
 }
-.back-button {
-  margin-top: 20px;
-}
-
 .signin-page {
   min-height: 100vh;
   display: grid;
@@ -204,6 +200,12 @@ a {
 .primary-button:disabled {
   opacity: 0.55;
   cursor: wait;
+}
+.code-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 20px;
 }
 .link-button {
   text-decoration: none;

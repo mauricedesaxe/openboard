@@ -18,9 +18,10 @@
       "migrations_dir": "migrations",
     },
   ],
-  "vars": {
-    "APP_ENV": "local",
-    "APP_URL": "http://localhost:5173",
-    "EMAIL_TRANSPORT": "capture",
-  },
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": ["auth@alexlazar.dev"],
+    },
+  ],
 }

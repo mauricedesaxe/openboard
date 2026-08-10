@@ -87,8 +87,14 @@ function SignInPage() {
 
   async function requestCode(event: FormEvent) {
     event.preventDefault();
+    await sendCode();
+  }
+
+  async function sendCode() {
     setBusy(true);
     setError(undefined);
+    setCode("");
+    setDevCode(undefined);
     const result = await authClient.emailOtp.sendVerificationOtp({
       email,
       type: "sign-in",
@@ -119,6 +125,13 @@ function SignInPage() {
     }
   }
 
+  function useAnotherEmail() {
+    setStep("email");
+    setCode("");
+    setDevCode(undefined);
+    setError(undefined);
+  }
+
   async function verifyCode(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -132,7 +145,6 @@ function SignInPage() {
     }
 
     void navigate("/", { replace: true });
-    window.location.reload();
   }
 
   return (
@@ -210,16 +222,27 @@ function SignInPage() {
                 value={code}
               />
             </Field>
-            <button className="primary-button" disabled={busy} type="submit">
-              {busy ? "Verifying…" : "Open my board"}
-            </button>
-            <button
-              className="text-button back-button"
-              onClick={() => setStep("email")}
-              type="button"
-            >
-              Use another email
-            </button>
+            <div className="code-actions">
+              <button className="primary-button" disabled={busy} type="submit">
+                {busy ? "Verifying…" : "Open my board"}
+              </button>
+              <button
+                className="text-button"
+                disabled={busy}
+                onClick={() => void sendCode()}
+                type="button"
+              >
+                Resend code
+              </button>
+              <button
+                className="text-button"
+                disabled={busy}
+                onClick={useAnotherEmail}
+                type="button"
+              >
+                Use another email
+              </button>
+            </div>
           </form>
         )}
         {error && (

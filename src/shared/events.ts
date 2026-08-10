@@ -10,12 +10,16 @@ const supportedTimezones = new Set([
 
 export const eventInputSchema = z
   .object({
-    name: z.string().trim().min(2).max(120),
+    name: z
+      .string()
+      .trim()
+      .min(2, "Enter at least 2 characters.")
+      .max(120, "Enter no more than 120 characters."),
     slug: z
       .string()
       .trim()
-      .min(3)
-      .max(48)
+      .min(3, "Enter at least 3 characters.")
+      .max(48, "Enter no more than 48 characters.")
       .regex(
         /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
         "Use lowercase letters, numbers, and hyphens.",
