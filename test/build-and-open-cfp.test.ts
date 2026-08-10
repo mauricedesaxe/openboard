@@ -16,7 +16,42 @@ describe("build and open a conditional CFP", () => {
     };
     const owner = await signIn("cfp-owner@example.com", "192.0.2.30");
     const unrelated = await signIn("cfp-unrelated@example.com", "192.0.2.31");
-    await callTrpc("events.create", eventInput, owner.cookie);
+    const organizer = await signIn("cfp-organizer@example.com", "192.0.2.32");
+    const reviewer = await signIn("cfp-reviewer@example.com", "192.0.2.33");
+    const event = getResult(
+      (
+        await callTrpc<{ id: string }>(
+          "events.create",
+          eventInput,
+          owner.cookie,
+        )
+      ).body,
+    );
+
+    await testEnvironment.DB.batch([
+      testEnvironment.DB.prepare(
+        `INSERT INTO event_roles
+          (id, event_id, user_id, role, granted_by_user_id, created_at)
+         VALUES (?, ?, ?, 'organizer', ?, ?)`,
+      ).bind(
+        crypto.randomUUID(),
+        event.id,
+        organizer.userId,
+        owner.userId,
+        Date.now(),
+      ),
+      testEnvironment.DB.prepare(
+        `INSERT INTO event_roles
+          (id, event_id, user_id, role, granted_by_user_id, created_at)
+         VALUES (?, ?, ?, 'reviewer', ?, ?)`,
+      ).bind(
+        crypto.randomUUID(),
+        event.id,
+        reviewer.userId,
+        owner.userId,
+        Date.now(),
+      ),
+    ]);
 
     expect(
       (await callTrpc("tracks.create", { slug, name: "Web" })).status,
@@ -25,6 +60,19 @@ describe("build and open a conditional CFP", () => {
       (await callTrpc("tracks.create", { slug, name: "Web" }, unrelated.cookie))
         .status,
     ).toBe(404);
+    expect(
+      (await callTrpc("tracks.create", { slug, name: "Web" }, reviewer.cookie))
+        .status,
+    ).toBe(404);
+    expect(
+      (
+        await callTrpc(
+          "rooms.create",
+          { slug, name: "Breakout" },
+          organizer.cookie,
+        )
+      ).status,
+    ).toBe(200);
 
     const web = getResult(
       (
@@ -99,6 +147,34 @@ describe("build and open a conditional CFP", () => {
         )
       ).status,
     ).toBe(200);
+    const concurrentRooms = await Promise.all([
+      callTrpc(
+        "rooms.create",
+        { slug, name: "Concurrent room A" },
+        owner.cookie,
+      ),
+      callTrpc(
+        "rooms.create",
+        { slug, name: "Concurrent room B" },
+        owner.cookie,
+      ),
+    ]);
+    expect(concurrentRooms.map((response) => response.status)).toEqual([
+      200, 200,
+    ]);
+    const listedRooms = getResult(
+      (
+        await callTrpc<{ position: number }[]>(
+          "rooms.list",
+          { slug },
+          owner.cookie,
+          "query",
+        )
+      ).body,
+    );
+    expect(
+      new Set(listedRooms.map((listedRoom) => listedRoom.position)).size,
+    ).toBe(listedRooms.length);
 
     const draftInput = {
       slug,
@@ -138,6 +214,15 @@ describe("build and open a conditional CFP", () => {
     expect(draftResponse.status).toBe(200);
     const draft = getResult(draftResponse.body);
     expect(draft.status).toBe("draft");
+    expect(
+      (
+        await callTrpc(
+          "cfps.createDraft",
+          { ...draftInput, name: "Duplicate draft" },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(409);
 
     const invalidCondition = await callTrpc(
       "cfps.updateDraft",
@@ -157,23 +242,62 @@ describe("build and open a conditional CFP", () => {
       owner.cookie,
     );
     expect(invalidCondition.status).toBe(400);
+    expect(
+      (
+        await callTrpc(
+          "cfps.updateDraft",
+          {
+            ...draftInput,
+            cfpId: draft.id,
+            customFields: [
+              {
+                key: "title",
+                label: "Replacement title",
+                type: "short_text",
+                required: false,
+              },
+            ],
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(400);
 
     expect(
       (
         await callTrpc(
           "cfps.updateDraft",
+          { ...draftInput, cfpId: draft.id, name: "Saved draft" },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await callTrpc(
+          "cfps.open",
+          { ...draftInput, cfpId: draft.id, name: "Speak with us" },
+          unrelated.cookie,
+        )
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await callTrpc(
+          "cfps.open",
           { ...draftInput, cfpId: draft.id, name: "Speak with us" },
           owner.cookie,
         )
       ).status,
     ).toBe(200);
     expect(
-      (await callTrpc("cfps.open", { slug, cfpId: draft.id }, unrelated.cookie))
-        .status,
-    ).toBe(404);
-    expect(
-      (await callTrpc("cfps.open", { slug, cfpId: draft.id }, owner.cookie))
-        .status,
+      (
+        await callTrpc(
+          "cfps.open",
+          { ...draftInput, cfpId: draft.id, name: "Ignored repeat" },
+          owner.cookie,
+        )
+      ).status,
     ).toBe(200);
 
     const publicResponse = await callTrpc<CfpFormContract>(
@@ -212,10 +336,40 @@ describe("build and open a conditional CFP", () => {
     );
     const secondOpen = await callTrpc(
       "cfps.open",
-      { slug, cfpId: secondDraft.id },
+      { ...draftInput, slug, cfpId: secondDraft.id, name: "Second CFP" },
       owner.cookie,
     );
     expect(secondOpen.status).toBe(409);
+
+    const noTrackSlug = "no-track-cfp-2027";
+    await callTrpc(
+      "events.create",
+      { ...eventInput, name: "No Track Event", slug: noTrackSlug },
+      owner.cookie,
+    );
+    const noTrackDraft = getResult(
+      (
+        await callTrpc<{ id: string }>(
+          "cfps.createDraft",
+          { ...draftInput, slug: noTrackSlug, name: "No tracks yet" },
+          owner.cookie,
+        )
+      ).body,
+    );
+    expect(
+      (
+        await callTrpc(
+          "cfps.open",
+          {
+            ...draftInput,
+            slug: noTrackSlug,
+            cfpId: noTrackDraft.id,
+            name: "No tracks yet",
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(400);
 
     await testEnvironment.DB.prepare(
       "UPDATE cfps SET structure_locked_at = ? WHERE id = ?",

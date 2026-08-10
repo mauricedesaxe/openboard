@@ -22,7 +22,8 @@ body {
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 a {
@@ -159,7 +160,8 @@ a {
   letter-spacing: 0.08em;
 }
 .field input,
-.field select {
+.field select,
+.field textarea {
   width: 100%;
   border: 0;
   border-bottom: 1px solid var(--ink);
@@ -169,8 +171,13 @@ a {
   color: var(--ink);
   outline: none;
 }
+.field textarea {
+  min-height: 130px;
+  resize: vertical;
+}
 .field input:focus,
-.field select:focus {
+.field select:focus,
+.field textarea:focus {
   border-bottom-width: 3px;
   padding-bottom: 12px;
 }
@@ -691,6 +698,21 @@ a {
   border: 1px solid var(--ink);
   background: rgba(255, 255, 255, 0.24);
   box-shadow: 10px 10px 0 var(--acid);
+}
+.builder-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.builder-fields:disabled {
+  opacity: 0.55;
+}
+.locked-form-note {
+  margin-bottom: 28px;
+  padding: 14px 16px;
+  border: 1px solid var(--orange);
+  color: #a22d18;
 }
 .builder-title,
 .custom-field-heading,

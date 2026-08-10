@@ -253,7 +253,15 @@ export const cfps = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
-  (table) => [index("cfps_event_id_idx").on(table.eventId)],
+  (table) => [
+    index("cfps_event_id_idx").on(table.eventId),
+    uniqueIndex("cfps_one_open_per_event_idx")
+      .on(table.eventId)
+      .where(sql`${table.status} = 'open'`),
+    uniqueIndex("cfps_one_draft_per_event_idx")
+      .on(table.eventId)
+      .where(sql`${table.status} = 'draft'`),
+  ],
 );
 
 export const schema = {

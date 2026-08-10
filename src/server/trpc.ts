@@ -19,7 +19,7 @@ import {
   createDraftCfp,
   findPublicCfp,
   getCfpSetup,
-  openCfp,
+  saveAndOpenCfp,
   updateDraftCfp,
 } from "./cfps/repository";
 import type { AppConfig } from "./config";
@@ -454,13 +454,18 @@ export const appRouter = trpc.router({
         return result.value;
       }),
     open: authenticatedProcedure
-      .input(slugInput.extend({ cfpId: cfpIdSchema }))
+      .input(
+        slugInput.extend(cfpDefinitionInputSchema.shape).extend({
+          cfpId: cfpIdSchema,
+        }),
+      )
       .mutation(async ({ ctx, input }) => {
-        const result = await openCfp(
+        const result = await saveAndOpenCfp(
           ctx.database,
           ctx.userId,
           input.slug,
           input.cfpId as CfpId,
+          input,
         );
         if (!result.ok) throwCfpWriteError(result.error);
         return result.value;
@@ -498,13 +503,30 @@ function handleReorderResult(
 
 function throwCfpWriteError(
   error:
-    "already_open" | "not_found" | "persistence_failed" | "structure_locked",
+    | "already_draft"
+    | "already_open"
+    | "missing_track"
+    | "not_found"
+    | "persistence_failed"
+    | "structure_locked",
 ): never {
   if (error === "not_found") throwCfpItemNotFound();
   if (error === "already_open") {
     throw new TRPCError({
       code: "CONFLICT",
       message: "This event already has an open call for proposals.",
+    });
+  }
+  if (error === "already_draft") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "This event already has a draft call for proposals.",
+    });
+  }
+  if (error === "missing_track") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Add at least one track before opening the call for proposals.",
     });
   }
   if (error === "structure_locked") {
