@@ -526,6 +526,262 @@ a {
   margin: 0 0 30px;
   line-height: 1.65;
 }
+.setup-callout {
+  margin-top: 28px;
+  padding: 34px;
+  border: 1px solid var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  background: var(--acid);
+}
+.setup-callout h2 {
+  margin: 10px 0 6px;
+  font:
+    600 34px "Newsreader",
+    serif;
+}
+.setup-callout p {
+  max-width: 600px;
+  margin: 0;
+}
+.setup-page > .arrow-link {
+  display: inline-block;
+  margin-bottom: 55px;
+}
+.setup-heading {
+  margin-bottom: 44px;
+}
+.setup-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid var(--ink);
+  border-left: 1px solid var(--ink);
+}
+.option-board {
+  min-height: 330px;
+  padding: clamp(28px, 4vw, 48px);
+  border-right: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+.option-board h2,
+.cfp-builder h2,
+.public-form-card h2 {
+  margin: 10px 0 6px;
+  font:
+    600 clamp(34px, 4vw, 54px)/1 "Newsreader",
+    serif;
+  letter-spacing: -0.04em;
+}
+.option-board > p {
+  margin: 0 0 28px;
+  color: rgba(27, 39, 36, 0.62);
+}
+.option-list {
+  display: grid;
+  gap: 8px;
+}
+.option-row,
+.option-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.option-row input,
+.option-add input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--line);
+  padding: 9px 10px;
+  background: rgba(255, 255, 255, 0.35);
+}
+.option-add {
+  margin-top: 16px;
+}
+.mini-button,
+.field-type-actions button,
+.open-button {
+  border: 1px solid var(--ink);
+  padding: 9px 10px;
+  background: transparent;
+  cursor: pointer;
+  font: 10px "DM Mono";
+  text-transform: uppercase;
+}
+.mini-button:disabled {
+  opacity: 0.3;
+}
+.danger-button {
+  color: #a22d18;
+}
+.cfp-builder {
+  margin-top: 45px;
+  padding: clamp(30px, 5vw, 66px);
+  border: 1px solid var(--ink);
+  background: rgba(255, 255, 255, 0.24);
+  box-shadow: 10px 10px 0 var(--acid);
+}
+.builder-title,
+.custom-field-heading,
+.builder-actions,
+.field-rules {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+.builder-title {
+  margin-bottom: 38px;
+}
+.status-chip {
+  border: 1px solid var(--ink);
+  padding: 8px 12px;
+  font: 11px "DM Mono";
+  text-transform: uppercase;
+}
+.status-open {
+  background: var(--acid);
+}
+.core-field-note {
+  margin: 20px 0 42px;
+  padding: 16px;
+  display: flex;
+  gap: 18px;
+  border: 1px dashed var(--line);
+  font-size: 13px;
+}
+.core-field-note strong {
+  font-family: "DM Mono";
+  text-transform: uppercase;
+}
+.custom-field-heading {
+  align-items: end;
+  margin-bottom: 20px;
+}
+.field-type-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.custom-field-card {
+  margin: 0 0 18px;
+  padding: 24px;
+  border: 1px solid var(--line);
+}
+.custom-field-card legend {
+  padding: 0 8px;
+  color: var(--orange);
+  font: 11px "DM Mono";
+  text-transform: uppercase;
+}
+.field-rules {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.field-rules label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.field-rules select {
+  padding: 7px;
+  background: var(--paper);
+}
+.builder-actions {
+  justify-content: flex-start;
+  margin-top: 28px;
+}
+.open-button {
+  padding: 15px 22px;
+  background: var(--acid);
+}
+.public-cfp {
+  min-height: 100vh;
+  background: var(--ink);
+  color: var(--paper);
+}
+.public-cfp .empty-board {
+  width: min(900px, 90vw);
+  margin: 10vh auto;
+  color: var(--ink);
+}
+.public-cfp-header {
+  min-height: 78px;
+  padding: 0 5vw;
+  border-bottom: 1px solid rgba(244, 239, 227, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.public-cfp-header .wordmark-mark {
+  background: var(--acid);
+  color: var(--ink);
+}
+.deadline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font: 11px "DM Mono";
+  text-transform: uppercase;
+}
+.deadline span {
+  color: var(--orange);
+}
+.public-form-shell {
+  width: min(1280px, 92vw);
+  margin: 0 auto;
+  padding: clamp(48px, 7vw, 100px) 0;
+  display: grid;
+  grid-template-columns: 0.8fr 1.2fr;
+  gap: clamp(45px, 8vw, 120px);
+}
+.public-form-intro h1 {
+  margin: 18px 0 48px;
+  color: var(--acid);
+  font:
+    600 clamp(50px, 6vw, 86px)/0.9 "Newsreader",
+    serif;
+  letter-spacing: -0.055em;
+}
+.public-form-intro ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.public-form-intro li {
+  padding: 13px 0;
+  display: flex;
+  gap: 14px;
+  border-bottom: 1px solid rgba(244, 239, 227, 0.18);
+  color: rgba(244, 239, 227, 0.45);
+  font: 11px "DM Mono";
+  text-transform: uppercase;
+}
+.public-form-intro li.current {
+  color: var(--paper);
+}
+.public-form-intro li span {
+  color: var(--orange);
+}
+.public-form-card {
+  min-height: 600px;
+  padding: clamp(28px, 5vw, 68px);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 10px 10px 0 var(--acid);
+}
+.public-form-card h2 {
+  margin-bottom: 44px;
+}
+.public-form-actions {
+  margin-top: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 22px;
+}
 .full-status {
   min-height: 100vh;
   display: grid;
@@ -552,7 +808,9 @@ a {
   .signin-page,
   .create-layout,
   .team-heading,
-  .team-columns {
+  .team-columns,
+  .setup-grid,
+  .public-form-shell {
     grid-template-columns: 1fr;
   }
   .signin-intro {
@@ -584,6 +842,23 @@ a {
     align-items: flex-start;
     flex-direction: column;
   }
+  .setup-callout,
+  .builder-title,
+  .custom-field-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .public-cfp-header {
+    padding: 16px 20px;
+  }
+  .deadline {
+    align-items: flex-end;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .public-form-intro h1 {
+    margin-bottom: 30px;
+  }
 }
 
 @media (max-width: 480px) {
@@ -603,6 +878,17 @@ a {
   .field-pair {
     grid-template-columns: 1fr;
     gap: 0;
+  }
+  .option-row {
+    flex-wrap: wrap;
+  }
+  .option-row input {
+    flex-basis: 100%;
+  }
+  .core-field-note,
+  .builder-actions {
+    align-items: flex-start;
+    flex-direction: column;
   }
   .form-board {
     box-shadow: 6px 6px 0 var(--acid);

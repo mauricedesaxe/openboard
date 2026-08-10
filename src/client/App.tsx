@@ -6,12 +6,18 @@ import {
   Navigate,
   Route,
   Routes,
+  useLocation,
   useNavigate,
   useParams,
   useSearchParams,
 } from "react-router";
 
 import type { EventRole, InvitationId } from "../shared/event-team";
+import {
+  cfpDefinitionInputSchema,
+  type CfpDefinitionInput,
+  type CustomField,
+} from "../shared/cfps";
 import {
   eventInputSchema,
   listTimezones,
@@ -23,6 +29,15 @@ import { useTRPC } from "./trpc";
 
 export function App() {
   const session = authClient.useSession();
+  const location = useLocation();
+
+  if (/^\/events\/[^/]+\/cfp\/?$/.test(location.pathname)) {
+    return (
+      <Routes>
+        <Route path="/events/:slug/cfp" element={<PublicCfpPage />} />
+      </Routes>
+    );
+  }
 
   if (session.isPending) {
     return <FullPageStatus label="Opening your board" />;
@@ -91,6 +106,7 @@ function AuthenticatedApp({ email }: { email: string }) {
           <Route index element={<EventIndex />} />
           <Route path="events/new" element={<CreateEventPage />} />
           <Route path="events/:slug" element={<EventPage />} />
+          <Route path="events/:slug/cfp/setup" element={<CfpSetupPage />} />
         </Routes>
       </main>
     </div>
@@ -510,6 +526,22 @@ function EventPage() {
       {event.data.access === "owner" && (
         <EventTeamPanel slug={event.data.slug} />
       )}
+      <section className="setup-callout">
+        <div>
+          <div className="eyebrow">Call for proposals</div>
+          <h2>Shape what speakers send you.</h2>
+          <p>
+            Configure tracks, rooms, formats, and conditional proposal fields
+            before you open the public form.
+          </p>
+        </div>
+        <Link
+          className="primary-button link-button"
+          to={`/events/${slug}/cfp/setup`}
+        >
+          Configure CFP
+        </Link>
+      </section>
     </div>
   );
 }
@@ -744,6 +776,202 @@ function EventTeamPanel({ slug }: { slug: string }) {
   );
 }
 
+type EventOption = { id: string; name: string; position: number };
+
+function CfpSetupPage() {
+  const { slug = "" } = useParams();
+  const queryClient = useQueryClient();
+  const trpc = useTRPC();
+  const event = useQuery(trpc.events.get.queryOptions({ slug }));
+  const tracks = useQuery(trpc.tracks.list.queryOptions({ slug }));
+  const rooms = useQuery(trpc.rooms.list.queryOptions({ slug }));
+  const cfp = useQuery(trpc.cfps.getSetup.queryOptions({ slug }));
+
+  const refreshTracks = () =>
+    queryClient.invalidateQueries(trpc.tracks.list.queryFilter({ slug }));
+  const refreshRooms = () =>
+    queryClient.invalidateQueries(trpc.rooms.list.queryFilter({ slug }));
+  const createTrack = useMutation(
+    trpc.tracks.create.mutationOptions({ onSuccess: refreshTracks }),
+  );
+  const updateTrack = useMutation(
+    trpc.tracks.update.mutationOptions({ onSuccess: refreshTracks }),
+  );
+  const archiveTrack = useMutation(
+    trpc.tracks.archive.mutationOptions({ onSuccess: refreshTracks }),
+  );
+  const reorderTracks = useMutation(
+    trpc.tracks.reorder.mutationOptions({ onSuccess: refreshTracks }),
+  );
+  const createRoom = useMutation(
+    trpc.rooms.create.mutationOptions({ onSuccess: refreshRooms }),
+  );
+  const updateRoom = useMutation(
+    trpc.rooms.update.mutationOptions({ onSuccess: refreshRooms }),
+  );
+  const archiveRoom = useMutation(
+    trpc.rooms.archive.mutationOptions({ onSuccess: refreshRooms }),
+  );
+  const reorderRooms = useMutation(
+    trpc.rooms.reorder.mutationOptions({ onSuccess: refreshRooms }),
+  );
+
+  if (event.isPending || tracks.isPending || rooms.isPending || cfp.isPending) {
+    return <FullPageStatus label="Opening CFP setup" />;
+  }
+  const error = event.error ?? tracks.error ?? rooms.error ?? cfp.error;
+  if (error) {
+    return (
+      <div className="page">
+        <BoardStatus label="CFP setup unavailable" detail={error.message} />
+      </div>
+    );
+  }
+  if (!event.data || !tracks.data || !rooms.data || cfp.data === undefined) {
+    return <FullPageStatus label="Opening CFP setup" />;
+  }
+
+  return (
+    <div className="page setup-page">
+      <Link className="arrow-link" to={`/events/${slug}`}>
+        ← Back to event
+      </Link>
+      <section className="page-heading setup-heading">
+        <div>
+          <div className="eyebrow">Program intake</div>
+          <h1>{event.data.name} CFP</h1>
+        </div>
+      </section>
+      <div className="setup-grid">
+        <OptionEditor
+          title="Tracks"
+          detail="Authors choose one track for each proposal."
+          items={tracks.data}
+          onCreate={(name) => createTrack.mutate({ slug, name })}
+          onRename={(id, name) =>
+            updateTrack.mutate({ slug, trackId: id, name })
+          }
+          onArchive={(id) => archiveTrack.mutate({ slug, trackId: id })}
+          onReorder={(orderedIds) => reorderTracks.mutate({ slug, orderedIds })}
+        />
+        <OptionEditor
+          title="Rooms"
+          detail="Rooms are ready for later agenda placement."
+          items={rooms.data}
+          onCreate={(name) => createRoom.mutate({ slug, name })}
+          onRename={(id, name) => updateRoom.mutate({ slug, roomId: id, name })}
+          onArchive={(id) => archiveRoom.mutate({ slug, roomId: id })}
+          onReorder={(orderedIds) => reorderRooms.mutate({ slug, orderedIds })}
+        />
+      </div>
+      <CfpBuilder cfp={cfp.data} key={cfp.data?.id ?? "new"} slug={slug} />
+    </div>
+  );
+}
+
+function OptionEditor({
+  title,
+  detail,
+  items,
+  onCreate,
+  onRename,
+  onArchive,
+  onReorder,
+}: {
+  title: string;
+  detail: string;
+  items: EventOption[];
+  onCreate: (name: string) => void;
+  onRename: (id: string, name: string) => void;
+  onArchive: (id: string) => void;
+  onReorder: (ids: string[]) => void;
+}) {
+  const [name, setName] = useState("");
+
+  function create(event: FormEvent) {
+    event.preventDefault();
+    if (name.trim().length < 2) return;
+    onCreate(name.trim());
+    setName("");
+  }
+
+  function move(index: number, offset: number) {
+    const next = [...items];
+    const target = index + offset;
+    const currentItem = next[index];
+    const targetItem = next[target];
+    if (!currentItem || !targetItem) return;
+    next[index] = targetItem;
+    next[target] = currentItem;
+    onReorder(next.map((item) => item.id));
+  }
+
+  return (
+    <section className="option-board">
+      <div className="eyebrow">{title}</div>
+      <h2>{title}</h2>
+      <p>{detail}</p>
+      <div className="option-list">
+        {items.map((item, index) => (
+          <form
+            className="option-row"
+            key={item.id}
+            onSubmit={(event) => {
+              event.preventDefault();
+              const form = new FormData(event.currentTarget);
+              const nextName = form.get("name");
+              if (typeof nextName === "string") onRename(item.id, nextName);
+            }}
+          >
+            <input
+              defaultValue={item.name}
+              name="name"
+              aria-label={`${title} name`}
+            />
+            <button className="mini-button" type="submit">
+              Save
+            </button>
+            <button
+              className="mini-button"
+              disabled={index === 0}
+              onClick={() => move(index, -1)}
+              type="button"
+            >
+              ↑
+            </button>
+            <button
+              className="mini-button"
+              disabled={index === items.length - 1}
+              onClick={() => move(index, 1)}
+              type="button"
+            >
+              ↓
+            </button>
+            <button
+              className="mini-button danger-button"
+              onClick={() => onArchive(item.id)}
+              type="button"
+            >
+              Archive
+            </button>
+          </form>
+        ))}
+      </div>
+      <form className="option-add" onSubmit={create}>
+        <input
+          aria-label={`New ${title.toLowerCase()} name`}
+          onChange={(event) => setName(event.target.value)}
+          placeholder={`Add ${title.toLowerCase()}`}
+          value={name}
+        />
+        <button className="mini-button" type="submit">
+          Add
+        </button>
+      </form>
+    </section>
+  );
+}
+
 function InvitationPage({
   email,
   signedIn,
@@ -841,6 +1069,695 @@ function InvitationPage({
       </section>
     </main>
   );
+}
+
+function CfpBuilder({
+  cfp,
+  slug,
+}: {
+  cfp:
+    | (CfpDefinitionInput & {
+        id: string;
+        status: "draft" | "open" | "closed";
+        structureLocked: boolean;
+      })
+    | null;
+  slug: string;
+}) {
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const [definition, setDefinition] = useState<CfpDefinitionInput>(() =>
+    cfp
+      ? {
+          name: cfp.name,
+          deadline: cfp.deadline,
+          formats: cfp.formats,
+          customFields: cfp.customFields,
+        }
+      : emptyCfpDefinition(),
+  );
+  const [validationError, setValidationError] = useState<string>();
+  const refresh = () =>
+    queryClient.invalidateQueries(trpc.cfps.getSetup.queryFilter({ slug }));
+  const create = useMutation(
+    trpc.cfps.createDraft.mutationOptions({ onSuccess: refresh }),
+  );
+  const update = useMutation(
+    trpc.cfps.updateDraft.mutationOptions({ onSuccess: refresh }),
+  );
+  const open = useMutation(
+    trpc.cfps.open.mutationOptions({ onSuccess: refresh }),
+  );
+
+  function save(event: FormEvent) {
+    event.preventDefault();
+    const parsed = cfpDefinitionInputSchema.safeParse(definition);
+    if (!parsed.success) {
+      setValidationError(
+        parsed.error.issues[0]?.message ?? "Check the form definition.",
+      );
+      return;
+    }
+    setValidationError(undefined);
+    if (cfp) update.mutate({ slug, cfpId: cfp.id, ...parsed.data });
+    else create.mutate({ slug, ...parsed.data });
+  }
+
+  function updateField(index: number, field: CustomField) {
+    setDefinition((current) => ({
+      ...current,
+      customFields: current.customFields.map((currentField, fieldIndex) =>
+        fieldIndex === index ? field : currentField,
+      ),
+    }));
+  }
+
+  function addField(type: CustomField["type"]) {
+    setDefinition((current) => ({
+      ...current,
+      customFields: [
+        ...current.customFields,
+        newCustomField(type, current.customFields.length),
+      ],
+    }));
+  }
+
+  const mutationError = create.error ?? update.error ?? open.error;
+  return (
+    <section className="cfp-builder">
+      <div className="builder-title">
+        <div>
+          <div className="eyebrow">Public form</div>
+          <h2>{cfp ? cfp.name : "Draft your CFP"}</h2>
+        </div>
+        {cfp && (
+          <span className={`status-chip status-${cfp.status}`}>
+            {cfp.status}
+          </span>
+        )}
+      </div>
+      <form onSubmit={save}>
+        <div className="field-pair">
+          <Field label="CFP name" name="cfp-name">
+            <input
+              id="cfp-name"
+              value={definition.name}
+              onChange={(event) =>
+                setDefinition((current) => ({
+                  ...current,
+                  name: event.target.value,
+                }))
+              }
+            />
+          </Field>
+          <Field label="Deadline" name="cfp-deadline">
+            <input
+              id="cfp-deadline"
+              type="datetime-local"
+              value={toDatetimeLocal(definition.deadline)}
+              onChange={(event) =>
+                setDefinition((current) => ({
+                  ...current,
+                  deadline: event.target.value
+                    ? new Date(event.target.value).toISOString()
+                    : "",
+                }))
+              }
+            />
+          </Field>
+        </div>
+        <Field
+          hint="Separate formats with commas"
+          label="Formats"
+          name="cfp-formats"
+        >
+          <input
+            id="cfp-formats"
+            value={definition.formats.join(", ")}
+            onChange={(event) =>
+              setDefinition((current) => ({
+                ...current,
+                formats: event.target.value
+                  .split(",")
+                  .map((value) => value.trim())
+                  .filter(Boolean),
+              }))
+            }
+          />
+        </Field>
+        <div className="core-field-note">
+          <strong>Always included</strong>
+          <span>Title · Abstract · Format · Track · Proposed speakers</span>
+        </div>
+        <div className="custom-field-heading">
+          <div>
+            <div className="eyebrow">Custom fields</div>
+            <p>Add only the information this event needs.</p>
+          </div>
+          <div className="field-type-actions">
+            <button type="button" onClick={() => addField("short_text")}>
+              + Short text
+            </button>
+            <button type="button" onClick={() => addField("long_text")}>
+              + Long text
+            </button>
+            <button type="button" onClick={() => addField("single_select")}>
+              + Single select
+            </button>
+            <button type="button" onClick={() => addField("file")}>
+              + File
+            </button>
+          </div>
+        </div>
+        {definition.customFields.map((field, index) => (
+          <CustomFieldEditor
+            allFields={definition.customFields}
+            field={field}
+            index={index}
+            key={`${field.key}-${index}`}
+            onChange={(next) => updateField(index, next)}
+            onRemove={() =>
+              setDefinition((current) => ({
+                ...current,
+                customFields: current.customFields.filter(
+                  (_, fieldIndex) => fieldIndex !== index,
+                ),
+              }))
+            }
+          />
+        ))}
+        {(validationError || mutationError) && (
+          <p className="form-error" role="alert">
+            {validationError ?? mutationError?.message}
+          </p>
+        )}
+        <div className="builder-actions">
+          <button
+            className="primary-button"
+            disabled={
+              cfp?.structureLocked || create.isPending || update.isPending
+            }
+            type="submit"
+          >
+            {cfp ? "Save form" : "Create draft"}
+          </button>
+          {cfp?.status === "draft" && (
+            <button
+              className="open-button"
+              disabled={open.isPending}
+              onClick={() => open.mutate({ slug, cfpId: cfp.id })}
+              type="button"
+            >
+              Open CFP
+            </button>
+          )}
+          {cfp?.status === "open" && (
+            <Link className="arrow-link" to={`/events/${slug}/cfp`}>
+              View public form →
+            </Link>
+          )}
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function CustomFieldEditor({
+  field,
+  index,
+  allFields,
+  onChange,
+  onRemove,
+}: {
+  field: CustomField;
+  index: number;
+  allFields: CustomField[];
+  onChange: (field: CustomField) => void;
+  onRemove: () => void;
+}) {
+  const sources = allFields
+    .slice(0, index)
+    .filter((candidate) => candidate.type === "single_select");
+  const condition = field.condition;
+  const source = sources.find(
+    (candidate) => candidate.key === condition?.fieldKey,
+  );
+  return (
+    <fieldset className="custom-field-card">
+      <legend>{field.type.replace("_", " ")}</legend>
+      <div className="field-pair">
+        <Field label="Field key" name={`field-key-${index}`}>
+          <input
+            id={`field-key-${index}`}
+            value={field.key}
+            onChange={(event) =>
+              onChange({ ...field, key: event.target.value })
+            }
+          />
+        </Field>
+        <Field label="Label" name={`field-label-${index}`}>
+          <input
+            id={`field-label-${index}`}
+            value={field.label}
+            onChange={(event) =>
+              onChange({ ...field, label: event.target.value })
+            }
+          />
+        </Field>
+      </div>
+      {field.type === "single_select" && (
+        <Field
+          hint="Separate options with commas"
+          label="Options"
+          name={`field-options-${index}`}
+        >
+          <input
+            id={`field-options-${index}`}
+            value={field.options.join(", ")}
+            onChange={(event) =>
+              onChange({
+                ...field,
+                options: event.target.value
+                  .split(",")
+                  .map((value) => value.trim())
+                  .filter(Boolean),
+              })
+            }
+          />
+        </Field>
+      )}
+      {field.type === "file" && (
+        <div className="field-pair">
+          <Field label="Accepted MIME types" name={`field-types-${index}`}>
+            <input
+              id={`field-types-${index}`}
+              value={field.acceptedTypes.join(", ")}
+              onChange={(event) =>
+                onChange({
+                  ...field,
+                  acceptedTypes: event.target.value
+                    .split(",")
+                    .map((value) => value.trim())
+                    .filter(Boolean),
+                })
+              }
+            />
+          </Field>
+          <Field label="Maximum MB" name={`field-size-${index}`}>
+            <input
+              id={`field-size-${index}`}
+              min="1"
+              max="100"
+              type="number"
+              value={field.maxSizeMb}
+              onChange={(event) =>
+                onChange({ ...field, maxSizeMb: Number(event.target.value) })
+              }
+            />
+          </Field>
+        </div>
+      )}
+      <div className="field-rules">
+        <label>
+          <input
+            checked={field.required}
+            onChange={(event) =>
+              onChange({ ...field, required: event.target.checked })
+            }
+            type="checkbox"
+          />{" "}
+          Required
+        </label>
+        <label>
+          Show when
+          <select
+            value={field.condition?.fieldKey ?? ""}
+            onChange={(event) => {
+              const nextSource = sources.find(
+                (candidate) => candidate.key === event.target.value,
+              );
+              onChange({
+                ...field,
+                condition:
+                  nextSource?.type === "single_select"
+                    ? {
+                        fieldKey: nextSource.key,
+                        equals: nextSource.options[0] ?? "",
+                      }
+                    : undefined,
+              });
+            }}
+          >
+            <option value="">Always visible</option>
+            {sources.map((candidate) => (
+              <option key={candidate.key} value={candidate.key}>
+                {candidate.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {source?.type === "single_select" && condition && (
+          <select
+            aria-label="Condition value"
+            value={condition.equals}
+            onChange={(event) =>
+              onChange({
+                ...field,
+                condition: { ...condition, equals: event.target.value },
+              })
+            }
+          >
+            {source.options.map((option) => (
+              <option key={option}>{option}</option>
+            ))}
+          </select>
+        )}
+        <button
+          className="text-button danger-button"
+          onClick={onRemove}
+          type="button"
+        >
+          Remove field
+        </button>
+      </div>
+    </fieldset>
+  );
+}
+
+function PublicCfpPage() {
+  const { slug = "" } = useParams();
+  const trpc = useTRPC();
+  const cfp = useQuery(
+    trpc.cfps.publicByEventSlug.queryOptions({ slug }, { retry: false }),
+  );
+  const [step, setStep] = useState(0);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+
+  if (cfp.isPending)
+    return <FullPageStatus label="Opening call for proposals" />;
+  if (cfp.isError)
+    return (
+      <main className="public-cfp">
+        <BoardStatus label="This CFP is not open" detail={cfp.error.message} />
+      </main>
+    );
+
+  const steps = ["Proposal", "Speakers", "Event questions"];
+  return (
+    <main className="public-cfp">
+      <header className="public-cfp-header">
+        <Link className="wordmark" to="/">
+          <span className="wordmark-mark">OB</span>
+          <span>{cfp.data.event.name}</span>
+        </Link>
+        <div className="deadline">
+          <span>Deadline</span>
+          <strong>
+            {formatDeadline(cfp.data.deadline, cfp.data.event.timezone)}
+          </strong>
+        </div>
+      </header>
+      <div className="public-form-shell">
+        <aside className="public-form-intro">
+          <div className="eyebrow">Call for proposals</div>
+          <h1>{cfp.data.name}</h1>
+          <ol>
+            {steps.map((label, index) => (
+              <li className={step === index ? "current" : ""} key={label}>
+                <span>0{index + 1}</span>
+                {label}
+              </li>
+            ))}
+          </ol>
+        </aside>
+        <section className="public-form-card">
+          {step === 0 && (
+            <>
+              <div className="eyebrow">01 · The idea</div>
+              <h2>What do you want to share?</h2>
+              <Field label="Title" name="public-title">
+                <input
+                  id="public-title"
+                  required
+                  value={answers.title ?? ""}
+                  onChange={(event) =>
+                    setAnswers((current) => ({
+                      ...current,
+                      title: event.target.value,
+                    }))
+                  }
+                />
+              </Field>
+              <Field label="Abstract" name="public-abstract">
+                <textarea
+                  id="public-abstract"
+                  required
+                  value={answers.abstract ?? ""}
+                  onChange={(event) =>
+                    setAnswers((current) => ({
+                      ...current,
+                      abstract: event.target.value,
+                    }))
+                  }
+                />
+              </Field>
+              <div className="field-pair">
+                <Field label="Format" name="public-format">
+                  <select
+                    id="public-format"
+                    required
+                    value={answers.format ?? ""}
+                    onChange={(event) =>
+                      setAnswers((current) => ({
+                        ...current,
+                        format: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Choose a format</option>
+                    {cfp.data.formats.map((format) => (
+                      <option key={format}>{format}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Track" name="public-track">
+                  <select
+                    id="public-track"
+                    required
+                    value={answers.track ?? ""}
+                    onChange={(event) =>
+                      setAnswers((current) => ({
+                        ...current,
+                        track: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Choose a track</option>
+                    {cfp.data.tracks.map((track) => (
+                      <option key={track.id} value={track.id}>
+                        {track.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+            </>
+          )}
+          {step === 1 && (
+            <>
+              <div className="eyebrow">02 · The people</div>
+              <h2>Who will present?</h2>
+              <Field label="Proposed speaker name" name="speaker-name">
+                <input
+                  id="speaker-name"
+                  required
+                  value={answers.speakerName ?? ""}
+                  onChange={(event) =>
+                    setAnswers((current) => ({
+                      ...current,
+                      speakerName: event.target.value,
+                    }))
+                  }
+                />
+              </Field>
+              <Field label="Proposed speaker email" name="speaker-email">
+                <input
+                  id="speaker-email"
+                  required
+                  type="email"
+                  value={answers.speakerEmail ?? ""}
+                  onChange={(event) =>
+                    setAnswers((current) => ({
+                      ...current,
+                      speakerEmail: event.target.value,
+                    }))
+                  }
+                />
+              </Field>
+            </>
+          )}
+          {step === 2 && (
+            <>
+              <div className="eyebrow">03 · Event questions</div>
+              <h2>A few details for this event.</h2>
+              {cfp.data.customFields
+                .filter(
+                  (field) =>
+                    !field.condition ||
+                    answers[field.condition.fieldKey] ===
+                      field.condition.equals,
+                )
+                .map((field) => (
+                  <PublicCustomField
+                    field={field}
+                    key={field.key}
+                    value={answers[field.key] ?? ""}
+                    onChange={(value) =>
+                      setAnswers((current) => ({
+                        ...current,
+                        [field.key]: value,
+                      }))
+                    }
+                  />
+                ))}
+              {cfp.data.customFields.length === 0 && (
+                <p className="muted">
+                  No extra questions. Your proposal is ready for the submission
+                  step.
+                </p>
+              )}
+            </>
+          )}
+          <div className="public-form-actions">
+            {step > 0 && (
+              <button
+                className="text-button"
+                onClick={() => setStep((current) => current - 1)}
+                type="button"
+              >
+                Back
+              </button>
+            )}
+            {step < steps.length - 1 ? (
+              <button
+                className="primary-button"
+                onClick={() => setStep((current) => current + 1)}
+                type="button"
+              >
+                Continue
+              </button>
+            ) : (
+              <button className="primary-button" disabled type="button">
+                Submission opens next
+              </button>
+            )}
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function PublicCustomField({
+  field,
+  value,
+  onChange,
+}: {
+  field: CustomField;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  if (field.type === "long_text")
+    return (
+      <Field label={field.label} name={field.key}>
+        <textarea
+          id={field.key}
+          required={field.required}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </Field>
+    );
+  if (field.type === "single_select")
+    return (
+      <Field label={field.label} name={field.key}>
+        <select
+          id={field.key}
+          required={field.required}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        >
+          <option value="">Choose one</option>
+          {field.options.map((option) => (
+            <option key={option}>{option}</option>
+          ))}
+        </select>
+      </Field>
+    );
+  if (field.type === "file")
+    return (
+      <Field
+        hint={`Up to ${field.maxSizeMb} MB`}
+        label={field.label}
+        name={field.key}
+      >
+        <input
+          accept={field.acceptedTypes.join(",")}
+          id={field.key}
+          required={field.required}
+          type="file"
+        />
+      </Field>
+    );
+  return (
+    <Field label={field.label} name={field.key}>
+      <input
+        id={field.key}
+        required={field.required}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </Field>
+  );
+}
+
+function emptyCfpDefinition(): CfpDefinitionInput {
+  const deadline = new Date();
+  deadline.setMonth(deadline.getMonth() + 1);
+  return {
+    name: "",
+    deadline: deadline.toISOString(),
+    formats: ["Talk", "Workshop"],
+    customFields: [],
+  };
+}
+
+function newCustomField(type: CustomField["type"], index: number): CustomField {
+  const base = {
+    key: `question_${index + 1}`,
+    label: "New question",
+    required: false,
+  };
+  if (type === "single_select")
+    return { ...base, type, options: ["Option one", "Option two"] };
+  if (type === "file")
+    return { ...base, type, acceptedTypes: ["application/pdf"], maxSizeMb: 10 };
+  return { ...base, type };
+}
+
+function toDatetimeLocal(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function formatDeadline(value: string, timezone: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: timezone,
+  }).format(new Date(value));
 }
 
 function Field({
