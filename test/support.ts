@@ -1,5 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { expect } from "vitest";
+import { z } from "zod";
 
 export const testEnvironment = env as unknown as { DB: D1Database };
 
@@ -7,13 +8,29 @@ const worker = exports as unknown as {
   default: { fetch(request: Request): Promise<Response> };
 };
 
-export type TrpcResponse<T> =
-  | { result: { data: T } }
-  | {
-      error: {
-        json: { message: string; data: { code: string; httpStatus: number } };
-      };
-    };
+const trpcResponseSchema = z.union([
+  z.object({ result: z.object({ data: z.unknown() }) }),
+  z
+    .object({
+      error: z.union([
+        z.object({
+          json: z.object({
+            message: z.string(),
+            data: z.object({ code: z.string(), httpStatus: z.number() }),
+          }),
+        }),
+        z.object({
+          message: z.string(),
+          data: z.object({ code: z.string(), httpStatus: z.number() }),
+        }),
+      ]),
+    })
+    .transform(({ error }) => ({
+      error: "json" in error ? error.json : error,
+    })),
+]);
+
+export type TrpcResponse = z.infer<typeof trpcResponseSchema>;
 
 export async function signIn(
   email: string,
@@ -37,7 +54,7 @@ export async function signIn(
     `/api/dev/auth-code?email=${encodeURIComponent(email)}`,
   );
   expect(captured.status).toBe(200);
-  const { code } = await captured.json<{ code: string }>();
+  const { code } = z.object({ code: z.string() }).parse(await captured.json());
 
   const verify = await workerFetch("/api/auth/sign-in/email-otp", {
     method: "POST",
@@ -77,12 +94,12 @@ function testIpAddress(email: string): string {
   return `192.0.2.${suffix}`;
 }
 
-export async function callTrpc<T = unknown>(
+export async function callTrpc(
   procedure: string,
   input: unknown,
   cookie?: string,
   type: "mutation" | "query" = "mutation",
-): Promise<{ status: number; body: TrpcResponse<T> }> {
+): Promise<{ status: number; body: TrpcResponse }> {
   const headers = new Headers({ "Content-Type": "application/json" });
   if (cookie) headers.set("Cookie", cookie);
 
@@ -99,16 +116,16 @@ export async function callTrpc<T = unknown>(
 
   return {
     status: response.status,
-    body: await response.json<TrpcResponse<T>>(),
+    body: trpcResponseSchema.parse(await response.json()),
   };
 }
 
-export function getResult<T>(response: TrpcResponse<T>): T {
+export function getResult<T>(response: TrpcResponse, schema: z.ZodType<T>): T {
   if ("error" in response) {
-    throw new Error(response.error.json.message);
+    throw new Error(response.error.message);
   }
 
-  return response.result.data;
+  return schema.parse(response.result.data);
 }
 
 export function workerFetch(
