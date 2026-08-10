@@ -572,7 +572,7 @@ function handleTrackReorderResult(
   if (result === "structure_locked") {
     throw new TRPCError({
       code: "CONFLICT",
-      message: "Tracks are locked after the first final submission.",
+      message: "Tracks are locked after a proposal is submitted.",
     });
   }
   handleReorderResult(result);
@@ -608,12 +608,12 @@ function unwrapOptionMutation<T>(
   if (result.error === "persistence_failed") {
     throw new TRPCError({
       code: "INTERNAL_SERVER_ERROR",
-      message: "The event option could not be saved.",
+      message: "The room or track could not be saved. Try again.",
     });
   }
   throw new TRPCError({
     code: "CONFLICT",
-    message: "Tracks are locked after the first final submission.",
+    message: "Tracks are locked after a proposal is submitted.",
   });
 }
 
@@ -621,6 +621,7 @@ function throwCfpWriteError(
   error:
     | "already_draft"
     | "already_open"
+    | "deadline_after_event"
     | "deadline_passed"
     | "file_fields_unsupported"
     | "missing_track"
@@ -651,6 +652,12 @@ function throwCfpWriteError(
     throw new TRPCError({
       code: "BAD_REQUEST",
       message: "Choose a deadline in the future.",
+    });
+  }
+  if (error === "deadline_after_event") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Choose a deadline on or before the event end date.",
     });
   }
   if (error === "file_fields_unsupported") {

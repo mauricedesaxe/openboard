@@ -1070,6 +1070,9 @@ function CfpSetupPage() {
   if (!event.data || !tracks.data || !rooms.data || cfp.data === undefined) {
     return <FullPageStatus label="Opening CFP setup" />;
   }
+  const structureLocked = Boolean(
+    cfp.data.open?.structureLocked || cfp.data.draft?.structureLocked,
+  );
 
   return (
     <div className="page setup-page">
@@ -1084,6 +1087,8 @@ function CfpSetupPage() {
       </section>
       <div className="setup-grid">
         <OptionEditor
+          creating={createTrack.isPending}
+          disabled={structureLocked}
           title="Tracks"
           detail="Each submission has one track."
           error={
@@ -1093,7 +1098,7 @@ function CfpSetupPage() {
             reorderTracks.error
           }
           items={tracks.data}
-          onCreate={(name) => createTrack.mutate({ slug, name })}
+          onCreate={(name) => createTrack.mutateAsync({ slug, name })}
           onRename={(id, name) =>
             updateTrack.mutate({ slug, trackId: id, name })
           }
@@ -1105,6 +1110,8 @@ function CfpSetupPage() {
           onReorder={(orderedIds) => reorderTracks.mutate({ slug, orderedIds })}
         />
         <OptionEditor
+          creating={createRoom.isPending}
+          disabled={false}
           title="Rooms"
           detail="Rooms are ready for later agenda placement."
           error={
@@ -1114,7 +1121,7 @@ function CfpSetupPage() {
             reorderRooms.error
           }
           items={rooms.data}
-          onCreate={(name) => createRoom.mutate({ slug, name })}
+          onCreate={(name) => createRoom.mutateAsync({ slug, name })}
           onRename={(id, name) => updateRoom.mutate({ slug, roomId: id, name })}
           onArchive={(id) => {
             if (window.confirm("Archive this room?")) {
@@ -1128,6 +1135,7 @@ function CfpSetupPage() {
         <CfpBuilder
           cfp={cfp.data.open}
           key={cfp.data.open.id}
+          endsOn={event.data.endsOn}
           slug={slug}
           timezone={event.data.timezone}
         />
@@ -1135,6 +1143,7 @@ function CfpSetupPage() {
       <CfpBuilder
         cfp={cfp.data.draft}
         key={cfp.data.draft?.id ?? "new"}
+        endsOn={event.data.endsOn}
         slug={slug}
         timezone={event.data.timezone}
       />
@@ -1143,6 +1152,8 @@ function CfpSetupPage() {
 }
 
 function OptionEditor({
+  creating,
+  disabled,
   title,
   detail,
   items,
@@ -1152,11 +1163,13 @@ function OptionEditor({
   onArchive,
   onReorder,
 }: {
+  creating: boolean;
+  disabled: boolean;
   title: string;
   detail: string;
   items: EventOption[];
   error: { message: string } | null;
-  onCreate: (name: string) => void;
+  onCreate: (name: string) => Promise<unknown>;
   onRename: (id: string, name: string) => void;
   onArchive: (id: string) => void;
   onReorder: (ids: string[]) => void;
@@ -1165,15 +1178,19 @@ function OptionEditor({
   const [validationError, setValidationError] = useState<string>();
   const singular = title.slice(0, -1).toLowerCase();
 
-  function create(event: FormEvent) {
+  async function create(event: FormEvent) {
     event.preventDefault();
     if (name.trim().length < 2) {
       setValidationError(`Enter at least 2 characters for the ${singular}.`);
       return;
     }
     setValidationError(undefined);
-    onCreate(name.trim());
-    setName("");
+    try {
+      await onCreate(name.trim());
+      setName("");
+    } catch {
+      return;
+    }
   }
 
   function move(index: number, offset: number) {
@@ -1216,32 +1233,34 @@ function OptionEditor({
           >
             <input
               defaultValue={item.name}
+              disabled={disabled}
               name="name"
               aria-label={`${singular} name: ${item.name}`}
             />
-            <button className="mini-button" type="submit">
+            <button className="mini-button" disabled={disabled} type="submit">
               Save
             </button>
             <button
               className="mini-button"
-              disabled={index === 0}
+              disabled={disabled || index === 0}
               aria-label={`Move ${item.name} up`}
               onClick={() => move(index, -1)}
               type="button"
             >
-              ↑
+              Move up
             </button>
             <button
               className="mini-button"
-              disabled={index === items.length - 1}
+              disabled={disabled || index === items.length - 1}
               aria-label={`Move ${item.name} down`}
               onClick={() => move(index, 1)}
               type="button"
             >
-              ↓
+              Move down
             </button>
             <button
               className="mini-button danger-button"
+              disabled={disabled}
               onClick={() => onArchive(item.id)}
               type="button"
             >
@@ -1263,10 +1282,15 @@ function OptionEditor({
             setValidationError(undefined);
           }}
           placeholder={`Add ${singular}`}
+          disabled={disabled || creating}
           value={name}
         />
-        <button className="mini-button" type="submit">
-          Add
+        <button
+          className="mini-button"
+          disabled={disabled || creating}
+          type="submit"
+        >
+          {creating ? "Adding…" : "Add"}
         </button>
       </form>
     </section>
@@ -1375,6 +1399,7 @@ function InvitationPage({
 
 function CfpBuilder({
   cfp,
+  endsOn,
   slug,
   timezone,
 }: {
@@ -1385,6 +1410,7 @@ function CfpBuilder({
         structureLocked: boolean;
       })
     | null;
+  endsOn: string;
   slug: string;
   timezone: string;
 }) {
@@ -1417,31 +1443,46 @@ function CfpBuilder({
   );
   const formId = cfp?.id ?? "new";
 
-  function save(event: FormEvent) {
-    event.preventDefault();
+  function parsedDefinition(): CfpDefinitionInput | undefined {
     const parsed = cfpDefinitionInputSchema.safeParse(definition);
     if (!parsed.success) {
       setValidationError(cfpValidationError(parsed.error.issues[0]));
-      return;
+      return undefined;
+    }
+    if (
+      isoToEventLocalDateTime(parsed.data.deadline, timezone).slice(0, 10) >
+      endsOn
+    ) {
+      setValidationError({
+        message: "Choose a deadline on or before the event end date.",
+        path: ["deadline"],
+      });
+      return undefined;
     }
     setValidationError(undefined);
-    if (cfp) update.mutate({ slug, cfpId: cfp.id, ...parsed.data });
-    else create.mutate({ slug, ...parsed.data });
+    return parsed.data;
+  }
+
+  function save(event: FormEvent) {
+    event.preventDefault();
+    const parsed = parsedDefinition();
+    if (!parsed) return;
+    if (cfp) update.mutate({ slug, cfpId: cfp.id, ...parsed });
+    else create.mutate({ slug, ...parsed });
   }
 
   function saveAndOpen() {
-    const parsed = cfpDefinitionInputSchema.safeParse(definition);
-    if (!cfp || !parsed.success) {
-      setValidationError(
-        parsed.success
-          ? { message: "Create the draft before opening it.", path: [] }
-          : cfpValidationError(parsed.error.issues[0]),
-      );
+    const parsed = parsedDefinition();
+    if (!parsed) return;
+    if (!cfp) {
+      setValidationError({
+        message: "Create the draft before opening it.",
+        path: [],
+      });
       return;
     }
 
-    setValidationError(undefined);
-    open.mutate({ slug, cfpId: cfp.id, ...parsed.data });
+    open.mutate({ slug, cfpId: cfp.id, ...parsed });
   }
 
   function updateField(index: number, field: CustomField) {
@@ -1480,7 +1521,8 @@ function CfpBuilder({
       <form onInput={() => setValidationError(undefined)} onSubmit={save}>
         {cfp?.structureLocked && (
           <p className="locked-form-note">
-            This form is locked because it already has a final submission.
+            A proposal has been submitted. Formats, tracks, and custom fields
+            are locked. You can still update the CFP name and deadline.
           </p>
         )}
         <fieldset className="builder-fields">
@@ -1613,7 +1655,11 @@ function CfpBuilder({
             disabled={create.isPending || update.isPending}
             type="submit"
           >
-            {cfp ? "Save form" : "Create draft"}
+            {cfp?.structureLocked
+              ? "Save name and deadline"
+              : cfp
+                ? "Save form"
+                : "Create draft"}
           </button>
           {cfp?.status === "draft" && (
             <button
@@ -1769,6 +1815,11 @@ function CustomFieldEditor({
             ))}
           </select>
         </label>
+        {sources.length === 0 && (
+          <span className="field-rule-hint">
+            Add a single-select field above this one to make it conditional.
+          </span>
+        )}
         {source?.type === "single_select" && condition && (
           <select
             aria-label="Condition value"

@@ -9,6 +9,7 @@ import {
   type CfpFormContract,
   type CfpId,
 } from "../../shared/cfps";
+import { isoToEventLocalDateTime } from "../../shared/date-time";
 import type { UserId } from "../../shared/events";
 import type { Database } from "../database/client";
 import { cfps, events, tracks } from "../database/schema";
@@ -21,6 +22,7 @@ type CfpWriteResult =
       error:
         | "already_open"
         | "already_draft"
+        | "deadline_after_event"
         | "deadline_passed"
         | "file_fields_unsupported"
         | "missing_track"
@@ -55,6 +57,9 @@ export async function createDraftCfp(
 ): Promise<CfpWriteResult> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
+  if (deadlineFallsAfterEvent(input.deadline, event.endsOn, event.timezone)) {
+    return { ok: false, error: "deadline_after_event" };
+  }
 
   const [currentDraft] = await database
     .select({ id: cfps.id })
@@ -104,6 +109,9 @@ export async function updateDraftCfp(
 ): Promise<CfpWriteResult> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
+  if (deadlineFallsAfterEvent(input.deadline, event.endsOn, event.timezone)) {
+    return { ok: false, error: "deadline_after_event" };
+  }
 
   const [existing] = await database
     .select({
@@ -168,6 +176,9 @@ export async function saveAndOpenCfp(
 ): Promise<CfpWriteResult> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
+  if (deadlineFallsAfterEvent(input.deadline, event.endsOn, event.timezone)) {
+    return { ok: false, error: "deadline_after_event" };
+  }
   if (new Date(input.deadline) <= new Date()) {
     return { ok: false, error: "deadline_passed" };
   }
@@ -330,4 +341,12 @@ function parseCfpStatus(
 ): Cfp | null {
   const row = rows.find((candidate) => candidate.status === status);
   return row ? parseCfp(row) : null;
+}
+
+function deadlineFallsAfterEvent(
+  deadline: string,
+  endsOn: string,
+  timezone: string,
+): boolean {
+  return isoToEventLocalDateTime(deadline, timezone).slice(0, 10) > endsOn;
 }

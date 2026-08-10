@@ -682,9 +682,11 @@ a {
   border: 1px solid var(--ink);
   padding: 9px 10px;
   background: transparent;
+  color: var(--ink);
   cursor: pointer;
   font: 10px "DM Mono";
   text-transform: uppercase;
+  white-space: nowrap;
 }
 .mini-button:disabled {
   opacity: 0.3;
@@ -780,6 +782,9 @@ a {
 .field-rules select {
   padding: 7px;
   background: var(--paper);
+}
+.field-rule-hint {
+  color: rgba(27, 39, 36, 0.62);
 }
 .builder-actions {
   justify-content: flex-start;
