@@ -348,7 +348,7 @@ export async function updateOwnSubmission(
 
   const now = new Date();
   try {
-    const [root] = await database.batch([
+    const [submissionUpdateResult] = await database.batch([
       database
         .update(submissions)
         .set({
@@ -425,7 +425,7 @@ export async function updateOwnSubmission(
         })
         .where(eq(formResponses.submissionId, submissionId)),
     ]);
-    if (root.meta.changes === 0) {
+    if (submissionUpdateResult.meta.changes === 0) {
       return { ok: false, error: "submission_closed" };
     }
   } catch (error: unknown) {
@@ -467,9 +467,9 @@ export async function withdrawOwnSubmission(
   }
 
   const now = new Date();
-  let root;
+  let submissionUpdateResult;
   try {
-    [root] = await database.batch([
+    [submissionUpdateResult] = await database.batch([
       database
         .update(submissions)
         .set({ status: "withdrawn", withdrawnAt: now, updatedAt: now })
@@ -517,7 +517,7 @@ export async function withdrawOwnSubmission(
   } catch {
     return { ok: false, error: "persistence_failed" };
   }
-  if (root.meta.changes === 0) {
+  if (submissionUpdateResult.meta.changes === 0) {
     return { ok: false, error: "submission_closed" };
   }
 
