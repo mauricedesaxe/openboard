@@ -1,8 +1,19 @@
 import { describe, expect, test } from "vitest";
+import { z } from "zod";
 
-import { visibleCustomFields, type CfpFormContract } from "../src/shared/cfps";
+import {
+  cfpFormContractSchema,
+  cfpSchema,
+  visibleCustomFields,
+} from "../src/shared/cfps";
 
 import { callTrpc, getResult, signIn, testEnvironment } from "./support";
+
+const eventOptionSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  position: z.number(),
+});
 
 describe("build and open a conditional CFP", () => {
   test("publishes one typed form while protecting organizer setup", async () => {
@@ -19,13 +30,8 @@ describe("build and open a conditional CFP", () => {
     const organizer = await signIn("cfp-organizer@example.com", "192.0.2.32");
     const reviewer = await signIn("cfp-reviewer@example.com", "192.0.2.33");
     const event = getResult(
-      (
-        await callTrpc<{ id: string }>(
-          "events.create",
-          eventInput,
-          owner.cookie,
-        )
-      ).body,
+      (await callTrpc("events.create", eventInput, owner.cookie)).body,
+      z.object({ id: z.string() }),
     );
 
     await testEnvironment.DB.batch([
@@ -86,22 +92,14 @@ describe("build and open a conditional CFP", () => {
     ).toBe(200);
 
     const web = getResult(
-      (
-        await callTrpc<{ id: string; name: string }>(
-          "tracks.create",
-          { slug, name: "Web" },
-          owner.cookie,
-        )
-      ).body,
+      (await callTrpc("tracks.create", { slug, name: "Web" }, owner.cookie))
+        .body,
+      eventOptionSchema,
     );
     const data = getResult(
-      (
-        await callTrpc<{ id: string; name: string }>(
-          "tracks.create",
-          { slug, name: "Data" },
-          owner.cookie,
-        )
-      ).body,
+      (await callTrpc("tracks.create", { slug, name: "Data" }, owner.cookie))
+        .body,
+      eventOptionSchema,
     );
     expect(
       (await callTrpc("tracks.create", { slug, name: "web" }, owner.cookie))
@@ -109,12 +107,13 @@ describe("build and open a conditional CFP", () => {
     ).toBe(409);
     const archived = getResult(
       (
-        await callTrpc<{ id: string; name: string }>(
+        await callTrpc(
           "tracks.create",
           { slug, name: "Archive me" },
           owner.cookie,
         )
       ).body,
+      eventOptionSchema,
     );
     expect(
       (
@@ -146,12 +145,13 @@ describe("build and open a conditional CFP", () => {
 
     const room = getResult(
       (
-        await callTrpc<{ id: string }>(
+        await callTrpc(
           "rooms.create",
           { slug, name: "Main hall" },
           owner.cookie,
         )
       ).body,
+      eventOptionSchema,
     );
     expect(
       (
@@ -187,14 +187,8 @@ describe("build and open a conditional CFP", () => {
       200, 200,
     ]);
     const listedRooms = getResult(
-      (
-        await callTrpc<{ position: number }[]>(
-          "rooms.list",
-          { slug },
-          owner.cookie,
-          "query",
-        )
-      ).body,
+      (await callTrpc("rooms.list", { slug }, owner.cookie, "query")).body,
+      z.array(eventOptionSchema),
     );
     expect(
       new Set(listedRooms.map((listedRoom) => listedRoom.position)).size,
@@ -230,13 +224,13 @@ describe("build and open a conditional CFP", () => {
         },
       ],
     } as const;
-    const draftResponse = await callTrpc<{ id: string; status: string }>(
+    const draftResponse = await callTrpc(
       "cfps.createDraft",
       draftInput,
       owner.cookie,
     );
     expect(draftResponse.status).toBe(200);
-    const draft = getResult(draftResponse.body);
+    const draft = getResult(draftResponse.body, cfpSchema);
     expect(draft.status).toBe("draft");
     expect(
       (await callTrpc("cfps.createDraft", draftInput, reviewer.cookie)).status,
@@ -327,14 +321,14 @@ describe("build and open a conditional CFP", () => {
       ).status,
     ).toBe(200);
 
-    const publicResponse = await callTrpc<CfpFormContract>(
+    const publicResponse = await callTrpc(
       "cfps.publicByEventSlug",
       { slug },
       undefined,
       "query",
     );
     expect(publicResponse.status).toBe(200);
-    const publicForm = getResult(publicResponse.body);
+    const publicForm = getResult(publicResponse.body, cfpFormContractSchema);
     expect(publicForm).toMatchObject({
       event: { name: eventInput.name, slug },
       name: "Ignored repeat",
@@ -395,20 +389,17 @@ describe("build and open a conditional CFP", () => {
 
     const secondDraft = getResult(
       (
-        await callTrpc<{ id: string }>(
+        await callTrpc(
           "cfps.createDraft",
           { ...draftInput, name: "Second CFP" },
           owner.cookie,
         )
       ).body,
+      cfpSchema,
     );
     const setup = getResult(
-      (
-        await callTrpc<{
-          draft: { id: string } | null;
-          open: { id: string; name: string } | null;
-        }>("cfps.getSetup", { slug }, owner.cookie, "query")
-      ).body,
+      (await callTrpc("cfps.getSetup", { slug }, owner.cookie, "query")).body,
+      z.object({ draft: cfpSchema.nullable(), open: cfpSchema.nullable() }),
     );
     expect(setup).toMatchObject({
       draft: { id: secondDraft.id },
@@ -438,12 +429,13 @@ describe("build and open a conditional CFP", () => {
     );
     const noTrackDraft = getResult(
       (
-        await callTrpc<{ id: string }>(
+        await callTrpc(
           "cfps.createDraft",
           { ...draftInput, slug: noTrackSlug, name: "No tracks yet" },
           owner.cookie,
         )
       ).body,
+      cfpSchema,
     );
     expect(
       (
@@ -471,12 +463,13 @@ describe("build and open a conditional CFP", () => {
     ).toBe(400);
     const soleTrack = getResult(
       (
-        await callTrpc<{ id: string }>(
+        await callTrpc(
           "tracks.create",
           { slug: noTrackSlug, name: "Only track" },
           owner.cookie,
         )
       ).body,
+      eventOptionSchema,
     );
     const [raceOpen, raceArchive] = await Promise.all([
       callTrpc(

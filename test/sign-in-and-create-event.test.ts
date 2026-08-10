@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import type { AppConfig } from "../src/server/config";
 import { createDatabase } from "../src/server/database/client";
 import { createAuth } from "../src/server/identity/auth";
+import { eventSchema } from "../src/shared/events";
 
 import {
   callTrpc,
@@ -59,11 +60,13 @@ describe("sign in and create an event", () => {
     );
     expect(invalidTimezone.status).toBe(400);
 
-    const createdResponse = await callTrpc<
-      typeof eventInput & { id: string; ownerUserId: string; agendaId: string }
-    >("events.create", eventInput, owner.cookie);
+    const createdResponse = await callTrpc(
+      "events.create",
+      eventInput,
+      owner.cookie,
+    );
     expect(createdResponse.status).toBe(200);
-    const created = getResult(createdResponse.body);
+    const created = getResult(createdResponse.body, eventSchema);
     expect(created).toMatchObject(eventInput);
 
     const persisted = await testEnvironment.DB.prepare(
@@ -85,7 +88,7 @@ describe("sign in and create an event", () => {
       "query",
     );
     expect(reloaded.status).toBe(200);
-    expect(getResult(reloaded.body)).toEqual(created);
+    expect(getResult(reloaded.body, eventSchema)).toEqual(created);
 
     const unrelated = await signIn("unrelated@example.com");
     const privateRead = await callTrpc(
@@ -116,7 +119,9 @@ describe("sign in and create an event", () => {
       owner.cookie,
     );
     expect(renamed.status).toBe(200);
-    expect(getResult(renamed.body)).toMatchObject({ name: "Northstar 2027" });
+    expect(getResult(renamed.body, eventSchema)).toMatchObject({
+      name: "Northstar 2027",
+    });
   });
 
   test("keeps authenticated session reads outside the anonymous limit", async () => {
