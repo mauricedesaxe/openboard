@@ -216,6 +216,19 @@ describe("build and open a conditional CFP", () => {
         },
       ],
     } as const;
+    expect(
+      (
+        await callTrpc(
+          "cfps.createDraft",
+          {
+            ...draftInput,
+            deadline: "2027-08-13T10:00:00Z",
+            name: "Deadline after event",
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(400);
     const draftResponse = await callTrpc(
       "cfps.createDraft",
       draftInput,
