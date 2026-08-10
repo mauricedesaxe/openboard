@@ -14,6 +14,10 @@ import {
 import {
   cfpDefinitionInputSchema,
   conditionSourceFields,
+  nextCustomFieldKey,
+  removeCustomField,
+  replaceCustomField,
+  visibleCustomFields,
   type CfpDefinitionInput,
   type CustomField,
 } from "../shared/cfps";
@@ -118,7 +122,6 @@ function AuthenticatedApp({ email }: { email: string }) {
 }
 
 function SignInPage() {
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const returnTo = safeReturnTo(searchParams.get("returnTo"));
   const invitationSignIn = returnTo.startsWith("/invitations/");
@@ -191,7 +194,7 @@ function SignInPage() {
       return;
     }
 
-    void navigate(returnTo, { replace: true });
+    window.location.assign(returnTo);
   }
 
   return (
@@ -1057,9 +1060,17 @@ function CfpSetupPage() {
           onReorder={(orderedIds) => reorderRooms.mutate({ slug, orderedIds })}
         />
       </div>
+      {cfp.data.open && (
+        <CfpBuilder
+          cfp={cfp.data.open}
+          key={cfp.data.open.id}
+          slug={slug}
+          timezone={event.data.timezone}
+        />
+      )}
       <CfpBuilder
-        cfp={cfp.data}
-        key={cfp.data?.id ?? "new"}
+        cfp={cfp.data.draft}
+        key={cfp.data.draft?.id ?? "new"}
         slug={slug}
         timezone={event.data.timezone}
       />
@@ -1118,6 +1129,9 @@ function OptionEditor({
       <h2>{title}</h2>
       <p>{detail}</p>
       <div className="option-list">
+        {items.length === 0 && (
+          <p className="muted">No {title.toLowerCase()} yet.</p>
+        )}
         {items.map((item, index) => (
           <form
             className="option-row"
@@ -1139,7 +1153,7 @@ function OptionEditor({
             <input
               defaultValue={item.name}
               name="name"
-              aria-label={`${title} name`}
+              aria-label={`${singular} name: ${item.name}`}
             />
             <button className="mini-button" type="submit">
               Save
@@ -1147,6 +1161,7 @@ function OptionEditor({
             <button
               className="mini-button"
               disabled={index === 0}
+              aria-label={`Move ${item.name} up`}
               onClick={() => move(index, -1)}
               type="button"
             >
@@ -1155,6 +1170,7 @@ function OptionEditor({
             <button
               className="mini-button"
               disabled={index === items.length - 1}
+              aria-label={`Move ${item.name} down`}
               onClick={() => move(index, 1)}
               type="button"
             >
@@ -1178,7 +1194,10 @@ function OptionEditor({
       <form className="option-add" onSubmit={create}>
         <input
           aria-label={`New ${singular} name`}
-          onChange={(event) => setName(event.target.value)}
+          onChange={(event) => {
+            setName(event.target.value);
+            setValidationError(undefined);
+          }}
           placeholder={`Add ${singular}`}
           value={name}
         />
@@ -1317,7 +1336,10 @@ function CfpBuilder({
         }
       : emptyCfpDefinition(),
   );
-  const [validationError, setValidationError] = useState<string>();
+  const [validationError, setValidationError] = useState<{
+    message: string;
+    path: (string | number)[];
+  }>();
   const refresh = () =>
     queryClient.invalidateQueries(trpc.cfps.getSetup.queryFilter({ slug }));
   const create = useMutation(
@@ -1329,14 +1351,13 @@ function CfpBuilder({
   const open = useMutation(
     trpc.cfps.open.mutationOptions({ onSuccess: refresh }),
   );
+  const formId = cfp?.id ?? "new";
 
   function save(event: FormEvent) {
     event.preventDefault();
     const parsed = cfpDefinitionInputSchema.safeParse(definition);
     if (!parsed.success) {
-      setValidationError(
-        parsed.error.issues[0]?.message ?? "Check the form definition.",
-      );
+      setValidationError(cfpValidationError(parsed.error.issues[0]));
       return;
     }
     setValidationError(undefined);
@@ -1349,8 +1370,8 @@ function CfpBuilder({
     if (!cfp || !parsed.success) {
       setValidationError(
         parsed.success
-          ? "Create the draft before opening it."
-          : (parsed.error.issues[0]?.message ?? "Check the form definition."),
+          ? { message: "Create the draft before opening it.", path: [] }
+          : cfpValidationError(parsed.error.issues[0]),
       );
       return;
     }
@@ -1362,9 +1383,7 @@ function CfpBuilder({
   function updateField(index: number, field: CustomField) {
     setDefinition((current) => ({
       ...current,
-      customFields: current.customFields.map((currentField, fieldIndex) =>
-        fieldIndex === index ? field : currentField,
-      ),
+      customFields: replaceCustomField(current.customFields, index, field),
     }));
   }
 
@@ -1373,7 +1392,7 @@ function CfpBuilder({
       ...current,
       customFields: [
         ...current.customFields,
-        newCustomField(type, current.customFields.length),
+        newCustomField(type, nextCustomFieldKey(current.customFields)),
       ],
     }));
   }
@@ -1392,7 +1411,7 @@ function CfpBuilder({
           </span>
         )}
       </div>
-      <form onSubmit={save}>
+      <form onInput={() => setValidationError(undefined)} onSubmit={save}>
         {cfp?.structureLocked && (
           <p className="locked-form-note">
             This form is locked because it already has a final submission.
@@ -1400,9 +1419,9 @@ function CfpBuilder({
         )}
         <fieldset className="builder-fields" disabled={cfp?.structureLocked}>
           <div className="field-pair">
-            <Field label="CFP name" name="cfp-name">
+            <Field label="CFP name" name={`cfp-name-${formId}`}>
               <input
-                id="cfp-name"
+                id={`cfp-name-${formId}`}
                 value={definition.name}
                 onChange={(event) =>
                   setDefinition((current) => ({
@@ -1412,9 +1431,9 @@ function CfpBuilder({
                 }
               />
             </Field>
-            <Field label="Deadline" name="cfp-deadline">
+            <Field label="Deadline" name={`cfp-deadline-${formId}`}>
               <input
-                id="cfp-deadline"
+                id={`cfp-deadline-${formId}`}
                 type="datetime-local"
                 value={isoToEventLocalDateTime(definition.deadline, timezone)}
                 onChange={(event) => {
@@ -1429,7 +1448,11 @@ function CfpBuilder({
                   setValidationError(
                     deadline
                       ? undefined
-                      : "Choose a deadline that exists in the event timezone.",
+                      : {
+                          message:
+                            "Choose a deadline that exists in the event timezone.",
+                          path: ["deadline"],
+                        },
                   );
                 }}
               />
@@ -1438,10 +1461,10 @@ function CfpBuilder({
           <Field
             hint="Separate formats with commas"
             label="Formats"
-            name="cfp-formats"
+            name={`cfp-formats-${formId}`}
           >
             <input
-              id="cfp-formats"
+              id={`cfp-formats-${formId}`}
               value={definition.formats.join(", ")}
               onChange={(event) =>
                 setDefinition((current) => ({
@@ -1482,25 +1505,31 @@ function CfpBuilder({
             <CustomFieldEditor
               allFields={definition.customFields}
               field={field}
+              idPrefix={formId}
               index={index}
               key={index}
+              validationMessage={
+                validationError?.path[0] === "customFields" &&
+                validationError.path[1] === index
+                  ? validationError.message
+                  : undefined
+              }
               onChange={(next) => updateField(index, next)}
               onRemove={() =>
                 setDefinition((current) => ({
                   ...current,
-                  customFields: current.customFields.filter(
-                    (_, fieldIndex) => fieldIndex !== index,
-                  ),
+                  customFields: removeCustomField(current.customFields, index),
                 }))
               }
             />
           ))}
         </fieldset>
-        {(validationError || mutationError) && (
-          <p className="form-error" role="alert">
-            {validationError ?? mutationError?.message}
-          </p>
-        )}
+        {(validationError?.path[0] !== "customFields" || mutationError) &&
+          (validationError || mutationError) && (
+            <p className="form-error" role="alert">
+              {validationError?.message ?? mutationError?.message}
+            </p>
+          )}
         <div className="builder-actions">
           <button
             className="primary-button"
@@ -1534,14 +1563,18 @@ function CfpBuilder({
 
 function CustomFieldEditor({
   field,
+  idPrefix,
   index,
   allFields,
+  validationMessage,
   onChange,
   onRemove,
 }: {
   field: CustomField;
+  idPrefix: string;
   index: number;
   allFields: CustomField[];
+  validationMessage?: string | undefined;
   onChange: (field: CustomField) => void;
   onRemove: () => void;
 }) {
@@ -1550,22 +1583,28 @@ function CustomFieldEditor({
   const source = sources.find(
     (candidate) => candidate.key === condition?.fieldKey,
   );
+  const fieldId = (name: string) => `${idPrefix}-${name}-${index}`;
   return (
     <fieldset className="custom-field-card">
       <legend>{field.type.replace("_", " ")}</legend>
+      {validationMessage && (
+        <p className="form-error" role="alert">
+          {validationMessage}
+        </p>
+      )}
       <div className="field-pair">
-        <Field label="Field key" name={`field-key-${index}`}>
+        <Field label="Field key" name={fieldId("field-key")}>
           <input
-            id={`field-key-${index}`}
+            id={fieldId("field-key")}
             value={field.key}
             onChange={(event) =>
               onChange({ ...field, key: event.target.value })
             }
           />
         </Field>
-        <Field label="Label" name={`field-label-${index}`}>
+        <Field label="Label" name={fieldId("field-label")}>
           <input
-            id={`field-label-${index}`}
+            id={fieldId("field-label")}
             value={field.label}
             onChange={(event) =>
               onChange({ ...field, label: event.target.value })
@@ -1577,10 +1616,10 @@ function CustomFieldEditor({
         <Field
           hint="Separate options with commas"
           label="Options"
-          name={`field-options-${index}`}
+          name={fieldId("field-options")}
         >
           <input
-            id={`field-options-${index}`}
+            id={fieldId("field-options")}
             value={field.options.join(", ")}
             onChange={(event) =>
               onChange({
@@ -1596,9 +1635,9 @@ function CustomFieldEditor({
       )}
       {field.type === "file" && (
         <div className="field-pair">
-          <Field label="Accepted MIME types" name={`field-types-${index}`}>
+          <Field label="Accepted MIME types" name={fieldId("field-types")}>
             <input
-              id={`field-types-${index}`}
+              id={fieldId("field-types")}
               value={field.acceptedTypes.join(", ")}
               onChange={(event) =>
                 onChange({
@@ -1611,9 +1650,9 @@ function CustomFieldEditor({
               }
             />
           </Field>
-          <Field label="Maximum MB" name={`field-size-${index}`}>
+          <Field label="Maximum MB" name={fieldId("field-size")}>
             <input
-              id={`field-size-${index}`}
+              id={fieldId("field-size")}
               min="1"
               max="100"
               type="number"
@@ -1868,14 +1907,8 @@ function PublicCfpPage() {
               <>
                 <div className="eyebrow">03 · Event questions</div>
                 <h2>A few details for this event.</h2>
-                {cfp.data.customFields
-                  .filter(
-                    (field) =>
-                      !field.condition ||
-                      customAnswers[field.condition.fieldKey] ===
-                        field.condition.equals,
-                  )
-                  .map((field) => (
+                {visibleCustomFields(cfp.data.customFields, customAnswers).map(
+                  (field) => (
                     <PublicCustomField
                       field={field}
                       key={field.key}
@@ -1887,7 +1920,8 @@ function PublicCfpPage() {
                         }))
                       }
                     />
-                  ))}
+                  ),
+                )}
                 {cfp.data.customFields.length === 0 && (
                   <p className="muted">
                     No extra questions. Your proposal is ready for the
@@ -1997,9 +2031,9 @@ function emptyCfpDefinition(): CfpDefinitionInput {
   };
 }
 
-function newCustomField(type: CustomField["type"], index: number): CustomField {
+function newCustomField(type: CustomField["type"], key: string): CustomField {
   const base = {
-    key: `question_${index + 1}`,
+    key,
     label: "New question",
     required: false,
   };
@@ -2012,10 +2046,32 @@ function newCustomField(type: CustomField["type"], index: number): CustomField {
 
 function formatDeadline(value: string, timezone: string): string {
   return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short",
+    timeZoneName: "short",
+    year: "numeric",
     timeZone: timezone,
   }).format(new Date(value));
+}
+
+function cfpValidationError(
+  issue:
+    | {
+        message: string;
+        path: PropertyKey[];
+      }
+    | undefined,
+): { message: string; path: (string | number)[] } {
+  return {
+    message: issue?.message ?? "Check the form definition.",
+    path:
+      issue?.path.filter(
+        (segment): segment is string | number =>
+          typeof segment === "string" || typeof segment === "number",
+      ) ?? [],
+  };
 }
 
 function Field({

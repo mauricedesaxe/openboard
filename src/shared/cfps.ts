@@ -116,6 +116,60 @@ export function conditionSourceFields(fields: CustomField[], index: number) {
     );
 }
 
+export function nextCustomFieldKey(fields: CustomField[]): string {
+  const keys = new Set(fields.map((field) => field.key));
+  let index = 1;
+  while (keys.has(`question_${index}`)) index += 1;
+  return `question_${index}`;
+}
+
+export function replaceCustomField(
+  fields: CustomField[],
+  index: number,
+  nextField: CustomField,
+): CustomField[] {
+  const previousKey = fields[index]?.key;
+  return fields.map((field, fieldIndex) => {
+    if (fieldIndex === index) return nextField;
+    if (previousKey && field.condition?.fieldKey === previousKey) {
+      return {
+        ...field,
+        condition: { ...field.condition, fieldKey: nextField.key },
+      };
+    }
+    return field;
+  });
+}
+
+export function removeCustomField(
+  fields: CustomField[],
+  index: number,
+): CustomField[] {
+  const removedKey = fields[index]?.key;
+  return fields
+    .filter((_, fieldIndex) => fieldIndex !== index)
+    .map((field) =>
+      removedKey && field.condition?.fieldKey === removedKey
+        ? { ...field, condition: undefined }
+        : field,
+    );
+}
+
+export function visibleCustomFields(
+  fields: CustomField[],
+  answers: Record<string, string>,
+): CustomField[] {
+  const visibleKeys = new Set<string>();
+  return fields.filter((field) => {
+    const visible =
+      !field.condition ||
+      (visibleKeys.has(field.condition.fieldKey) &&
+        answers[field.condition.fieldKey] === field.condition.equals);
+    if (visible) visibleKeys.add(field.key);
+    return visible;
+  });
+}
+
 export const cfpDefinitionInputSchema = z.object({
   name: nameSchema,
   deadline: z.iso.datetime({ offset: true }),

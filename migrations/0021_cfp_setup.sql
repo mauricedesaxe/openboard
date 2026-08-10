@@ -9,6 +9,9 @@ CREATE TABLE tracks (
 );
 
 CREATE INDEX tracks_event_id_idx ON tracks(event_id);
+CREATE UNIQUE INDEX tracks_active_name_idx
+  ON tracks(event_id, lower(name))
+  WHERE archived_at IS NULL;
 
 CREATE TABLE rooms (
   id TEXT PRIMARY KEY NOT NULL,
@@ -21,6 +24,9 @@ CREATE TABLE rooms (
 );
 
 CREATE INDEX rooms_event_id_idx ON rooms(event_id);
+CREATE UNIQUE INDEX rooms_active_name_idx
+  ON rooms(event_id, lower(name))
+  WHERE archived_at IS NULL;
 
 CREATE TABLE cfps (
   id TEXT PRIMARY KEY NOT NULL,
