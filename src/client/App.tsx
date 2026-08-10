@@ -6,7 +6,6 @@ import {
   Navigate,
   Route,
   Routes,
-  useLocation,
   useNavigate,
   useParams,
   useSearchParams,
@@ -14,6 +13,7 @@ import {
 
 import {
   cfpDefinitionInputSchema,
+  conditionSourceFields,
   type CfpDefinitionInput,
   type CustomField,
 } from "../shared/cfps";
@@ -32,16 +32,16 @@ import { authClient } from "./auth";
 import { useTRPC } from "./trpc";
 
 export function App() {
-  const session = authClient.useSession();
-  const location = useLocation();
+  return (
+    <Routes>
+      <Route path="/events/:slug/cfp" element={<PublicCfpPage />} />
+      <Route path="/*" element={<SessionApp />} />
+    </Routes>
+  );
+}
 
-  if (/^\/events\/[^/]+\/cfp\/?$/.test(location.pathname)) {
-    return (
-      <Routes>
-        <Route path="/events/:slug/cfp" element={<PublicCfpPage />} />
-      </Routes>
-    );
-  }
+function SessionApp() {
+  const session = authClient.useSession();
 
   if (session.isPending) {
     return <FullPageStatus label="Opening your board" />;
@@ -537,22 +537,24 @@ function EventPage() {
       {event.data.access === "owner" && (
         <EventTeamPanel slug={event.data.slug} />
       )}
-      <section className="setup-callout">
-        <div>
-          <div className="eyebrow">Call for proposals</div>
-          <h2>Shape what speakers send you.</h2>
-          <p>
-            Configure tracks, rooms, formats, and conditional proposal fields
-            before you open the public form.
-          </p>
-        </div>
-        <Link
-          className="primary-button link-button"
-          to={`/events/${slug}/cfp/setup`}
-        >
-          Configure CFP
-        </Link>
-      </section>
+      {event.data.access !== "reviewer" && (
+        <section className="setup-callout">
+          <div>
+            <div className="eyebrow">Call for proposals</div>
+            <h2>Shape what speakers send you.</h2>
+            <p>
+              Configure tracks, rooms, formats, and conditional proposal fields
+              before you open the public form.
+            </p>
+          </div>
+          <Link
+            className="primary-button link-button"
+            to={`/events/${slug}/cfp/setup`}
+          >
+            Configure CFP
+          </Link>
+        </section>
+      )}
     </div>
   );
 }
@@ -947,6 +949,7 @@ function EventTeamPanel({ slug }: { slug: string }) {
 }
 
 type EventOption = { id: string; name: string; position: number };
+const publicCfpSteps = ["Proposal", "Speakers", "Event questions"] as const;
 
 function CfpSetupPage() {
   const { slug = "" } = useParams();
@@ -1015,7 +1018,7 @@ function CfpSetupPage() {
       <div className="setup-grid">
         <OptionEditor
           title="Tracks"
-          detail="Authors choose one track for each proposal."
+          detail="Each submission has one track."
           error={
             createTrack.error ??
             updateTrack.error ??
@@ -1295,7 +1298,7 @@ function CfpBuilder({
   cfp:
     | (CfpDefinitionInput & {
         id: string;
-        status: "draft" | "open" | "closed";
+        status: "draft" | "open";
         structureLocked: boolean;
       })
     | null;
@@ -1542,9 +1545,7 @@ function CustomFieldEditor({
   onChange: (field: CustomField) => void;
   onRemove: () => void;
 }) {
-  const sources = allFields
-    .slice(0, index)
-    .filter((candidate) => candidate.type === "single_select");
+  const sources = conditionSourceFields(allFields, index);
   const condition = field.condition;
   const source = sources.find(
     (candidate) => candidate.key === condition?.fieldKey,
@@ -1695,7 +1696,10 @@ function PublicCfpPage() {
   const { slug = "" } = useParams();
   const trpc = useTRPC();
   const cfp = useQuery(
-    trpc.cfps.publicByEventSlug.queryOptions({ slug }, { retry: false }),
+    trpc.cfps.publicByEventSlug.queryOptions(
+      { slug },
+      { refetchOnWindowFocus: false, retry: false, staleTime: Infinity },
+    ),
   );
   const [step, setStep] = useState(0);
   const [coreAnswers, setCoreAnswers] = useState({
@@ -1712,7 +1716,9 @@ function PublicCfpPage() {
 
   function advance(event: FormEvent) {
     event.preventDefault();
-    if (step < 2) setStep((current) => current + 1);
+    if (step < publicCfpSteps.length - 1) {
+      setStep((current) => current + 1);
+    }
   }
 
   if (cfp.isPending)
@@ -1724,7 +1730,6 @@ function PublicCfpPage() {
       </main>
     );
 
-  const steps = ["Proposal", "Speakers", "Event questions"];
   return (
     <main className="public-cfp">
       <header className="public-cfp-header">
@@ -1744,7 +1749,7 @@ function PublicCfpPage() {
           <div className="eyebrow">Call for proposals</div>
           <h1>{cfp.data.name}</h1>
           <ol>
-            {steps.map((label, index) => (
+            {publicCfpSteps.map((label, index) => (
               <li className={step === index ? "current" : ""} key={label}>
                 <span>0{index + 1}</span>
                 {label}
@@ -1901,7 +1906,7 @@ function PublicCfpPage() {
                   Back
                 </button>
               )}
-              {step < steps.length - 1 ? (
+              {step < publicCfpSteps.length - 1 ? (
                 <button className="primary-button" type="submit">
                   Continue
                 </button>

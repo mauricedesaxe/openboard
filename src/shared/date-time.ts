@@ -1,3 +1,6 @@
+const timezoneCorrectionAttempts = 3;
+
+/** Resolves event wall time through repeated offset checks so DST changes settle without using the browser timezone. */
 export function eventLocalDateTimeToIso(
   value: string,
   timezone: string,
@@ -13,7 +16,7 @@ export function eventLocalDateTimeToIso(
     Number(match[5]),
   );
   let instant = desired;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < timezoneCorrectionAttempts; attempt += 1) {
     instant += desired - datePartsAsUtc(new Date(instant), timezone);
   }
 
