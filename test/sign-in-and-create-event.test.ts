@@ -1,6 +1,10 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, test } from "vitest";
 
+import type { AppConfig } from "../src/server/config";
+import { createDatabase } from "../src/server/database/client";
+import { createAuth } from "../src/server/identity/auth";
+
 const testEnvironment = env as unknown as { DB: D1Database };
 const worker = exports as unknown as {
   default: { fetch(request: Request): Promise<Response> };
@@ -34,6 +38,13 @@ describe("sign in and create an event", () => {
       owner.cookie,
     );
     expect(invalidDates.status).toBe(400);
+
+    const pastDates = await callTrpc(
+      "events.create",
+      { ...eventInput, startsOn: "2000-01-05", endsOn: "2000-01-07" },
+      owner.cookie,
+    );
+    expect(pastDates.status).toBe(400);
 
     const invalidTimezone = await callTrpc(
       "events.create",
@@ -153,7 +164,7 @@ async function signIn(
   });
   expect(reusedCode.status).toBe(400);
 
-  for (let requestNumber = 0; requestNumber < 11; requestNumber += 1) {
+  for (let requestNumber = 0; requestNumber < 101; requestNumber += 1) {
     const session = await workerFetch("/api/auth/get-session", {
       headers: {
         "CF-Connecting-IP": authHeaders["CF-Connecting-IP"],
@@ -165,6 +176,47 @@ async function signIn(
 
   return { cookie, userId: user?.id ?? "" };
 }
+
+test("reports a failed authentication code delivery", async () => {
+  const config: AppConfig = {
+    appEnv: "production",
+    appUrl: "https://localhost",
+    authSecret: "test-secret-that-is-at-least-thirty-two-characters",
+    email: {
+      type: "cloudflare",
+      from: "auth@example.com",
+      sender: {
+        send: () => Promise.reject(new Error("Email service unavailable")),
+      },
+    },
+  };
+  const auth = createAuth({
+    config,
+    database: createDatabase(testEnvironment.DB),
+  });
+  const response = await auth.handler(
+    new Request("https://localhost/api/auth/email-otp/send-verification-otp", {
+      method: "POST",
+      body: JSON.stringify({
+        email: "delivery-failure@example.com",
+        type: "sign-in",
+      }),
+      headers: {
+        "CF-Connecting-IP": "192.0.2.20",
+        "Content-Type": "application/json",
+        Origin: "https://localhost",
+      },
+    }),
+  );
+
+  expect(response.status).toBe(502);
+  const verification = await testEnvironment.DB.prepare(
+    "SELECT id FROM verification WHERE identifier = ?",
+  )
+    .bind("sign-in-otp-delivery-failure@example.com")
+    .first();
+  expect(verification).toBeNull();
+});
 
 async function callTrpc<T = unknown>(
   procedure: string,

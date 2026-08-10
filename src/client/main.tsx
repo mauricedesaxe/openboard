@@ -11,7 +11,14 @@ import { TRPCProvider } from "./trpc";
 import "./styles.css";
 
 function Root() {
-  const [queryClient] = useState(() => new QueryClient());
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: { retry: shouldRetryQuery },
+        },
+      }),
+  );
   const [trpcClient] = useState(() =>
     createTRPCClient<AppRouter>({
       links: [httpBatchLink({ url: "/api/trpc" })],
@@ -37,3 +44,15 @@ if (!root) {
 }
 
 createRoot(root).render(<Root />);
+
+function shouldRetryQuery(failureCount: number, error: Error): boolean {
+  const data = (error as { data?: unknown }).data;
+  const httpStatus =
+    typeof data === "object" &&
+    data !== null &&
+    "httpStatus" in data &&
+    typeof data.httpStatus === "number"
+      ? data.httpStatus
+      : undefined;
+  return failureCount < 3 && (httpStatus === undefined || httpStatus >= 500);
+}

@@ -26,6 +26,10 @@ export function App() {
     return <FullPageStatus label="Opening your board" />;
   }
 
+  if (session.error) {
+    return <SessionUnavailable />;
+  }
+
   return (
     <Routes>
       <Route
@@ -102,7 +106,7 @@ function SignInPage() {
     setBusy(false);
 
     if (result.error) {
-      setError(result.error.message ?? "The code could not be sent.");
+      setError("The code could not be sent. Try again.");
       return;
     }
 
@@ -140,7 +144,10 @@ function SignInPage() {
     setBusy(false);
 
     if (result.error) {
-      setError(result.error.message ?? "That code could not be verified.");
+      setCode("");
+      setError(
+        "That code is invalid or expired. Request a new code if needed.",
+      );
       return;
     }
 
@@ -342,9 +349,7 @@ function CreateEventPage() {
     event.preventDefault();
     const parsed = eventInputSchema.safeParse(input);
     if (!parsed.success) {
-      setValidationError(
-        parsed.error.issues[0]?.message ?? "Check the event details.",
-      );
+      setValidationError(formatEventValidationError(parsed.error.issues[0]));
       return;
     }
 
@@ -398,7 +403,6 @@ function CreateEventPage() {
               <input
                 id="startsOn"
                 onChange={(event) => update("startsOn", event.target.value)}
-                required
                 type="date"
                 value={input.startsOn}
               />
@@ -407,7 +411,6 @@ function CreateEventPage() {
               <input
                 id="endsOn"
                 onChange={(event) => update("endsOn", event.target.value)}
-                required
                 type="date"
                 value={input.endsOn}
               />
@@ -484,9 +487,6 @@ function EventPage() {
             blocks will land here.
           </p>
         </div>
-        <span className="agenda-id">
-          Agenda {event.data.agendaId.slice(0, 8)}
-        </span>
       </section>
     </div>
   );
@@ -521,6 +521,21 @@ function FullPageStatus({ label }: { label: string }) {
   );
 }
 
+function SessionUnavailable() {
+  return (
+    <main className="full-status">
+      <span>We couldn’t check your session.</span>
+      <button
+        className="text-button"
+        onClick={() => window.location.reload()}
+        type="button"
+      >
+        Try again
+      </button>
+    </main>
+  );
+}
+
 function BoardStatus({ detail, label }: { detail?: string; label: string }) {
   return (
     <section className="empty-board">
@@ -540,4 +555,22 @@ function formatDateRange(startsOn: string, endsOn: string): string {
   const start = formatter.format(new Date(`${startsOn}T00:00:00Z`));
   const end = formatter.format(new Date(`${endsOn}T00:00:00Z`));
   return start === end ? start : `${start} – ${end}`;
+}
+
+function formatEventValidationError(
+  issue: { message: string; path: PropertyKey[] } | undefined,
+): string {
+  if (!issue) return "Check the event details.";
+
+  const labels: Partial<Record<keyof EventInput, string>> = {
+    name: "Event name",
+    slug: "Slug",
+    startsOn: "Start date",
+    endsOn: "End date",
+    timezone: "Timezone",
+  };
+  const field = issue.path[0];
+  const label =
+    typeof field === "string" ? labels[field as keyof EventInput] : undefined;
+  return label ? `${label}: ${issue.message}` : issue.message;
 }

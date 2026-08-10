@@ -29,7 +29,7 @@ export async function createTrpcContext(context: Context) {
 
 type TrpcContext = Awaited<ReturnType<typeof createTrpcContext>>;
 
-const trpc = initTRPC.context<TrpcContext>().create();
+const trpc = initTRPC.context<TrpcContext>().create({ isDev: false });
 
 const authenticatedProcedure = trpc.procedure.use(async ({ ctx, next }) => {
   if (!ctx.session) {
