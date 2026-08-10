@@ -28,6 +28,9 @@ describe("configuration", () => {
     expect(
       parseConfig({ ...validConfig, EMAIL_FROM: "not-an-email" }),
     ).toMatchObject({ ok: false });
+    expect(
+      parseConfig({ ...validConfig, EMAIL_FROM: "auth@example.com" }),
+    ).toMatchObject({ ok: false });
   });
 
   test("accepts an explicit production email transport", () => {

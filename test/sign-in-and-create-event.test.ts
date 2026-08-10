@@ -30,6 +30,18 @@ describe("sign in and create an event", () => {
 
     const unauthenticatedCreate = await callTrpc("events.create", eventInput);
     expect(unauthenticatedCreate.status).toBe(401);
+    const unauthenticatedRead = await callTrpc(
+      "events.get",
+      { slug: eventInput.slug },
+      undefined,
+      "query",
+    );
+    expect(unauthenticatedRead.status).toBe(401);
+    const unauthenticatedMutation = await callTrpc("events.rename", {
+      slug: eventInput.slug,
+      name: "Not signed in",
+    });
+    expect(unauthenticatedMutation.status).toBe(401);
 
     const owner = await signIn("owner@example.com");
     const invalidDates = await callTrpc(
@@ -112,13 +124,28 @@ describe("sign in and create an event", () => {
     expect(renamed.status).toBe(200);
     expect(getResult(renamed.body)).toMatchObject({ name: "Northstar 2027" });
   });
+
+  test("keeps authenticated session reads outside the anonymous limit", async () => {
+    const { cookie } = await signIn("session-reader@example.com", "192.0.2.12");
+
+    for (let requestNumber = 0; requestNumber < 101; requestNumber += 1) {
+      const session = await workerFetch("/api/auth/get-session", {
+        headers: {
+          "CF-Connecting-IP": "192.0.2.12",
+          Cookie: cookie,
+        },
+      });
+      expect(session.status).toBe(200);
+    }
+  });
 });
 
 async function signIn(
   email: string,
+  ipAddress = email.startsWith("owner") ? "192.0.2.10" : "192.0.2.11",
 ): Promise<{ cookie: string; userId: string }> {
   const authHeaders = {
-    "CF-Connecting-IP": email.startsWith("owner") ? "192.0.2.10" : "192.0.2.11",
+    "CF-Connecting-IP": ipAddress,
     "Content-Type": "application/json",
   };
   const requestCode = await workerFetch(
@@ -163,16 +190,6 @@ async function signIn(
     headers: authHeaders,
   });
   expect(reusedCode.status).toBe(400);
-
-  for (let requestNumber = 0; requestNumber < 101; requestNumber += 1) {
-    const session = await workerFetch("/api/auth/get-session", {
-      headers: {
-        "CF-Connecting-IP": authHeaders["CF-Connecting-IP"],
-        Cookie: cookie,
-      },
-    });
-    expect(session.status).toBe(200);
-  }
 
   return { cookie, userId: user?.id ?? "" };
 }

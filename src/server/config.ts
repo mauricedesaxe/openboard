@@ -21,7 +21,7 @@ const rawConfigSchema = z.discriminatedUnion("EMAIL_TRANSPORT", [
         typeof value.send === "function",
       "Cloudflare email requires the EMAIL binding.",
     ),
-    EMAIL_FROM: z.email(),
+    EMAIL_FROM: z.literal("auth@alexlazar.dev"),
     EMAIL_TRANSPORT: z.literal("cloudflare"),
   }),
 ]);
