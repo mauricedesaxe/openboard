@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, eq, exists, isNull } from "drizzle-orm";
 
 import {
   cfpFormContractSchema,
@@ -21,6 +21,7 @@ type CfpWriteResult =
       error:
         | "already_open"
         | "already_draft"
+        | "deadline_passed"
         | "missing_track"
         | "not_found"
         | "persistence_failed"
@@ -31,17 +32,18 @@ export async function getCfpSetup(
   database: Database,
   userId: UserId,
   slug: string,
-): Promise<Cfp | null | undefined> {
+): Promise<{ draft: Cfp | null; open: Cfp | null } | undefined> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return undefined;
 
-  const [row] = await database
+  const rows = await database
     .select()
     .from(cfps)
-    .where(eq(cfps.eventId, event.id))
-    .orderBy(desc(cfps.createdAt))
-    .limit(1);
-  return row ? parseCfp(row) : null;
+    .where(eq(cfps.eventId, event.id));
+  return {
+    draft: parseCfpStatus(rows, "draft"),
+    open: parseCfpStatus(rows, "open"),
+  };
 }
 
 export async function createDraftCfp(
@@ -156,6 +158,9 @@ export async function saveAndOpenCfp(
 ): Promise<CfpWriteResult> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
+  if (new Date(input.deadline) <= new Date()) {
+    return { ok: false, error: "deadline_passed" };
+  }
 
   const [currentOpen] = await database
     .select()
@@ -165,24 +170,19 @@ export async function saveAndOpenCfp(
   if (currentOpen && currentOpen.id !== cfpId) {
     return { ok: false, error: "already_open" };
   }
-  if (currentOpen) return { ok: true, value: parseCfp(currentOpen) };
+  if (currentOpen?.structureLockedAt) {
+    return { ok: false, error: "structure_locked" };
+  }
 
   const [target] = await database
     .select({ lockedAt: cfps.structureLockedAt, status: cfps.status })
     .from(cfps)
     .where(and(eq(cfps.id, cfpId), eq(cfps.eventId, event.id)))
     .limit(1);
-  if (!target || target.status !== "draft") {
+  if (!target || (target.status !== "draft" && !currentOpen)) {
     return { ok: false, error: "not_found" };
   }
   if (target.lockedAt) return { ok: false, error: "structure_locked" };
-
-  const [activeTrack] = await database
-    .select({ id: tracks.id })
-    .from(tracks)
-    .where(and(eq(tracks.eventId, event.id), isNull(tracks.archivedAt)))
-    .limit(1);
-  if (!activeTrack) return { ok: false, error: "missing_track" };
 
   try {
     const result = await database
@@ -199,10 +199,36 @@ export async function saveAndOpenCfp(
         and(
           eq(cfps.id, cfpId),
           eq(cfps.eventId, event.id),
-          eq(cfps.status, "draft"),
+          eq(cfps.status, currentOpen ? "open" : "draft"),
+          isNull(cfps.structureLockedAt),
+          exists(
+            database
+              .select({ id: tracks.id })
+              .from(tracks)
+              .where(
+                and(eq(tracks.eventId, event.id), isNull(tracks.archivedAt)),
+              ),
+          ),
         ),
       );
-    if (result.meta.changes === 0) return { ok: false, error: "not_found" };
+    if (result.meta.changes === 0) {
+      const [latest] = await database
+        .select({ lockedAt: cfps.structureLockedAt })
+        .from(cfps)
+        .where(and(eq(cfps.id, cfpId), eq(cfps.eventId, event.id)))
+        .limit(1);
+      if (latest?.lockedAt) return { ok: false, error: "structure_locked" };
+
+      const [activeTrack] = await database
+        .select({ id: tracks.id })
+        .from(tracks)
+        .where(and(eq(tracks.eventId, event.id), isNull(tracks.archivedAt)))
+        .limit(1);
+      return {
+        ok: false,
+        error: activeTrack ? "not_found" : "missing_track",
+      };
+    }
   } catch (error: unknown) {
     if (String(error).includes("UNIQUE constraint failed")) {
       return { ok: false, error: "already_open" };
@@ -282,4 +308,12 @@ function parseCfp(row: typeof cfps.$inferSelect): Cfp {
     ),
     structureLocked: row.structureLockedAt !== null,
   });
+}
+
+function parseCfpStatus(
+  rows: (typeof cfps.$inferSelect)[],
+  status: "draft" | "open",
+): Cfp | null {
+  const row = rows.find((candidate) => candidate.status === status);
+  return row ? parseCfp(row) : null;
 }

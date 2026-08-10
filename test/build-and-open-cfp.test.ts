@@ -65,6 +65,17 @@ describe("build and open a conditional CFP", () => {
         .status,
     ).toBe(404);
     expect(
+      (await callTrpc("cfps.getSetup", { slug }, reviewer.cookie, "query"))
+        .status,
+    ).toBe(404);
+    expect(
+      (await callTrpc("tracks.list", { slug }, reviewer.cookie, "query"))
+        .status,
+    ).toBe(404);
+    expect(
+      (await callTrpc("rooms.list", { slug }, reviewer.cookie, "query")).status,
+    ).toBe(404);
+    expect(
       (
         await callTrpc(
           "rooms.create",
@@ -92,6 +103,10 @@ describe("build and open a conditional CFP", () => {
         )
       ).body,
     );
+    expect(
+      (await callTrpc("tracks.create", { slug, name: "web" }, owner.cookie))
+        .status,
+    ).toBe(409);
     const archived = getResult(
       (
         await callTrpc<{ id: string; name: string }>(
@@ -138,6 +153,15 @@ describe("build and open a conditional CFP", () => {
         )
       ).body,
     );
+    expect(
+      (
+        await callTrpc(
+          "rooms.create",
+          { slug, name: "MAIN HALL" },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(409);
     expect(
       (
         await callTrpc(
@@ -214,6 +238,9 @@ describe("build and open a conditional CFP", () => {
     expect(draftResponse.status).toBe(200);
     const draft = getResult(draftResponse.body);
     expect(draft.status).toBe("draft");
+    expect(
+      (await callTrpc("cfps.createDraft", draftInput, reviewer.cookie)).status,
+    ).toBe(404);
     expect(
       (
         await callTrpc(
@@ -310,7 +337,7 @@ describe("build and open a conditional CFP", () => {
     const publicForm = getResult(publicResponse.body);
     expect(publicForm).toMatchObject({
       event: { name: eventInput.name, slug },
-      name: "Speak with us",
+      name: "Ignored repeat",
       deadline: draftInput.deadline,
       coreFields: {
         title: { required: true },
@@ -324,6 +351,15 @@ describe("build and open a conditional CFP", () => {
       ],
     });
     expect(publicForm.customFields).toEqual(draftInput.customFields);
+    expect(
+      (
+        await callTrpc(
+          "cfps.updateDraft",
+          { ...draftInput, cfpId: draft.id, name: "Edited while open" },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(200);
     expect(
       (
         await callTrpc(
@@ -352,12 +388,33 @@ describe("build and open a conditional CFP", () => {
         )
       ).body,
     );
+    const setup = getResult(
+      (
+        await callTrpc<{
+          draft: { id: string } | null;
+          open: { id: string; name: string } | null;
+        }>("cfps.getSetup", { slug }, owner.cookie, "query")
+      ).body,
+    );
+    expect(setup).toMatchObject({
+      draft: { id: secondDraft.id },
+      open: { id: draft.id, name: "Edited while open" },
+    });
     const secondOpen = await callTrpc(
       "cfps.open",
       { ...draftInput, slug, cfpId: secondDraft.id, name: "Second CFP" },
       owner.cookie,
     );
     expect(secondOpen.status).toBe(409);
+    expect(
+      (
+        await callTrpc(
+          "tracks.archive",
+          { slug, trackId: crypto.randomUUID() },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(404);
 
     const noTrackSlug = "no-track-cfp-2027";
     await callTrpc(
@@ -377,12 +434,64 @@ describe("build and open a conditional CFP", () => {
     expect(
       (
         await callTrpc(
+          "cfps.publicByEventSlug",
+          { slug: noTrackSlug },
+          undefined,
+          "query",
+        )
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await callTrpc(
           "cfps.open",
           {
             ...draftInput,
             slug: noTrackSlug,
             cfpId: noTrackDraft.id,
             name: "No tracks yet",
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(400);
+    const soleTrack = getResult(
+      (
+        await callTrpc<{ id: string }>(
+          "tracks.create",
+          { slug: noTrackSlug, name: "Only track" },
+          owner.cookie,
+        )
+      ).body,
+    );
+    const [raceOpen, raceArchive] = await Promise.all([
+      callTrpc(
+        "cfps.open",
+        {
+          ...draftInput,
+          slug: noTrackSlug,
+          cfpId: noTrackDraft.id,
+          name: "Race-safe CFP",
+        },
+        owner.cookie,
+      ),
+      callTrpc(
+        "tracks.archive",
+        { slug: noTrackSlug, trackId: soleTrack.id },
+        owner.cookie,
+      ),
+    ]);
+    expect([raceOpen.status, raceArchive.status]).not.toEqual([200, 200]);
+    expect(
+      (
+        await callTrpc(
+          "cfps.open",
+          {
+            ...draftInput,
+            slug: noTrackSlug,
+            cfpId: noTrackDraft.id,
+            deadline: "2020-01-01T00:00:00Z",
+            name: "Past deadline",
           },
           owner.cookie,
         )

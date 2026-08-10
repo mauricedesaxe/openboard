@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import {
   cfpDefinitionInputSchema,
+  eventOptionNameSchema,
   type CfpId,
   type RoomId,
   type TrackId,
@@ -91,7 +92,7 @@ const authenticatedProcedure = trpc.procedure.use(async ({ ctx, next }) => {
 
 const slugInput = z.object({ slug: eventInputSchema.shape.slug });
 const optionNameInput = slugInput.extend({
-  name: z.string().trim().min(2).max(120),
+  name: eventOptionNameSchema,
 });
 const trackIdSchema = z.uuid();
 const roomIdSchema = z.uuid();
@@ -305,7 +306,7 @@ export const appRouter = trpc.router({
           input.slug,
           input.name,
         );
-        return unwrapTrackMutation(result);
+        return unwrapOptionMutation(result);
       }),
     update: authenticatedProcedure
       .input(optionNameInput.extend({ trackId: trackIdSchema }))
@@ -317,7 +318,7 @@ export const appRouter = trpc.router({
           input.trackId as TrackId,
           input.name,
         );
-        return unwrapTrackMutation(result);
+        return unwrapOptionMutation(result);
       }),
     archive: authenticatedProcedure
       .input(slugInput.extend({ trackId: trackIdSchema }))
@@ -328,7 +329,7 @@ export const appRouter = trpc.router({
           input.slug,
           input.trackId as TrackId,
         );
-        return unwrapTrackMutation(result);
+        return unwrapOptionMutation(result);
       }),
     reorder: authenticatedProcedure
       .input(
@@ -366,8 +367,7 @@ export const appRouter = trpc.router({
           input.slug,
           input.name,
         );
-        if (!result) throwCfpItemNotFound();
-        return result;
+        return unwrapOptionMutation(result);
       }),
     update: authenticatedProcedure
       .input(optionNameInput.extend({ roomId: roomIdSchema }))
@@ -379,8 +379,7 @@ export const appRouter = trpc.router({
           input.roomId as RoomId,
           input.name,
         );
-        if (!result) throwCfpItemNotFound();
-        return result;
+        return unwrapOptionMutation(result);
       }),
     archive: authenticatedProcedure
       .input(slugInput.extend({ roomId: roomIdSchema }))
@@ -504,20 +503,37 @@ function handleReorderResult(
   }
 }
 
-function unwrapTrackMutation<T>(
+function unwrapOptionMutation<T>(
   result:
     | { ok: true; value: T }
     | {
         ok: false;
-        error: "last_open_track" | "not_found" | "structure_locked";
+        error:
+          | "duplicate_name"
+          | "last_open_track"
+          | "not_found"
+          | "persistence_failed"
+          | "structure_locked";
       },
 ): T {
   if (result.ok) return result.value;
   if (result.error === "not_found") throwCfpItemNotFound();
+  if (result.error === "duplicate_name") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "Use a name that is not already active for this event.",
+    });
+  }
   if (result.error === "last_open_track") {
     throw new TRPCError({
       code: "CONFLICT",
       message: "An open call for proposals must keep at least one track.",
+    });
+  }
+  if (result.error === "persistence_failed") {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "The event option could not be saved.",
     });
   }
   throw new TRPCError({
@@ -530,6 +546,7 @@ function throwCfpWriteError(
   error:
     | "already_draft"
     | "already_open"
+    | "deadline_passed"
     | "missing_track"
     | "not_found"
     | "persistence_failed"
@@ -552,6 +569,12 @@ function throwCfpWriteError(
     throw new TRPCError({
       code: "BAD_REQUEST",
       message: "Add at least one track before opening the call for proposals.",
+    });
+  }
+  if (error === "deadline_passed") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Choose a deadline in the future.",
     });
   }
   if (error === "structure_locked") {

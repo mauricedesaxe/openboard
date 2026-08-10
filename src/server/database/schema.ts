@@ -216,7 +216,12 @@ export const tracks = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
-  (table) => [index("tracks_event_id_idx").on(table.eventId)],
+  (table) => [
+    index("tracks_event_id_idx").on(table.eventId),
+    uniqueIndex("tracks_active_name_idx")
+      .on(table.eventId, sql`lower(${table.name})`)
+      .where(sql`${table.archivedAt} IS NULL`),
+  ],
 );
 
 export const rooms = sqliteTable(
@@ -232,7 +237,12 @@ export const rooms = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
-  (table) => [index("rooms_event_id_idx").on(table.eventId)],
+  (table) => [
+    index("rooms_event_id_idx").on(table.eventId),
+    uniqueIndex("rooms_active_name_idx")
+      .on(table.eventId, sql`lower(${table.name})`)
+      .where(sql`${table.archivedAt} IS NULL`),
+  ],
 );
 
 export const cfps = sqliteTable(

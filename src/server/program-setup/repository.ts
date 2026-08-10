@@ -5,6 +5,7 @@ import {
   eq,
   isNotNull,
   isNull,
+  ne,
   notExists,
   sql,
 } from "drizzle-orm";
@@ -23,11 +24,16 @@ type EventOption = {
 
 type OptionKind = "room" | "track";
 
-type TrackMutationResult<T> =
+type OptionMutationResult<T> =
   | { ok: true; value: T }
   | {
       ok: false;
-      error: "last_open_track" | "not_found" | "structure_locked";
+      error:
+        | "duplicate_name"
+        | "last_open_track"
+        | "not_found"
+        | "persistence_failed"
+        | "structure_locked";
     };
 
 export async function listTracks(
@@ -43,25 +49,38 @@ export async function createTrack(
   userId: UserId,
   slug: string,
   name: string,
-): Promise<TrackMutationResult<EventOption>> {
+): Promise<OptionMutationResult<EventOption>> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
+  if (await hasActiveOptionName(database, event.id, "track", name)) {
+    return { ok: false, error: "duplicate_name" };
+  }
 
   const id = crypto.randomUUID() as TrackId;
   const now = Date.now();
-  const result = await database.run(sql`
-    INSERT INTO tracks (id, event_id, name, position, created_at, updated_at)
-    SELECT ${id}, ${event.id}, ${name}, next_position, ${now}, ${now}
-    FROM (
-      SELECT COALESCE(MAX(position), -1) + 1 AS next_position
-      FROM tracks
-      WHERE event_id = ${event.id}
-    )
-    WHERE NOT EXISTS (
-      SELECT 1 FROM cfps
-      WHERE event_id = ${event.id} AND structure_locked_at IS NOT NULL
-    )
-  `);
+  let result;
+  try {
+    result = await database.run(sql`
+      INSERT INTO tracks (id, event_id, name, position, created_at, updated_at)
+      SELECT ${id}, ${event.id}, ${name}, next_position, ${now}, ${now}
+      FROM (
+        SELECT COALESCE(MAX(position), -1) + 1 AS next_position
+        FROM tracks
+        WHERE event_id = ${event.id}
+      )
+      WHERE NOT EXISTS (
+        SELECT 1 FROM cfps
+        WHERE event_id = ${event.id} AND structure_locked_at IS NOT NULL
+      )
+    `);
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      error: isUniqueConstraintError(error)
+        ? "duplicate_name"
+        : "persistence_failed",
+    };
+  }
   if (result.meta.changes === 0) {
     return { ok: false, error: "structure_locked" };
   }
@@ -76,21 +95,34 @@ export async function updateTrack(
   slug: string,
   id: TrackId,
   name: string,
-): Promise<TrackMutationResult<EventOption>> {
+): Promise<OptionMutationResult<EventOption>> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
+  if (await hasActiveOptionName(database, event.id, "track", name, id)) {
+    return { ok: false, error: "duplicate_name" };
+  }
 
-  const result = await database
-    .update(tracks)
-    .set({ name, updatedAt: new Date() })
-    .where(
-      and(
-        eq(tracks.id, id),
-        eq(tracks.eventId, event.id),
-        isNull(tracks.archivedAt),
-        noLockedCfp(database, event.id),
-      ),
-    );
+  let result;
+  try {
+    result = await database
+      .update(tracks)
+      .set({ name, updatedAt: new Date() })
+      .where(
+        and(
+          eq(tracks.id, id),
+          eq(tracks.eventId, event.id),
+          isNull(tracks.archivedAt),
+          noLockedCfp(database, event.id),
+        ),
+      );
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      error: isUniqueConstraintError(error)
+        ? "duplicate_name"
+        : "persistence_failed",
+    };
+  }
   if (result.meta.changes === 0) {
     return {
       ok: false,
@@ -109,7 +141,7 @@ export async function archiveTrack(
   userId: UserId,
   slug: string,
   id: TrackId,
-): Promise<TrackMutationResult<{ archived: true }>> {
+): Promise<OptionMutationResult<{ archived: true }>> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
 
@@ -137,6 +169,9 @@ export async function archiveTrack(
   `);
   if (result.meta.changes > 0) {
     return { ok: true, value: { archived: true } };
+  }
+  if (!(await findEventOption(database, event.id, "track", id))) {
+    return { ok: false, error: "not_found" };
   }
   if (await hasLockedCfp(database, event.id)) {
     return { ok: false, error: "structure_locked" };
@@ -172,8 +207,33 @@ export async function createRoom(
   userId: UserId,
   slug: string,
   name: string,
-): Promise<EventOption | undefined> {
-  return createEventOption(database, userId, slug, "room", name);
+): Promise<OptionMutationResult<EventOption>> {
+  const event = await findEventForOrganizer(database, userId, slug);
+  if (!event) return { ok: false, error: "not_found" };
+  if (await hasActiveOptionName(database, event.id, "room", name)) {
+    return { ok: false, error: "duplicate_name" };
+  }
+
+  const id = crypto.randomUUID() as RoomId;
+  const now = Date.now();
+  try {
+    await database.run(sql`
+      INSERT INTO rooms (id, event_id, name, position, created_at, updated_at)
+      SELECT ${id}, ${event.id}, ${name}, COALESCE(MAX(position), -1) + 1, ${now}, ${now}
+      FROM rooms
+      WHERE event_id = ${event.id}
+    `);
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      error: isUniqueConstraintError(error)
+        ? "duplicate_name"
+        : "persistence_failed",
+    };
+  }
+
+  const value = await findEventOption(database, event.id, "room", id);
+  return value ? { ok: true, value } : { ok: false, error: "not_found" };
 }
 
 export async function updateRoom(
@@ -182,8 +242,37 @@ export async function updateRoom(
   slug: string,
   id: RoomId,
   name: string,
-): Promise<EventOption | undefined> {
-  return updateEventOption(database, userId, slug, "room", id, name);
+): Promise<OptionMutationResult<EventOption>> {
+  const event = await findEventForOrganizer(database, userId, slug);
+  if (!event) return { ok: false, error: "not_found" };
+  if (await hasActiveOptionName(database, event.id, "room", name, id)) {
+    return { ok: false, error: "duplicate_name" };
+  }
+
+  let result;
+  try {
+    result = await database
+      .update(rooms)
+      .set({ name, updatedAt: new Date() })
+      .where(
+        and(
+          eq(rooms.id, id),
+          eq(rooms.eventId, event.id),
+          isNull(rooms.archivedAt),
+        ),
+      );
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      error: isUniqueConstraintError(error)
+        ? "duplicate_name"
+        : "persistence_failed",
+    };
+  }
+  if (result.meta.changes === 0) return { ok: false, error: "not_found" };
+
+  const value = await findEventOption(database, event.id, "room", id);
+  return value ? { ok: true, value } : { ok: false, error: "not_found" };
 }
 
 export async function archiveRoom(
@@ -192,7 +281,21 @@ export async function archiveRoom(
   slug: string,
   id: RoomId,
 ): Promise<boolean> {
-  return archiveEventOption(database, userId, slug, "room", id);
+  const event = await findEventForOrganizer(database, userId, slug);
+  if (!event) return false;
+
+  const now = new Date();
+  const result = await database
+    .update(rooms)
+    .set({ archivedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(rooms.id, id),
+        eq(rooms.eventId, event.id),
+        isNull(rooms.archivedAt),
+      ),
+    );
+  return result.meta.changes > 0;
 }
 
 export async function reorderRooms(
@@ -231,113 +334,6 @@ async function listEventOptions(
           .orderBy(asc(rooms.position));
 
   return rows as EventOption[];
-}
-
-async function createEventOption(
-  database: Database,
-  userId: UserId,
-  slug: string,
-  kind: OptionKind,
-  name: string,
-): Promise<EventOption | undefined> {
-  const event = await findEventForOrganizer(database, userId, slug);
-  if (!event) return undefined;
-
-  const id = crypto.randomUUID() as RoomId | TrackId;
-  const now = Date.now();
-
-  if (kind === "track") {
-    await database.run(sql`
-      INSERT INTO tracks (id, event_id, name, position, created_at, updated_at)
-      SELECT ${id}, ${event.id}, ${name}, COALESCE(MAX(position), -1) + 1, ${now}, ${now}
-      FROM tracks
-      WHERE event_id = ${event.id}
-    `);
-  } else {
-    await database.run(sql`
-      INSERT INTO rooms (id, event_id, name, position, created_at, updated_at)
-      SELECT ${id}, ${event.id}, ${name}, COALESCE(MAX(position), -1) + 1, ${now}, ${now}
-      FROM rooms
-      WHERE event_id = ${event.id}
-    `);
-  }
-
-  return findEventOption(database, event.id, kind, id);
-}
-
-async function updateEventOption(
-  database: Database,
-  userId: UserId,
-  slug: string,
-  kind: OptionKind,
-  id: RoomId | TrackId,
-  name: string,
-): Promise<EventOption | undefined> {
-  const event = await findEventForOrganizer(database, userId, slug);
-  if (!event) return undefined;
-
-  const now = new Date();
-  if (kind === "track") {
-    await database
-      .update(tracks)
-      .set({ name, updatedAt: now })
-      .where(
-        and(
-          eq(tracks.id, id),
-          eq(tracks.eventId, event.id),
-          isNull(tracks.archivedAt),
-        ),
-      );
-  } else {
-    await database
-      .update(rooms)
-      .set({ name, updatedAt: now })
-      .where(
-        and(
-          eq(rooms.id, id),
-          eq(rooms.eventId, event.id),
-          isNull(rooms.archivedAt),
-        ),
-      );
-  }
-
-  return findEventOption(database, event.id, kind, id);
-}
-
-async function archiveEventOption(
-  database: Database,
-  userId: UserId,
-  slug: string,
-  kind: OptionKind,
-  id: RoomId | TrackId,
-): Promise<boolean> {
-  const event = await findEventForOrganizer(database, userId, slug);
-  if (!event) return false;
-
-  const now = new Date();
-  const result =
-    kind === "track"
-      ? await database
-          .update(tracks)
-          .set({ archivedAt: now, updatedAt: now })
-          .where(
-            and(
-              eq(tracks.id, id),
-              eq(tracks.eventId, event.id),
-              isNull(tracks.archivedAt),
-            ),
-          )
-      : await database
-          .update(rooms)
-          .set({ archivedAt: now, updatedAt: now })
-          .where(
-            and(
-              eq(rooms.id, id),
-              eq(rooms.eventId, event.id),
-              isNull(rooms.archivedAt),
-            ),
-          );
-  return result.meta.changes > 0;
 }
 
 async function reorderEventOptions(
@@ -437,6 +433,46 @@ async function activeTrackCount(
     .from(tracks)
     .where(and(eq(tracks.eventId, eventId), isNull(tracks.archivedAt)));
   return row?.value ?? 0;
+}
+
+async function hasActiveOptionName(
+  database: Database,
+  eventId: string,
+  kind: OptionKind,
+  name: string,
+  excludedId?: RoomId | TrackId,
+): Promise<boolean> {
+  const [row] =
+    kind === "track"
+      ? await database
+          .select({ id: tracks.id })
+          .from(tracks)
+          .where(
+            and(
+              eq(tracks.eventId, eventId),
+              isNull(tracks.archivedAt),
+              sql`lower(${tracks.name}) = lower(${name})`,
+              excludedId ? ne(tracks.id, excludedId) : undefined,
+            ),
+          )
+          .limit(1)
+      : await database
+          .select({ id: rooms.id })
+          .from(rooms)
+          .where(
+            and(
+              eq(rooms.eventId, eventId),
+              isNull(rooms.archivedAt),
+              sql`lower(${rooms.name}) = lower(${name})`,
+              excludedId ? ne(rooms.id, excludedId) : undefined,
+            ),
+          )
+          .limit(1);
+  return Boolean(row);
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return String(error).toLowerCase().includes("unique");
 }
 
 async function findEventOption(
