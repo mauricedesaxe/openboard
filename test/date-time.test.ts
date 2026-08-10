@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 
 import {
-  dateTimeFallsAfterDate,
   eventLocalDateTimeToIso,
+  instantFallsAfterLocalDate,
   isoToEventLocalDateTime,
 } from "../src/shared/date-time";
 
@@ -30,14 +30,14 @@ describe("event deadline timezones", () => {
 
   test("compares an instant with the event end date", () => {
     expect(
-      dateTimeFallsAfterDate(
+      instantFallsAfterLocalDate(
         "2027-08-12T23:30:00Z",
         "2027-08-12",
         "Europe/Berlin",
       ),
     ).toBe(true);
     expect(
-      dateTimeFallsAfterDate(
+      instantFallsAfterLocalDate(
         "2027-08-12T21:30:00Z",
         "2027-08-12",
         "Europe/Berlin",

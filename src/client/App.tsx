@@ -22,8 +22,8 @@ import {
   type CustomField,
 } from "../shared/cfps";
 import {
-  dateTimeFallsAfterDate,
   eventLocalDateTimeToIso,
+  instantFallsAfterLocalDate,
   isoToEventLocalDateTime,
 } from "../shared/date-time";
 import type { EventRole, InvitationId } from "../shared/event-team";
@@ -1450,7 +1450,7 @@ function CfpBuilder({
       setValidationError(cfpValidationError(parsed.error.issues[0]));
       return undefined;
     }
-    if (dateTimeFallsAfterDate(parsed.data.deadline, endsOn, timezone)) {
+    if (instantFallsAfterLocalDate(parsed.data.deadline, endsOn, timezone)) {
       setValidationError({
         message: "Choose a deadline on or before the event end date.",
         path: ["deadline"],

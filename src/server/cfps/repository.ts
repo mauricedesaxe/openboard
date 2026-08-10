@@ -9,7 +9,7 @@ import {
   type CfpFormContract,
   type CfpId,
 } from "../../shared/cfps";
-import { dateTimeFallsAfterDate } from "../../shared/date-time";
+import { instantFallsAfterLocalDate } from "../../shared/date-time";
 import type { UserId } from "../../shared/events";
 import type { Database } from "../database/client";
 import { cfps, events, tracks } from "../database/schema";
@@ -57,7 +57,9 @@ export async function createDraftCfp(
 ): Promise<CfpWriteResult> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
-  if (dateTimeFallsAfterDate(input.deadline, event.endsOn, event.timezone)) {
+  if (
+    instantFallsAfterLocalDate(input.deadline, event.endsOn, event.timezone)
+  ) {
     return { ok: false, error: "deadline_after_event" };
   }
 
@@ -109,7 +111,9 @@ export async function updateDraftCfp(
 ): Promise<CfpWriteResult> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
-  if (dateTimeFallsAfterDate(input.deadline, event.endsOn, event.timezone)) {
+  if (
+    instantFallsAfterLocalDate(input.deadline, event.endsOn, event.timezone)
+  ) {
     return { ok: false, error: "deadline_after_event" };
   }
 
@@ -157,13 +161,41 @@ export async function updateDraftCfp(
       );
     if (result.meta.changes === 0) {
       const [latest] = await database
-        .select({ lockedAt: cfps.structureLockedAt })
+        .select({
+          customFieldsJson: cfps.customFieldsJson,
+          formatsJson: cfps.formatsJson,
+          lockedAt: cfps.structureLockedAt,
+        })
         .from(cfps)
         .where(and(eq(cfps.id, cfpId), eq(cfps.eventId, event.id)))
         .limit(1);
-      return latest?.lockedAt
-        ? { ok: false, error: "structure_locked" }
-        : { ok: false, error: "not_found" };
+      if (!latest) return { ok: false, error: "not_found" };
+      if (
+        latest.lockedAt &&
+        latest.formatsJson === JSON.stringify(input.formats) &&
+        latest.customFieldsJson === JSON.stringify(input.customFields)
+      ) {
+        const metadataResult = await database
+          .update(cfps)
+          .set({
+            name: input.name,
+            deadline: input.deadline,
+            updatedAt: new Date(),
+          })
+          .where(and(eq(cfps.id, cfpId), eq(cfps.eventId, event.id)));
+        if (metadataResult.meta.changes > 0) {
+          return {
+            ok: true,
+            value: {
+              id: cfpId,
+              ...input,
+              status: existing.status,
+              structureLocked: true,
+            },
+          };
+        }
+      }
+      return { ok: false, error: "structure_locked" };
     }
   } catch {
     return { ok: false, error: "persistence_failed" };
@@ -189,7 +221,9 @@ export async function saveAndOpenCfp(
 ): Promise<CfpWriteResult> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
-  if (dateTimeFallsAfterDate(input.deadline, event.endsOn, event.timezone)) {
+  if (
+    instantFallsAfterLocalDate(input.deadline, event.endsOn, event.timezone)
+  ) {
     return { ok: false, error: "deadline_after_event" };
   }
   if (new Date(input.deadline) <= new Date()) {
