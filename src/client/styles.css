@@ -906,6 +906,17 @@ a {
 .submission-form {
   max-width: none;
 }
+.submission-fields {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.submission-state-group {
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 8px;
+}
 .submission-actions {
   margin-top: 32px;
   display: flex;

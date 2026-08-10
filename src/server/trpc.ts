@@ -622,6 +622,7 @@ function throwCfpWriteError(
     | "already_draft"
     | "already_open"
     | "deadline_passed"
+    | "file_fields_unsupported"
     | "missing_track"
     | "not_found"
     | "persistence_failed"
@@ -652,6 +653,12 @@ function throwCfpWriteError(
       message: "Choose a deadline in the future.",
     });
   }
+  if (error === "file_fields_unsupported") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "File questions need stored-file support before this CFP opens.",
+    });
+  }
   if (error === "structure_locked") {
     throw new TRPCError({
       code: "CONFLICT",
@@ -667,6 +674,7 @@ function throwCfpWriteError(
 function throwProposalWriteError(
   error:
     | "cfp_unavailable"
+    | "cfp_changed"
     | "deadline_passed"
     | "invalid_answers"
     | "invalid_format"
@@ -686,6 +694,12 @@ function throwProposalWriteError(
     throw new TRPCError({
       code: "CONFLICT",
       message: "This call for proposals is no longer accepting submissions.",
+    });
+  }
+  if (error === "cfp_changed") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "The proposal form changed. Reload it before submitting.",
     });
   }
   if (error === "invalid_track") {

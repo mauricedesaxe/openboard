@@ -15,12 +15,29 @@ const submissionSchema = z.object({
   abstract: z.string(),
   format: z.string(),
   track: z.object({ id: z.string(), name: z.string() }),
+  form: z.object({
+    deadline: z.string(),
+    formats: z.array(z.string()),
+    tracks: z.array(
+      z.object({ id: z.string(), name: z.string(), archived: z.boolean() }),
+    ),
+    customFields: z.array(z.object({ key: z.string() }).passthrough()),
+  }),
   proposedSpeakers: z.array(
     z.object({ id: z.string(), name: z.string(), email: z.string() }),
   ),
   customAnswers: z.record(z.string(), z.string()),
-  decision: z.object({ status: z.literal("pending") }),
+  decision: z.object({
+    status: z.enum([
+      "pending",
+      "accept_queued",
+      "decline_queued",
+      "accepted",
+      "declined",
+    ]),
+  }),
   confirmation: z.object({ status: z.literal("recorded") }),
+  permissions: z.object({ canEdit: z.boolean(), canWithdraw: z.boolean() }),
 });
 
 describe("submit a proposal through the local-first flow", () => {
@@ -29,16 +46,21 @@ describe("submit a proposal through the local-first flow", () => {
     const owner = await signIn("proposal-event-owner@example.com");
     const submitter = await signIn("proposal-submit-owner@example.com");
     const unrelated = await signIn("proposal-unrelated@example.com");
-    await callTrpc(
-      "events.create",
-      {
-        name: "Proposal Flow Conference",
-        slug,
-        startsOn: "2027-08-10",
-        endsOn: "2027-08-12",
-        timezone: "Europe/Berlin",
-      },
-      owner.cookie,
+    const event = getResult(
+      (
+        await callTrpc(
+          "events.create",
+          {
+            name: "Proposal Flow Conference",
+            slug,
+            startsOn: "2027-08-10",
+            endsOn: "2027-08-12",
+            timezone: "Europe/Berlin",
+          },
+          owner.cookie,
+        )
+      ).body,
+      idSchema,
     );
     const track = getResult(
       (
@@ -110,6 +132,30 @@ describe("submit a proposal through the local-first flow", () => {
       owner.cookie,
     );
 
+    await expect(
+      testEnvironment.DB.prepare(
+        `INSERT INTO submissions
+          (id, event_id, cfp_id, cfp_revision, owner_user_id, client_draft_id,
+           track_id, title, abstract, format, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+      )
+        .bind(
+          crypto.randomUUID(),
+          event.id,
+          draft.id,
+          0,
+          submitter.userId,
+          crypto.randomUUID(),
+          track.id,
+          "Stale form",
+          "This insert used a stale CFP revision.",
+          "Talk",
+          Date.now(),
+          Date.now(),
+        )
+        .run(),
+    ).rejects.toThrow(/stale_cfp/);
+
     const proposal = {
       slug,
       cfpId: draft.id,
@@ -122,9 +168,10 @@ describe("submit a proposal through the local-first flow", () => {
         { name: "Sam Submitter", email: "speaker@example.com" },
       ],
       customAnswers: {
-        audience: "Beginner",
+        audience: " Beginner ",
         requirements: "This hidden answer must not be persisted.",
         notes: "Bring questions.",
+        removed_question: "This stale answer must not be persisted.",
       },
     };
     expect((await callTrpc("submissions.submit", proposal)).status).toBe(401);
@@ -163,18 +210,6 @@ describe("submit a proposal through the local-first flow", () => {
         )
       ).status,
     ).toBe(400);
-    expect(
-      (
-        await callTrpc(
-          "submissions.submit",
-          {
-            ...proposal,
-            customAnswers: { audience: "Beginner", unknown: "answer" },
-          },
-          submitter.cookie,
-        )
-      ).status,
-    ).toBe(400);
     await callTrpc(
       "tracks.archive",
       { slug, trackId: archivedTrack.id },
@@ -207,8 +242,15 @@ describe("submit a proposal through the local-first flow", () => {
       customAnswers: { audience: "Beginner", notes: "Bring questions." },
       decision: { status: "pending" },
       confirmation: { status: "recorded" },
+      permissions: { canEdit: true, canWithdraw: true },
     });
     expect(submitted.customAnswers).not.toHaveProperty("requirements");
+    expect(submitted.customAnswers).not.toHaveProperty("removed_question");
+    expect(submitted.form).toMatchObject({
+      deadline: draft.deadline,
+      formats: draft.formats,
+      tracks: [{ id: track.id, archived: false }],
+    });
 
     const retried = getResult(
       (await callTrpc("submissions.submit", proposal, submitter.cookie)).body,
@@ -271,6 +313,22 @@ describe("submit a proposal through the local-first flow", () => {
           {
             slug,
             cfpId: draft.id,
+            name: "Extended CFP",
+            deadline: "2027-05-15T21:59:00Z",
+            formats: draft.formats,
+            customFields: draft.customFields,
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await callTrpc(
+          "cfps.updateDraft",
+          {
+            slug,
+            cfpId: draft.id,
             name: draft.name,
             deadline: draft.deadline,
             formats: ["Panel"],
@@ -310,6 +368,27 @@ describe("submit a proposal through the local-first flow", () => {
       },
     });
 
+    await testEnvironment.DB.prepare(
+      "UPDATE decisions SET status = 'accept_queued' WHERE submission_id = ?",
+    )
+      .bind(submitted.id)
+      .run();
+    const queued = getResult(
+      (
+        await callTrpc(
+          "submissions.getOwn",
+          { submissionId: submitted.id },
+          submitter.cookie,
+          "query",
+        )
+      ).body,
+      submissionSchema,
+    );
+    expect(queued).toMatchObject({
+      decision: { status: "accept_queued" },
+      permissions: { canEdit: true, canWithdraw: true },
+    });
+
     expect(
       (
         await callTrpc(
@@ -330,6 +409,17 @@ describe("submit a proposal through the local-first flow", () => {
       submissionSchema,
     );
     expect(withdrawn.status).toBe("withdrawn");
+    expect(withdrawn).toMatchObject({
+      decision: { status: "pending" },
+      permissions: { canEdit: false, canWithdraw: false },
+    });
+    await expect(
+      testEnvironment.DB.prepare(
+        "UPDATE form_responses SET answers_json = ? WHERE submission_id = ?",
+      )
+        .bind('{"audience":"Experienced"}', submitted.id)
+        .run(),
+    ).rejects.toThrow(/submission_closed/);
     expect(
       (
         await callTrpc(
@@ -347,5 +437,21 @@ describe("submit a proposal through the local-first flow", () => {
         )
       ).status,
     ).toBe(409);
+    await callTrpc(
+      "cfps.updateDraft",
+      {
+        slug,
+        cfpId: draft.id,
+        name: "Closed CFP",
+        deadline: "2020-01-01T00:00:00Z",
+        formats: draft.formats,
+        customFields: draft.customFields,
+      },
+      owner.cookie,
+    );
+    expect(
+      (await callTrpc("cfps.publicByEventSlug", { slug }, undefined, "query"))
+        .status,
+    ).toBe(404);
   });
 });

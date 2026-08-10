@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { type CfpId, type TrackId } from "./cfps";
+import { customFieldsSchema, type CfpId, type TrackId } from "./cfps";
 
 export type SubmissionId = string & { readonly __brand: "SubmissionId" };
 
@@ -38,16 +38,17 @@ export type SubmitProposalInput = z.infer<typeof submitProposalSchema>;
 
 export const proposalDraftSchema = z.object({
   clientDraftId: z.uuid(),
+  submitAfterSignIn: z.boolean().default(false),
   step: z.number().int().min(0).max(2),
   coreAnswers: z.object({
-    abstract: z.string().max(10_000),
-    format: z.string().max(80),
-    speakerEmail: z.string().max(320),
-    speakerName: z.string().max(120),
-    title: z.string().max(200),
-    track: z.string().max(100),
+    abstract: z.string(),
+    format: z.string(),
+    speakerEmail: z.string(),
+    speakerName: z.string(),
+    title: z.string(),
+    track: z.string(),
   }),
-  customAnswers: proposalAnswersSchema,
+  customAnswers: z.record(z.string(), z.string()),
 });
 
 export type ProposalDraft = z.infer<typeof proposalDraftSchema>;
@@ -67,6 +68,18 @@ export const submissionSchema = z.object({
     id: z.string().transform((value) => value as TrackId),
     name: z.string(),
   }),
+  form: z.object({
+    deadline: z.iso.datetime({ offset: true }),
+    formats: z.array(z.string()),
+    tracks: z.array(
+      z.object({
+        id: z.string().transform((value) => value as TrackId),
+        name: z.string(),
+        archived: z.boolean(),
+      }),
+    ),
+    customFields: customFieldsSchema,
+  }),
   proposedSpeakers: z.array(
     z.object({
       id: z.string(),
@@ -85,6 +98,7 @@ export const submissionSchema = z.object({
     ]),
   }),
   confirmation: z.object({ status: z.literal("recorded") }),
+  permissions: z.object({ canEdit: z.boolean(), canWithdraw: z.boolean() }),
 });
 
 export type Submission = z.infer<typeof submissionSchema>;

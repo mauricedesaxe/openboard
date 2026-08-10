@@ -284,6 +284,7 @@ export const submissions = sqliteTable(
     cfpId: text("cfp_id")
       .notNull()
       .references(() => cfps.id, { onDelete: "cascade" }),
+    cfpRevision: integer("cfp_revision", { mode: "timestamp_ms" }).notNull(),
     ownerUserId: text("owner_user_id")
       .notNull()
       .references(() => user.id),

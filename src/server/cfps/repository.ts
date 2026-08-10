@@ -22,6 +22,7 @@ type CfpWriteResult =
         | "already_open"
         | "already_draft"
         | "deadline_passed"
+        | "file_fields_unsupported"
         | "missing_track"
         | "not_found"
         | "persistence_failed"
@@ -105,14 +106,25 @@ export async function updateDraftCfp(
   if (!event) return { ok: false, error: "not_found" };
 
   const [existing] = await database
-    .select({ lockedAt: cfps.structureLockedAt, status: cfps.status })
+    .select({
+      customFieldsJson: cfps.customFieldsJson,
+      formatsJson: cfps.formatsJson,
+      lockedAt: cfps.structureLockedAt,
+      status: cfps.status,
+    })
     .from(cfps)
     .where(and(eq(cfps.id, cfpId), eq(cfps.eventId, event.id)))
     .limit(1);
   if (!existing) {
     return { ok: false, error: "not_found" };
   }
-  if (existing.lockedAt) return { ok: false, error: "structure_locked" };
+  if (
+    existing.lockedAt &&
+    (existing.formatsJson !== JSON.stringify(input.formats) ||
+      existing.customFieldsJson !== JSON.stringify(input.customFields))
+  ) {
+    return { ok: false, error: "structure_locked" };
+  }
 
   try {
     const result = await database
@@ -120,19 +132,17 @@ export async function updateDraftCfp(
       .set({
         name: input.name,
         deadline: input.deadline,
-        formatsJson: JSON.stringify(input.formats),
-        customFieldsJson: JSON.stringify(input.customFields),
+        ...(existing.lockedAt
+          ? {}
+          : {
+              formatsJson: JSON.stringify(input.formats),
+              customFieldsJson: JSON.stringify(input.customFields),
+            }),
         updatedAt: new Date(),
       })
-      .where(
-        and(
-          eq(cfps.id, cfpId),
-          eq(cfps.eventId, event.id),
-          isNull(cfps.structureLockedAt),
-        ),
-      );
+      .where(and(eq(cfps.id, cfpId), eq(cfps.eventId, event.id)));
     if (result.meta.changes === 0) {
-      return { ok: false, error: "structure_locked" };
+      return { ok: false, error: "not_found" };
     }
   } catch {
     return { ok: false, error: "persistence_failed" };
@@ -144,7 +154,7 @@ export async function updateDraftCfp(
       id: cfpId,
       ...input,
       status: existing.status,
-      structureLocked: false,
+      structureLocked: existing.lockedAt !== null,
     },
   };
 }
@@ -160,6 +170,9 @@ export async function saveAndOpenCfp(
   if (!event) return { ok: false, error: "not_found" };
   if (new Date(input.deadline) <= new Date()) {
     return { ok: false, error: "deadline_passed" };
+  }
+  if (input.customFields.some((field) => field.type === "file")) {
+    return { ok: false, error: "file_fields_unsupported" };
   }
 
   const [currentOpen] = await database

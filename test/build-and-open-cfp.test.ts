@@ -214,14 +214,6 @@ describe("build and open a conditional CFP", () => {
           required: true,
           condition: { fieldKey: "audience", equals: "Experienced" },
         },
-        {
-          key: "outline",
-          label: "Session outline",
-          type: "file",
-          required: false,
-          acceptedTypes: ["application/pdf"],
-          maxSizeMb: 10,
-        },
       ],
     } as const;
     const draftResponse = await callTrpc(
@@ -297,6 +289,29 @@ describe("build and open a conditional CFP", () => {
       (
         await callTrpc(
           "cfps.open",
+          {
+            ...draftInput,
+            cfpId: draft.id,
+            customFields: [
+              ...draftInput.customFields,
+              {
+                key: "outline",
+                label: "Session outline",
+                type: "file",
+                required: false,
+                acceptedTypes: ["application/pdf"],
+                maxSizeMb: 10,
+              },
+            ],
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await callTrpc(
+          "cfps.open",
           { ...draftInput, cfpId: draft.id, name: "Speak with us" },
           unrelated.cookie,
         )
@@ -353,7 +368,7 @@ describe("build and open a conditional CFP", () => {
       visibleCustomFields(publicForm.customFields, {
         audience: "Beginner",
       }).map((field) => field.key),
-    ).toEqual(["audience", "outline"]);
+    ).toEqual(["audience"]);
     expect(
       visibleCustomFields(publicForm.customFields, {
         audience: "Experienced",
