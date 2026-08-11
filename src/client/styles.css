@@ -669,6 +669,10 @@ a {
     grid-template-columns: 1fr;
     gap: 0;
   }
+  .agenda-view-tabs button {
+    min-width: 0;
+    padding-inline: 4px;
+  }
 }
 .team-board {
   margin-top: 50px;

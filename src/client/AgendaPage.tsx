@@ -289,16 +289,25 @@ export function PublicAgendaPage() {
       localDate(item.startsAt, agenda.data.event.timezone),
     ),
   );
+  const weeks = unique(dates.map(localWeekStart));
+  const selectedTrack = effectiveFilter(track, tracks);
+  const selectedRoom = effectiveFilter(room, rooms);
+  const selectedDate = effectiveFilter(date, dates);
+  const selectedWeek = effectiveFilter(searchParams.get("week"), weeks);
   const visible = agenda.data.items.filter((item) => {
     const eventWideService = item.kind === "service" && item.roomName === null;
-    if (view === "track" && track) {
-      return eventWideService || item.trackName === track;
+    if (view === "track" && selectedTrack) {
+      return eventWideService || item.trackName === selectedTrack;
     }
-    if (view === "room" && room) {
-      return eventWideService || item.roomName === room;
+    if (view === "room" && selectedRoom) {
+      return eventWideService || item.roomName === selectedRoom;
     }
-    if (view === "day" && date) {
-      return localDate(item.startsAt, agenda.data.event.timezone) === date;
+    const itemDate = localDate(item.startsAt, agenda.data.event.timezone);
+    if (view === "day" && selectedDate) {
+      return itemDate === selectedDate;
+    }
+    if (view === "week" && selectedWeek) {
+      return localWeekStart(itemDate) === selectedWeek;
     }
     return true;
   });
@@ -309,6 +318,7 @@ export function PublicAgendaPage() {
     if (nextView === "track" && tracks[0]) next.set("track", tracks[0]);
     if (nextView === "room" && rooms[0]) next.set("room", rooms[0]);
     if (nextView === "day" && dates[0]) next.set("date", dates[0]);
+    if (nextView === "week" && weeks[0]) next.set("week", weeks[0]);
     setSearchParams(next);
   }
 
@@ -344,7 +354,16 @@ export function PublicAgendaPage() {
           label="Day"
           onChange={(value) => setSearchParams({ view, date: value })}
           options={dates}
-          value={date ?? dates[0] ?? ""}
+          value={selectedDate ?? ""}
+        />
+      )}
+      {view === "week" && (
+        <AgendaFilter
+          label="Week"
+          onChange={(value) => setSearchParams({ view, week: value })}
+          optionLabel={formatWeek}
+          options={weeks}
+          value={selectedWeek ?? ""}
         />
       )}
       {view === "track" && (
@@ -352,7 +371,7 @@ export function PublicAgendaPage() {
           label="Track"
           onChange={(value) => setSearchParams({ view, track: value })}
           options={tracks}
-          value={track ?? tracks[0] ?? ""}
+          value={selectedTrack ?? ""}
         />
       )}
       {view === "room" && (
@@ -360,7 +379,7 @@ export function PublicAgendaPage() {
           label="Room"
           onChange={(value) => setSearchParams({ view, room: value })}
           options={rooms}
-          value={room ?? rooms[0] ?? ""}
+          value={selectedRoom ?? ""}
         />
       )}
       <div className={`public-agenda-items public-agenda-${view}`}>
@@ -581,18 +600,22 @@ function AgendaFilter({
   options,
   value,
   onChange,
+  optionLabel = (option) => option,
 }: {
   label: string;
   options: string[];
   value: string;
   onChange: (value: string) => void;
+  optionLabel?: (option: string) => string;
 }) {
   return (
     <label className="agenda-public-filter">
       {label}
       <select onChange={(event) => onChange(event.target.value)} value={value}>
         {options.map((option) => (
-          <option key={option}>{option}</option>
+          <option key={option} value={option}>
+            {optionLabel(option)}
+          </option>
         ))}
       </select>
     </label>
@@ -613,6 +636,15 @@ function unique(values: string[]): string[] {
   return [...new Set(values)];
 }
 
+function effectiveFilter(
+  requested: string | null,
+  options: string[],
+): string | null {
+  return requested && options.includes(requested)
+    ? requested
+    : (options[0] ?? null);
+}
+
 function localDate(value: string, timezone: string): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,
@@ -620,6 +652,23 @@ function localDate(value: string, timezone: string): string {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date(value));
+}
+
+function localWeekStart(value: string): string {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year ?? 0, (month ?? 1) - 1, day ?? 1));
+  const daysSinceMonday = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - daysSinceMonday);
+  return date.toISOString().slice(0, 10);
+}
+
+function formatWeek(value: string): string {
+  return `Week of ${new Intl.DateTimeFormat("en", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${value}T00:00:00Z`))}`;
 }
 
 function formatAgendaTime(value: string, timezone: string): string {

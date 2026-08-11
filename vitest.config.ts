@@ -16,6 +16,12 @@ export default defineConfig(async () => {
   const submissionRevisionMigration = migrations.filter(({ name }) =>
     name.startsWith("0026_"),
   );
+  const agendaBaseMigrations = migrations.filter(
+    ({ name }) => name !== "0028_finalize_agenda_publications.sql",
+  );
+  const agendaFinalizationMigration = migrations.filter(
+    ({ name }) => name === "0028_finalize_agenda_publications.sql",
+  );
 
   return {
     plugins: [
@@ -23,6 +29,8 @@ export default defineConfig(async () => {
         wrangler: { configPath: "./wrangler.test.jsonc" },
         miniflare: {
           bindings: {
+            AGENDA_BASE_MIGRATIONS: agendaBaseMigrations,
+            AGENDA_FINALIZATION_MIGRATION: agendaFinalizationMigration,
             REPLACEMENT_GUARD_MIGRATION: replacementGuardMigration,
             SUBMISSION_REVISION_MIGRATION: submissionRevisionMigration,
             TEST_MIGRATIONS: migrations,

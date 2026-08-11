@@ -1,4 +1,13 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  sql,
+} from "drizzle-orm";
 
 import type {
   AgendaItemId,
@@ -28,6 +37,10 @@ import {
   tracks,
 } from "../database/schema";
 import { findEventForOrganizer } from "../events/repository";
+
+const publishedItemInsertSize = 5;
+const publishedSpeakerInsertSize = 12;
+const calendarChangeInsertSize = 12;
 
 export type AgendaWriteError =
   | "agenda_changed"
@@ -286,6 +299,7 @@ export async function publishAgenda(
     const previous = previousStates.find(
       (state) => state.agendaItemId === snapshot.agendaItemId,
     );
+    if (!previous && snapshot.canceled) return [];
     const fingerprint = JSON.stringify({
       title: snapshot.title,
       room: snapshot.roomName,
@@ -354,47 +368,69 @@ export async function publishAgenda(
       position: speaker.position,
     })),
   );
+  const snapshotStatements = chunks(
+    snapshotValues,
+    publishedItemInsertSize,
+  ).map((values) => database.insert(publishedAgendaItems).values(values));
+  const speakerStatements = chunks(
+    speakerValues,
+    publishedSpeakerInsertSize,
+  ).map((values) => database.insert(publishedAgendaSpeakers).values(values));
+  const calendarStateStatements = chunks(
+    calendarChanges.map((change) => ({
+      agendaItemId: change.snapshot.agendaItemId,
+      uid: change.uid,
+      sequence: change.sequence,
+      canceled: change.snapshot.canceled,
+      fingerprint: change.fingerprint,
+      publicationId,
+      updatedAt: now,
+    })),
+    calendarChangeInsertSize,
+  ).map((values) =>
+    database
+      .insert(calendarSyncStates)
+      .values(values)
+      .onConflictDoUpdate({
+        target: calendarSyncStates.agendaItemId,
+        set: {
+          sequence: sql`excluded.sequence`,
+          canceled: sql`excluded.canceled`,
+          fingerprint: sql`excluded.fingerprint`,
+          publicationId: sql`excluded.publication_id`,
+          updatedAt: sql`excluded.updated_at`,
+        },
+      }),
+  );
+  const deliveryStatements = chunks(
+    calendarChanges.map((change) => ({
+      id: crypto.randomUUID(),
+      publicationId,
+      agendaItemId: change.snapshot.agendaItemId,
+      action: change.action,
+      calendarUid: change.uid,
+      calendarSequence: change.sequence,
+      createdAt: now,
+    })),
+    calendarChangeInsertSize,
+  ).map((values) => database.insert(agendaDeliveryWork).values(values));
+  const finalizationStatement = database
+    .update(agendaPublications)
+    .set({ finalizedAt: now })
+    .where(
+      and(
+        eq(agendaPublications.id, publicationId),
+        isNull(agendaPublications.finalizedAt),
+      ),
+    );
   try {
     await database.batch([
       publicationStatement,
-      ...(snapshotValues.length > 0
-        ? [database.insert(publishedAgendaItems).values(snapshotValues)]
-        : []),
-      ...(speakerValues.length > 0
-        ? [database.insert(publishedAgendaSpeakers).values(speakerValues)]
-        : []),
-      ...calendarChanges.flatMap((change) => [
-        database
-          .insert(calendarSyncStates)
-          .values({
-            agendaItemId: change.snapshot.agendaItemId,
-            uid: change.uid,
-            sequence: change.sequence,
-            canceled: change.snapshot.canceled,
-            fingerprint: change.fingerprint,
-            publicationId,
-            updatedAt: now,
-          })
-          .onConflictDoUpdate({
-            target: calendarSyncStates.agendaItemId,
-            set: {
-              sequence: change.sequence,
-              canceled: change.snapshot.canceled,
-              fingerprint: change.fingerprint,
-              publicationId,
-              updatedAt: now,
-            },
-          }),
-        database.insert(agendaDeliveryWork).values({
-          id: crypto.randomUUID(),
-          publicationId,
-          agendaItemId: change.snapshot.agendaItemId,
-          action: change.action,
-          calendarUid: change.uid,
-          calendarSequence: change.sequence,
-          createdAt: now,
-        }),
-      ]),
+      ...snapshotStatements,
+      ...speakerStatements,
+      ...calendarStateStatements,
+      ...deliveryStatements,
+      finalizationStatement,
     ]);
   } catch (error: unknown) {
     if (String(error).includes("stale_agenda_publication")) {
@@ -413,7 +449,9 @@ export async function getPublishedAgenda(database: Database, slug: string) {
     .select()
     .from(agendaPublications)
     .innerJoin(events, eq(events.id, agendaPublications.eventId))
-    .where(eq(events.slug, slug))
+    .where(
+      and(eq(events.slug, slug), isNotNull(agendaPublications.finalizedAt)),
+    )
     .orderBy(desc(agendaPublications.revision))
     .limit(1);
   if (!publication) return undefined;
@@ -671,22 +709,27 @@ function validateForPublication(
   | { ok: false; error: AgendaWriteError } {
   const times = new Map<string, { startsAt: string; endsAt: string }>();
   for (const item of items) {
-    if (item.kind === "program" && !item.roomId) {
-      return { ok: false, error: "missing_room" };
-    }
-    if (item.roomId && (!item.roomName || item.roomArchivedAt)) {
-      return { ok: false, error: "archived_reference" };
-    }
-    if (
-      item.kind === "program" &&
-      (!item.programItemId ||
-        item.submissionStatus !== "active" ||
-        item.decisionStatus !== "accepted")
-    ) {
-      return { ok: false, error: "program_item_unavailable" };
-    }
-    if (item.kind === "program" && (!item.trackName || item.trackArchivedAt)) {
-      return { ok: false, error: "archived_reference" };
+    if (!item.canceled) {
+      if (item.kind === "program" && !item.roomId) {
+        return { ok: false, error: "missing_room" };
+      }
+      if (item.roomId && (!item.roomName || item.roomArchivedAt)) {
+        return { ok: false, error: "archived_reference" };
+      }
+      if (
+        item.kind === "program" &&
+        (!item.programItemId ||
+          item.submissionStatus !== "active" ||
+          item.decisionStatus !== "accepted")
+      ) {
+        return { ok: false, error: "program_item_unavailable" };
+      }
+      if (
+        item.kind === "program" &&
+        (!item.trackName || item.trackArchivedAt)
+      ) {
+        return { ok: false, error: "archived_reference" };
+      }
     }
     const start = resolveEventLocalDateTime(item.startsAtLocal, event.timezone);
     const end = resolveEventLocalDateTime(item.endsAtLocal, event.timezone);
@@ -754,4 +797,12 @@ function agendaItemPersistenceError(error: unknown): AgendaWriteError {
     return "invalid_agenda_item";
   }
   return "persistence_failed";
+}
+
+function chunks<T>(values: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    result.push(values.slice(index, index + size));
+  }
+  return result;
 }
