@@ -1,13 +1,14 @@
-ALTER TABLE agenda_publications ADD COLUMN finalized_at INTEGER;
+ALTER TABLE agenda_publications
+  ADD COLUMN finalized INTEGER NOT NULL DEFAULT 0 CHECK (finalized IN (0, 1));
 
 DROP TRIGGER agenda_publications_are_immutable_update;
 
-UPDATE agenda_publications SET finalized_at = created_at;
+UPDATE agenda_publications SET finalized = 1;
 
 CREATE TRIGGER agenda_publications_are_immutable_update
 BEFORE UPDATE ON agenda_publications
-WHEN OLD.finalized_at IS NOT NULL
-  OR NEW.finalized_at IS NULL
+WHEN OLD.finalized = 1
+  OR NEW.finalized != 1
   OR NEW.id != OLD.id
   OR NEW.agenda_id != OLD.agenda_id
   OR NEW.event_id != OLD.event_id
@@ -24,9 +25,9 @@ BEGIN
 END;
 
 CREATE TRIGGER agenda_publications_require_complete_current_source_finalize
-BEFORE UPDATE OF finalized_at ON agenda_publications
-WHEN OLD.finalized_at IS NULL
-  AND NEW.finalized_at IS NOT NULL
+BEFORE UPDATE OF finalized ON agenda_publications
+WHEN OLD.finalized = 0
+  AND NEW.finalized = 1
   AND (
     NOT EXISTS (
       SELECT 1 FROM agendas
@@ -62,7 +63,7 @@ BEFORE INSERT ON published_agenda_items
 WHEN NOT EXISTS (
   SELECT 1 FROM agenda_publications
   WHERE agenda_publications.id = NEW.publication_id
-    AND agenda_publications.finalized_at IS NULL
+    AND agenda_publications.finalized = 0
 )
 BEGIN
   SELECT RAISE(ABORT, 'immutable_agenda_publication');
@@ -76,7 +77,7 @@ WHEN NOT EXISTS (
   INNER JOIN agenda_publications
     ON agenda_publications.id = published_agenda_items.publication_id
   WHERE published_agenda_items.id = NEW.published_agenda_item_id
-    AND agenda_publications.finalized_at IS NULL
+    AND agenda_publications.finalized = 0
 )
 BEGIN
   SELECT RAISE(ABORT, 'immutable_agenda_publication');

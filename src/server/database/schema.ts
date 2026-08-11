@@ -838,7 +838,9 @@ export const agendaPublications = sqliteTable(
       .notNull()
       .references(() => user.id),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-    finalizedAt: integer("finalized_at", { mode: "timestamp_ms" }),
+    finalized: integer("finalized", { mode: "boolean" })
+      .notNull()
+      .default(false),
   },
   (table) => [
     uniqueIndex("agenda_publications_agenda_revision_idx").on(
