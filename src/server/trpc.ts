@@ -11,7 +11,6 @@ import {
 import {
   cfpDefinitionInputSchema,
   eventOptionNameSchema,
-  roomIdSchema,
   type CfpId,
   type TrackId,
 } from "../shared/cfps";
@@ -21,7 +20,7 @@ import {
   revokeEventRoleSchema,
   revokeInvitationSchema,
 } from "../shared/event-team";
-import { eventInputSchema, type UserId } from "../shared/events";
+import { eventInputSchema, roomIdSchema, type UserId } from "../shared/events";
 import {
   decisionPublicationSchema,
   decisionQueueStatusSchema,

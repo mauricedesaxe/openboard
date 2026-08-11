@@ -33,14 +33,6 @@ export function eventLocalDateTimeToIso(
     : undefined;
 }
 
-export function unambiguousEventLocalDateTimeToIso(
-  value: string,
-  timezone: string,
-): string | undefined {
-  const resolution = resolveEventLocalDateTime(value, timezone);
-  return resolution.status === "resolved" ? resolution.iso : undefined;
-}
-
 export function resolveEventLocalDateTime(
   value: string,
   timezone: string,
