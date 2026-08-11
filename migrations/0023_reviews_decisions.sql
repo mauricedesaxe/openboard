@@ -173,8 +173,9 @@ CREATE TABLE review_audit_events (
   id TEXT PRIMARY KEY NOT NULL,
   event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
   actor_user_id TEXT NOT NULL REFERENCES user(id),
+  publication_item_id TEXT NOT NULL UNIQUE
+    REFERENCES decision_publication_items(id) ON DELETE CASCADE,
   action TEXT NOT NULL,
-  subject_id TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
 

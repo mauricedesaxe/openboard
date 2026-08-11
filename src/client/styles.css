@@ -718,6 +718,14 @@ a {
 .assignment-list {
   border-top: 1px solid var(--line);
 }
+.publication-selection {
+  margin-bottom: 22px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: 11px "DM Mono";
+  text-transform: uppercase;
+}
 .assignment-row {
   min-height: 48px;
   display: flex;

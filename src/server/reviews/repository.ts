@@ -242,6 +242,19 @@ export async function assignReviewer(
     )
     .limit(1);
   if (!target) return { ok: false, error: "invalid_assignment" };
+  const [reviewerRole] = await database
+    .select({ id: eventRoles.id })
+    .from(eventRoles)
+    .where(
+      and(
+        eq(eventRoles.eventId, event.id),
+        eq(eventRoles.userId, reviewerUserId),
+        eq(eventRoles.role, "reviewer"),
+        isNull(eventRoles.revokedAt),
+      ),
+    )
+    .limit(1);
+  if (!reviewerRole) return { ok: false, error: "invalid_assignment" };
   const [existing] = await database
     .select({ id: reviewerAssignments.id })
     .from(reviewerAssignments)
@@ -292,6 +305,25 @@ export async function revokeReviewerAssignment(
 ): Promise<ReviewWriteResult<{ revoked: true }>> {
   const event = await findEventForOrganizer(database, actorUserId, slug);
   if (!event) return { ok: false, error: "not_found" };
+  const [assignment] = await database
+    .select({ roundStatus: reviewRounds.status })
+    .from(reviewerAssignments)
+    .innerJoin(
+      reviewRounds,
+      eq(reviewRounds.id, reviewerAssignments.reviewRoundId),
+    )
+    .where(
+      and(
+        eq(reviewerAssignments.id, assignmentId),
+        eq(reviewerAssignments.eventId, event.id),
+        isNull(reviewerAssignments.revokedAt),
+      ),
+    )
+    .limit(1);
+  if (!assignment) return { ok: false, error: "not_found" };
+  if (assignment.roundStatus === "closed") {
+    return { ok: false, error: "round_not_open" };
+  }
   const result = await database
     .update(reviewerAssignments)
     .set({ revokedAt: new Date(), revokedByUserId: actorUserId })
@@ -576,6 +608,7 @@ export async function publishDecisions(
     return {
       ...selection,
       ...row,
+      publicationItemId: crypto.randomUUID(),
       outcome:
         selection.expectedStatus === "accept_queued"
           ? ("accepted" as const)
@@ -593,7 +626,7 @@ export async function publishDecisions(
       }),
       database.insert(decisionPublicationItems).values(
         selections.map((selection) => ({
-          id: crypto.randomUUID(),
+          id: selection.publicationItemId,
           publicationId,
           decisionId: selection.decisionId,
           outcome: selection.outcome,
@@ -641,32 +674,7 @@ export async function publishDecisions(
   }
 
   try {
-    for (const selection of selections) {
-      await database.batch([
-        database
-          .insert(communications)
-          .values({
-            id: crypto.randomUUID(),
-            submissionId: selection.submissionId,
-            recipientUserId: selection.ownerUserId,
-            destination: selection.ownerEmail,
-            purpose:
-              selection.outcome === "accepted"
-                ? "decision_acceptance"
-                : "decision_decline",
-            createdAt: now,
-          })
-          .onConflictDoNothing(),
-        database.insert(reviewAuditEvents).values({
-          id: crypto.randomUUID(),
-          eventId: event.id,
-          actorUserId,
-          action: `decision_${selection.outcome}`,
-          subjectId: selection.submissionId,
-          createdAt: now,
-        }),
-      ]);
-    }
+    await recordDecisionPublicationFollowups(database, event.id, publicationId);
   } catch (error: unknown) {
     console.error(
       JSON.stringify({
@@ -678,6 +686,85 @@ export async function publishDecisions(
     );
   }
   return { ok: true, value: { published: selections.length } };
+}
+
+export async function retryDecisionPublicationFollowups(
+  database: Database,
+  actorUserId: UserId,
+  slug: string,
+): Promise<ReviewWriteResult<{ recorded: number }>> {
+  const event = await findEventForOrganizer(database, actorUserId, slug);
+  if (!event) return { ok: false, error: "not_found" };
+  try {
+    const recorded = await recordDecisionPublicationFollowups(
+      database,
+      event.id,
+    );
+    return { ok: true, value: { recorded } };
+  } catch {
+    return { ok: false, error: "persistence_failed" };
+  }
+}
+
+async function recordDecisionPublicationFollowups(
+  database: Database,
+  eventId: string,
+  publicationId?: string,
+): Promise<number> {
+  const rows = await database
+    .select({
+      publicationItemId: decisionPublicationItems.id,
+      actorUserId: decisionPublications.publishedByUserId,
+      outcome: decisionPublicationItems.outcome,
+      submissionId: submissions.id,
+      ownerUserId: submissions.ownerUserId,
+      ownerEmail: user.email,
+    })
+    .from(decisionPublicationItems)
+    .innerJoin(
+      decisionPublications,
+      eq(decisionPublications.id, decisionPublicationItems.publicationId),
+    )
+    .innerJoin(decisions, eq(decisions.id, decisionPublicationItems.decisionId))
+    .innerJoin(submissions, eq(submissions.id, decisions.submissionId))
+    .innerJoin(user, eq(user.id, submissions.ownerUserId))
+    .where(
+      and(
+        eq(decisionPublications.eventId, eventId),
+        publicationId ? eq(decisionPublications.id, publicationId) : undefined,
+      ),
+    );
+  const now = new Date();
+  for (const row of rows) {
+    await database.batch([
+      database
+        .insert(communications)
+        .values({
+          id: crypto.randomUUID(),
+          submissionId: row.submissionId,
+          recipientUserId: row.ownerUserId,
+          destination: row.ownerEmail,
+          purpose:
+            row.outcome === "accepted"
+              ? "decision_acceptance"
+              : "decision_decline",
+          createdAt: now,
+        })
+        .onConflictDoNothing(),
+      database
+        .insert(reviewAuditEvents)
+        .values({
+          id: crypto.randomUUID(),
+          eventId,
+          actorUserId: row.actorUserId,
+          publicationItemId: row.publicationItemId,
+          action: `decision_${row.outcome}`,
+          createdAt: now,
+        })
+        .onConflictDoNothing(),
+    ]);
+  }
+  return rows.length;
 }
 
 async function findCurrentRound(database: Database, eventId: string) {

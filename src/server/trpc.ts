@@ -74,6 +74,7 @@ import {
   publishDecisions,
   queueDecision,
   reopenReviewRound,
+  retryDecisionPublicationFollowups,
   revokeReviewerAssignment,
   saveReview,
 } from "./reviews/repository";
@@ -682,6 +683,17 @@ export const appRouter = trpc.router({
       .input(decisionPublicationSchema)
       .mutation(async ({ ctx, input }) => {
         const result = await publishDecisions(ctx.database, ctx.userId, input);
+        if (!result.ok) throwReviewWriteError(result.error);
+        return result.value;
+      }),
+    retryFollowups: authenticatedProcedure
+      .input(slugInput)
+      .mutation(async ({ ctx, input }) => {
+        const result = await retryDecisionPublicationFollowups(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+        );
         if (!result.ok) throwReviewWriteError(result.error);
         return result.value;
       }),

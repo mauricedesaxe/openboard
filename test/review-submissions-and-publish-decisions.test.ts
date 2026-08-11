@@ -229,6 +229,28 @@ describe("review submissions and publish decisions", () => {
       ).body,
       assignmentSchema,
     );
+    expect(
+      (
+        await callTrpc(
+          "reviews.assign",
+          {
+            slug,
+            submissionId: first.id,
+            reviewerUserId: unrelated.userId,
+          },
+          organizer.cookie,
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await callTrpc(
+          "reviews.revokeAssignment",
+          { slug, assignmentId: firstAssignment.id },
+          unrelated.cookie,
+        )
+      ).status,
+    ).toBe(404);
     const incompleteAssignment = getResult(
       (
         await callTrpc(
@@ -256,7 +278,6 @@ describe("review submissions and publish decisions", () => {
         )
       ).status,
     ).toBe(409);
-
     expect(
       (await callTrpc("reviews.openRound", { slug }, organizer.cookie)).status,
     ).toBe(200);
@@ -396,6 +417,15 @@ describe("review submissions and publish decisions", () => {
         )
       ).status,
     ).toBe(200);
+    expect(
+      (
+        await callTrpc(
+          "reviews.revokeAssignment",
+          { slug, assignmentId: reassigned.id },
+          organizer.cookie,
+        )
+      ).status,
+    ).toBe(409);
     expect(
       (
         await callTrpc(
@@ -571,6 +601,10 @@ describe("review submissions and publish decisions", () => {
     );
     expect(published.status).toBe(200);
     expect(
+      (await callTrpc("decisions.retryFollowups", { slug }, unrelated.cookie))
+        .status,
+    ).toBe(404);
+    expect(
       await testEnvironment.DB.prepare(
         "SELECT submission_id AS submissionId FROM program_items",
       ).all<{ submissionId: string }>(),
@@ -592,6 +626,32 @@ describe("review submissions and publish decisions", () => {
         [withdrawn.id, "pending"],
       ]),
     );
+    expect(
+      (
+        await testEnvironment.DB.prepare(
+          "SELECT COUNT(*) AS count FROM review_audit_events",
+        ).first<{ count: number }>()
+      )?.count,
+    ).toBe(2);
+    await testEnvironment.DB.prepare(
+      "DELETE FROM communications WHERE purpose IN ('decision_acceptance', 'decision_decline')",
+    ).run();
+    await testEnvironment.DB.prepare("DELETE FROM review_audit_events").run();
+    expect(
+      (await callTrpc("decisions.retryFollowups", { slug }, owner.cookie))
+        .status,
+    ).toBe(200);
+    expect(
+      (await callTrpc("decisions.retryFollowups", { slug }, owner.cookie))
+        .status,
+    ).toBe(200);
+    expect(
+      await testEnvironment.DB.prepare(
+        `SELECT
+             (SELECT COUNT(*) FROM communications WHERE purpose IN ('decision_acceptance', 'decision_decline')) AS communications,
+             (SELECT COUNT(*) FROM review_audit_events) AS audits`,
+      ).first<{ communications: number; audits: number }>(),
+    ).toEqual({ communications: 2, audits: 2 });
     const decisionMessages = await testEnvironment.DB.prepare(
       "SELECT submission_id AS submissionId, recipient_user_id AS recipientUserId, purpose FROM communications WHERE purpose IN ('decision_acceptance', 'decision_decline') ORDER BY submission_id",
     ).all<{ submissionId: string; recipientUserId: string; purpose: string }>();

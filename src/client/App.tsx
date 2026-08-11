@@ -699,8 +699,16 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
   const queue = useMutation(
     trpc.decisions.queue.mutationOptions({ onSuccess: refresh }),
   );
+  const [selectedForPublication, setSelectedForPublication] = useState<
+    Record<string, boolean>
+  >({});
   const publish = useMutation(
-    trpc.decisions.publish.mutationOptions({ onSuccess: refresh }),
+    trpc.decisions.publish.mutationOptions({
+      onSuccess: async () => {
+        setSelectedForPublication({});
+        await refresh();
+      },
+    }),
   );
   const [reviewerBySubmission, setReviewerBySubmission] = useState<
     Record<string, string>
@@ -722,6 +730,9 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
     (submission) =>
       submission.decision.status === "accept_queued" ||
       submission.decision.status === "decline_queued",
+  );
+  const selectedQueued = queued.filter(
+    (submission) => selectedForPublication[submission.id],
   );
   const mutationError =
     openRound.error ??
@@ -749,7 +760,7 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
       </Link>
       <section className="review-heading">
         <div>
-          <div className="eyebrow">Review campaign</div>
+          <div className="eyebrow">Review round</div>
           <h1>{board.data.round.name}</h1>
           <p>
             {board.data.submissions.length} proposals · {queued.length} queued
@@ -855,46 +866,65 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
                     )}
                   </select>
                 </Field>
-                {!terminal && submission.status === "active" && (
-                  <div className="assignment-control">
-                    <select
-                      aria-label={`Reviewer for ${submission.title}`}
-                      onChange={(event) =>
-                        setReviewerBySubmission((current) => ({
-                          ...current,
-                          [submission.id]: event.target.value,
-                        }))
-                      }
-                      value={reviewerBySubmission[submission.id] ?? ""}
-                    >
-                      <option value="">Choose reviewer</option>
-                      {board.data.reviewers.map((reviewer) => (
-                        <option key={reviewer.id} value={reviewer.id}>
-                          {reviewer.name} · {reviewer.email}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="mini-button"
-                      disabled={
-                        !reviewerBySubmission[submission.id] || assign.isPending
-                      }
-                      onClick={() => {
-                        const reviewerUserId =
-                          reviewerBySubmission[submission.id];
-                        if (!reviewerUserId) return;
-                        assign.mutate({
-                          slug,
-                          submissionId: submission.id,
-                          reviewerUserId,
-                        });
-                      }}
-                      type="button"
-                    >
-                      Assign
-                    </button>
-                  </div>
-                )}
+                {board.data.round.status === "closed" &&
+                  submission.decision.status.endsWith("_queued") && (
+                    <label className="publication-selection">
+                      <input
+                        checked={Boolean(selectedForPublication[submission.id])}
+                        onChange={(event) =>
+                          setSelectedForPublication((current) => ({
+                            ...current,
+                            [submission.id]: event.target.checked,
+                          }))
+                        }
+                        type="checkbox"
+                      />
+                      Include in this publication
+                    </label>
+                  )}
+                {!terminal &&
+                  submission.status === "active" &&
+                  board.data.round.status !== "closed" && (
+                    <div className="assignment-control">
+                      <select
+                        aria-label={`Reviewer for ${submission.title}`}
+                        onChange={(event) =>
+                          setReviewerBySubmission((current) => ({
+                            ...current,
+                            [submission.id]: event.target.value,
+                          }))
+                        }
+                        value={reviewerBySubmission[submission.id] ?? ""}
+                      >
+                        <option value="">Choose reviewer</option>
+                        {board.data.reviewers.map((reviewer) => (
+                          <option key={reviewer.id} value={reviewer.id}>
+                            {reviewer.name} · {reviewer.email}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        className="mini-button"
+                        disabled={
+                          !reviewerBySubmission[submission.id] ||
+                          assign.isPending
+                        }
+                        onClick={() => {
+                          const reviewerUserId =
+                            reviewerBySubmission[submission.id];
+                          if (!reviewerUserId) return;
+                          assign.mutate({
+                            slug,
+                            submissionId: submission.id,
+                            reviewerUserId,
+                          });
+                        }}
+                        type="button"
+                      >
+                        Assign
+                      </button>
+                    </div>
+                  )}
                 <div className="assignment-list">
                   {submission.review.assignments.map((assignment) => (
                     <div className="assignment-row" key={assignment.id}>
@@ -902,19 +932,21 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
                         {assignment.reviewerName} ·{" "}
                         {assignment.score ?? "not scored"}
                       </span>
-                      <button
-                        className="text-button"
-                        disabled={revoke.isPending}
-                        onClick={() =>
-                          revoke.mutate({
-                            slug,
-                            assignmentId: assignment.id,
-                          })
-                        }
-                        type="button"
-                      >
-                        Revoke
-                      </button>
+                      {board.data.round.status !== "closed" && (
+                        <button
+                          className="text-button"
+                          disabled={revoke.isPending}
+                          onClick={() =>
+                            revoke.mutate({
+                              slug,
+                              assignmentId: assignment.id,
+                            })
+                          }
+                          type="button"
+                        >
+                          Revoke
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -927,15 +959,17 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
         <section className="publication-bar">
           <div>
             <div className="eyebrow">Atomic publication</div>
-            <strong>Publish {queued.length} queued outcomes together</strong>
+            <strong>
+              Publish {selectedQueued.length} selected outcomes together
+            </strong>
           </div>
           <button
             className="primary-button"
-            disabled={publish.isPending}
+            disabled={publish.isPending || selectedQueued.length === 0}
             onClick={() =>
               publish.mutate({
                 slug,
-                selections: queued.map((submission) => ({
+                selections: selectedQueued.map((submission) => ({
                   submissionId: submission.id,
                   expectedStatus: submission.decision.status as
                     "accept_queued" | "decline_queued",
