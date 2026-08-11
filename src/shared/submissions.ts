@@ -121,7 +121,7 @@ export const submissionSchema = z.object({
     z.object({
       id: submissionSpeakerIdSchema,
       name: z.string(),
-      email: z.email(),
+      email: z.email().nullable(),
       claimed: z.boolean(),
       invitation: z
         .object({

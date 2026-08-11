@@ -85,7 +85,7 @@ import {
   type ReviewWriteError,
 } from "./reviews/repository";
 import {
-  findOwnSpeakerProfile,
+  getOwnSpeakerProfileState,
   saveOwnSpeakerProfile,
 } from "./speaker-profiles/repository";
 import { sendSubmissionSpeakerInvitation } from "./submission-speakers/delivery";
@@ -843,7 +843,7 @@ export const appRouter = trpc.router({
   }),
   speakerProfile: trpc.router({
     getOwn: authenticatedProcedure.query(({ ctx }) =>
-      findOwnSpeakerProfile(ctx.database, ctx.userId),
+      getOwnSpeakerProfileState(ctx.database, ctx.userId),
     ),
     saveOwn: authenticatedProcedure
       .input(speakerProfileInputSchema)

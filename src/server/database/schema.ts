@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  foreignKey,
   index,
   integer,
   sqliteTable,
@@ -368,6 +369,11 @@ export const submissionSpeakers = sqliteTable(
     uniqueIndex("submission_speakers_active_email_idx")
       .on(table.submissionId, table.invitedEmail)
       .where(sql`${table.removedAt} IS NULL`),
+    uniqueIndex("submission_speakers_active_claim_idx")
+      .on(table.submissionId, table.claimedUserId)
+      .where(
+        sql`${table.claimedUserId} IS NOT NULL AND ${table.removedAt} IS NULL`,
+      ),
   ],
 );
 
@@ -400,6 +406,10 @@ export const submissionSpeakerInvitations = sqliteTable(
     uniqueIndex("submission_speaker_invitations_pending_idx")
       .on(table.submissionSpeakerId)
       .where(sql`${table.status} = 'pending'`),
+    foreignKey({
+      columns: [table.replacementForInvitationId],
+      foreignColumns: [table.id],
+    }),
   ],
 );
 

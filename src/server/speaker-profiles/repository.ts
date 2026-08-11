@@ -25,6 +25,17 @@ export async function findOwnSpeakerProfile(
     : null;
 }
 
+export async function getOwnSpeakerProfileState(
+  database: Database,
+  userId: UserId,
+) {
+  const [profile, eligible] = await Promise.all([
+    findOwnSpeakerProfile(database, userId),
+    hasClaimedSpeakerRelationship(database, userId),
+  ]);
+  return { eligible, profile };
+}
+
 type SaveSpeakerProfileResult =
   | {
       ok: true;
@@ -37,12 +48,9 @@ export async function saveOwnSpeakerProfile(
   userId: UserId,
   input: SpeakerProfileInput,
 ): Promise<SaveSpeakerProfileResult> {
-  const [speaker] = await database
-    .select({ id: submissionSpeakers.id })
-    .from(submissionSpeakers)
-    .where(eq(submissionSpeakers.claimedUserId, userId))
-    .limit(1);
-  if (!speaker) return { ok: false, error: "not_a_speaker" };
+  if (!(await hasClaimedSpeakerRelationship(database, userId))) {
+    return { ok: false, error: "not_a_speaker" };
+  }
 
   const [existing] = await database
     .select({ id: speakerProfiles.id })
@@ -73,4 +81,16 @@ export async function saveOwnSpeakerProfile(
   return profile
     ? { ok: true, value: profile }
     : { ok: false, error: "persistence_failed" };
+}
+
+async function hasClaimedSpeakerRelationship(
+  database: Database,
+  userId: UserId,
+): Promise<boolean> {
+  const [speaker] = await database
+    .select({ id: submissionSpeakers.id })
+    .from(submissionSpeakers)
+    .where(eq(submissionSpeakers.claimedUserId, userId))
+    .limit(1);
+  return speaker !== undefined;
 }

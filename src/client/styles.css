@@ -241,6 +241,9 @@ a {
   gap: 40px;
   margin-bottom: 64px;
 }
+.page-heading > div {
+  min-width: 0;
+}
 .page-heading h1,
 .event-title-block h1 {
   margin: 12px 0 0;
@@ -1230,6 +1233,19 @@ a {
 }
 
 @media (max-width: 480px) {
+  .topbar {
+    padding: 0 14px;
+  }
+  .wordmark > span:last-child {
+    display: none;
+  }
+  .account-strip {
+    gap: 12px;
+  }
+  .page-heading h1 {
+    font-size: 44px;
+    overflow-wrap: anywhere;
+  }
   .signin-intro,
   .signin-panel {
     padding: 34px 24px;
