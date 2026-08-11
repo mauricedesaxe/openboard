@@ -2707,7 +2707,6 @@ function InvitationPage({
   signedIn: boolean;
 }) {
   const { secret = "" } = useParams();
-  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const trpc = useTRPC();
   const invitation = useQuery(trpc.invitations.get.queryOptions({ secret }));
@@ -2719,8 +2718,11 @@ function InvitationPage({
     }),
   );
   const decline = useMutation(trpc.invitations.decline.mutationOptions());
-  const acceptAfterSignIn = searchParams.get("acceptAfterSignIn") === "true";
+  const acceptanceKey = pendingInvitationAcceptanceKey(secret);
+  const acceptAfterSignIn =
+    window.sessionStorage.getItem(acceptanceKey) === "true";
   const finishPendingAcceptance = useEffectEvent(() => {
+    window.sessionStorage.removeItem(acceptanceKey);
     accept.mutate({ secret });
   });
 
@@ -2765,7 +2767,7 @@ function InvitationPage({
     );
   }
 
-  const returnTo = `/invitations/${secret}?acceptAfterSignIn=true`;
+  const returnTo = `/invitations/${secret}`;
   const signInUrl = `/sign-in?returnTo=${encodeURIComponent(returnTo)}&email=${encodeURIComponent(invitation.data.email)}`;
   const emailMismatch = signedIn && email !== invitation.data.email;
   async function signInWithInvitedEmail() {
@@ -2809,7 +2811,13 @@ function InvitationPage({
               {accept.isPending ? "Accepting…" : "Accept invitation"}
             </button>
           ) : (
-            <Link className="primary-button link-button" to={signInUrl}>
+            <Link
+              className="primary-button link-button"
+              onClick={() =>
+                window.sessionStorage.setItem(acceptanceKey, "true")
+              }
+              to={signInUrl}
+            >
               Verify email and accept
             </Link>
           )}
@@ -2825,6 +2833,10 @@ function InvitationPage({
       </section>
     </main>
   );
+}
+
+function pendingInvitationAcceptanceKey(secret: string): string {
+  return `openboard:pending-invitation-acceptance:${secret}`;
 }
 
 function SpeakerInvitationPage({
