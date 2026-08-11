@@ -2718,7 +2718,7 @@ function InvitationPage({
     }),
   );
   const decline = useMutation(trpc.invitations.decline.mutationOptions());
-  const acceptanceKey = pendingInvitationAcceptanceKey(secret);
+  const acceptanceKey = `openboard:pending-invitation-acceptance:${secret}`;
   const acceptAfterSignIn =
     window.sessionStorage.getItem(acceptanceKey) === "true";
   const finishPendingAcceptance = useEffectEvent(() => {
@@ -2833,10 +2833,6 @@ function InvitationPage({
       </section>
     </main>
   );
-}
-
-function pendingInvitationAcceptanceKey(secret: string): string {
-  return `openboard:pending-invitation-acceptance:${secret}`;
 }
 
 function SpeakerInvitationPage({
