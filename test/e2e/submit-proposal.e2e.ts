@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { signIn } from "./support";
+import { completeSignIn, signIn } from "./support";
 
 test("resumes a local draft and submits after sign-in", async ({ page }) => {
   const suffix = `${Date.now()}`;
@@ -166,17 +166,6 @@ async function measureLocalTransition(
   await transition();
   await page.waitForSelector(selector);
   return page.evaluate(() => Number(document.body.dataset.transitionDuration));
-}
-
-async function completeSignIn(page: Page, buttonName: string) {
-  const code = await page.locator(".dev-code strong").textContent();
-  expect(code).toMatch(/^\d{6}$/);
-  await page.getByRole("textbox", { name: "Sign-in code" }).fill(code ?? "");
-  await Promise.all([
-    page.waitForURL((url) => !url.pathname.startsWith("/sign-in")),
-    page.getByRole("button", { name: buttonName }).click(),
-  ]);
-  await page.waitForLoadState("networkidle");
 }
 
 async function createOpenCfp(page: Page, slug: string) {
