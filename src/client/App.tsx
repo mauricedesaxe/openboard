@@ -3507,7 +3507,6 @@ function SubmissionPage() {
           revision: latest.revision,
         });
       },
-      retry: false,
     }),
   );
   const withdraw = useMutation(
