@@ -40,7 +40,7 @@ import {
   reviewerAssignmentIdSchema,
   saveReviewSchema,
 } from "../shared/reviews";
-import { speakerProfileInputSchema } from "../shared/speaker-profiles";
+import { saveSpeakerProfileSchema } from "../shared/speaker-profiles";
 import {
   addSubmissionSpeakerSchema,
   proposalUpdateSchema,
@@ -1197,10 +1197,11 @@ export const appRouter = trpc.router({
       getOwnSpeakerProfileState(ctx.database, ctx.userId),
     ),
     saveOwn: authenticatedProcedure
-      .input(speakerProfileInputSchema)
+      .input(saveSpeakerProfileSchema)
       .mutation(async ({ ctx, input }) => {
         const result = await saveOwnSpeakerProfile(
           ctx.database,
+          ctx.files,
           ctx.userId,
           input,
         );
@@ -1209,11 +1210,22 @@ export const appRouter = trpc.router({
             code:
               result.error === "not_a_speaker"
                 ? "FORBIDDEN"
-                : "INTERNAL_SERVER_ERROR",
+                : result.error === "headshot_conflict" ||
+                    result.error === "profile_conflict"
+                  ? "CONFLICT"
+                  : result.error === "invalid_file"
+                    ? "BAD_REQUEST"
+                    : "INTERNAL_SERVER_ERROR",
             message:
               result.error === "not_a_speaker"
                 ? "Claim a proposed-speaker invitation before creating a profile."
-                : "The speaker profile could not be saved.",
+                : result.error === "headshot_conflict"
+                  ? "The headshot changed while this profile was saving. Try again."
+                  : result.error === "profile_conflict"
+                    ? "The profile changed while this save was in progress. Try again."
+                    : result.error === "invalid_file"
+                      ? "Choose a valid JPEG, PNG, or WebP image under 10 MB."
+                      : "The speaker profile could not be saved.",
           });
         }
         return result.value;

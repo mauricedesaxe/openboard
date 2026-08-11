@@ -34,7 +34,7 @@ export async function routePublishedSchedule(
   } catch {
     return scheduleNotFound();
   }
-  const schedule = await findPublishedSchedule(database, slug);
+  const schedule = await findPublishedSchedule(database, slug, url.origin);
   if (!schedule) return scheduleNotFound();
   const calendar = Boolean(match[2]);
   return publicResponse(

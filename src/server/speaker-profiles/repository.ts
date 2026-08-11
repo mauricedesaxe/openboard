@@ -1,12 +1,19 @@
 import { and, desc, eq, isNull } from "drizzle-orm";
 
 import type { UserId } from "../../shared/events";
+import type { StoredFileId } from "../../shared/files";
 import {
   speakerProfileSchema,
-  type SpeakerProfileInput,
+  type SaveSpeakerProfileInput,
 } from "../../shared/speaker-profiles";
 import type { Database } from "../database/client";
-import { speakerProfiles, submissionSpeakers } from "../database/schema";
+import {
+  publishedAgendaSpeakers,
+  speakerProfiles,
+  storedFiles,
+  submissionSpeakers,
+} from "../database/schema";
+import { compensateStoredFile, putStoredFile } from "../files/repository";
 
 export async function findOwnSpeakerProfile(
   database: Database,
@@ -20,6 +27,7 @@ export async function findOwnSpeakerProfile(
   return profile
     ? speakerProfileSchema.parse({
         ...profile,
+        headshotUrl: speakerHeadshotUrl(profile),
         updatedAt: profile.updatedAt.toISOString(),
       })
     : null;
@@ -45,46 +53,252 @@ type SaveSpeakerProfileResult =
       ok: true;
       value: NonNullable<Awaited<ReturnType<typeof findOwnSpeakerProfile>>>;
     }
-  | { ok: false; error: "not_a_speaker" | "persistence_failed" };
+  | {
+      ok: false;
+      error:
+        | "headshot_conflict"
+        | "invalid_file"
+        | "not_a_speaker"
+        | "profile_conflict"
+        | "persistence_failed";
+    };
 
 export async function saveOwnSpeakerProfile(
   database: Database,
+  files: R2Bucket,
   userId: UserId,
-  input: SpeakerProfileInput,
+  input: SaveSpeakerProfileInput,
 ): Promise<SaveSpeakerProfileResult> {
   if (!(await hasClaimedSpeakerRelationship(database, userId))) {
     return { ok: false, error: "not_a_speaker" };
   }
 
   const [existing] = await database
-    .select({ id: speakerProfiles.id })
+    .select({
+      id: speakerProfiles.id,
+      headshotStoredFileId: speakerProfiles.headshotStoredFileId,
+      headshotObjectKey: storedFiles.objectKey,
+    })
     .from(speakerProfiles)
+    .leftJoin(
+      storedFiles,
+      eq(speakerProfiles.headshotStoredFileId, storedFiles.id),
+    )
     .where(eq(speakerProfiles.userId, userId))
     .limit(1);
+  const stored = input.headshot
+    ? await putStoredFile(
+        files,
+        userId,
+        `speaker-headshots/${userId}`,
+        input.headshot,
+        isValidHeadshot,
+      )
+    : undefined;
+  if (stored && !stored.ok) {
+    return {
+      ok: false,
+      error:
+        stored.error === "invalid_file" ? "invalid_file" : "persistence_failed",
+    };
+  }
+
   const now = new Date();
+  const profileValues = {
+    displayName: input.displayName,
+    bio: input.bio,
+    updatedAt: now,
+    ...(stored?.ok
+      ? {
+          headshotUrl: null,
+          headshotStoredFileId: stored.value.record.id,
+        }
+      : {}),
+  };
+  let conflict: "headshot_conflict" | "profile_conflict" | undefined;
   try {
     if (existing) {
-      await database
+      const update = database
         .update(speakerProfiles)
-        .set({ ...input, updatedAt: now })
-        .where(eq(speakerProfiles.id, existing.id));
+        .set(profileValues)
+        .where(
+          stored?.ok
+            ? and(
+                eq(speakerProfiles.id, existing.id),
+                existing.headshotStoredFileId
+                  ? eq(
+                      speakerProfiles.headshotStoredFileId,
+                      existing.headshotStoredFileId,
+                    )
+                  : isNull(speakerProfiles.headshotStoredFileId),
+              )
+            : eq(speakerProfiles.id, existing.id),
+        );
+      if (stored?.ok) {
+        const [, updated] = await database.batch([
+          database.insert(storedFiles).values(stored.value.record),
+          update,
+        ]);
+        if (updated.meta.changes === 0) conflict = "headshot_conflict";
+      } else {
+        await update;
+      }
     } else {
-      await database.insert(speakerProfiles).values({
-        id: crypto.randomUUID(),
-        userId,
-        ...input,
-        createdAt: now,
-        updatedAt: now,
-      });
+      const insert = database
+        .insert(speakerProfiles)
+        .values({
+          id: crypto.randomUUID(),
+          userId,
+          ...profileValues,
+          createdAt: now,
+        })
+        .onConflictDoNothing({ target: speakerProfiles.userId });
+      if (stored?.ok) {
+        const [, inserted] = await database.batch([
+          database.insert(storedFiles).values(stored.value.record),
+          insert,
+        ]);
+        if (inserted.meta.changes === 0) conflict = "profile_conflict";
+      } else {
+        const inserted = await insert;
+        if (inserted.meta.changes === 0) conflict = "profile_conflict";
+      }
     }
   } catch {
+    if (stored?.ok) {
+      await compensateStoredFile(
+        files,
+        stored.value.record.objectKey,
+        "speaker_headshot_compensation_failed",
+      );
+    }
     return { ok: false, error: "persistence_failed" };
   }
 
+  if (conflict) {
+    if (stored?.ok) {
+      await removeStoredHeadshot(
+        database,
+        files,
+        stored.value.record.id,
+        stored.value.record.objectKey,
+        "speaker_headshot_conflict_cleanup_failed",
+      );
+    }
+    return { ok: false, error: conflict };
+  }
+  if (
+    stored?.ok &&
+    existing?.headshotStoredFileId &&
+    existing.headshotObjectKey
+  ) {
+    await removeStoredHeadshot(
+      database,
+      files,
+      existing.headshotStoredFileId,
+      existing.headshotObjectKey,
+      "speaker_headshot_cleanup_failed",
+    );
+  }
   const profile = await findOwnSpeakerProfile(database, userId);
   return profile
     ? { ok: true, value: profile }
     : { ok: false, error: "persistence_failed" };
+}
+
+export async function findSpeakerHeadshot(
+  database: Database,
+  fileId: StoredFileId,
+) {
+  const [headshot] = await database
+    .select({
+      objectKey: storedFiles.objectKey,
+      fileName: storedFiles.fileName,
+      contentType: storedFiles.contentType,
+    })
+    .from(storedFiles)
+    .where(eq(storedFiles.id, fileId))
+    .limit(1);
+  if (!headshot) return undefined;
+  const references = await findHeadshotReferences(database, fileId);
+  if (references.published) return { ...headshot, access: "public" as const };
+  return references.ownerUserId
+    ? {
+        ...headshot,
+        access: "owner" as const,
+        ownerUserId: references.ownerUserId,
+      }
+    : undefined;
+}
+
+export function speakerHeadshotUrl(profile: {
+  headshotStoredFileId: string | null;
+  headshotUrl: string | null;
+}): string | null {
+  return profile.headshotStoredFileId
+    ? `/api/speaker-headshots/${profile.headshotStoredFileId}`
+    : profile.headshotUrl;
+}
+
+async function removeStoredHeadshot(
+  database: Database,
+  files: R2Bucket,
+  fileId: string,
+  objectKey: string,
+  event: string,
+): Promise<void> {
+  try {
+    const references = await findHeadshotReferences(database, fileId);
+    if (references.ownerUserId || references.published) return;
+    await files.delete(objectKey);
+    await database.delete(storedFiles).where(eq(storedFiles.id, fileId));
+  } catch (error: unknown) {
+    console.error(
+      JSON.stringify({
+        event,
+        fileId,
+        objectKey,
+        error:
+          error instanceof Error ? error.message : "Unknown cleanup failure",
+      }),
+    );
+  }
+}
+
+async function findHeadshotReferences(database: Database, fileId: string) {
+  const path = `/api/speaker-headshots/${fileId}`;
+  const [current, published] = await Promise.all([
+    database
+      .select({ userId: speakerProfiles.userId })
+      .from(speakerProfiles)
+      .where(eq(speakerProfiles.headshotStoredFileId, fileId))
+      .limit(1),
+    database
+      .select({ id: publishedAgendaSpeakers.id })
+      .from(publishedAgendaSpeakers)
+      .where(eq(publishedAgendaSpeakers.headshotUrl, path))
+      .limit(1),
+  ]);
+  return {
+    ownerUserId: current[0]?.userId,
+    published: published.length > 0,
+  };
+}
+
+function isValidHeadshot(bytes: Uint8Array, contentType: string): boolean {
+  if (contentType === "image/jpeg") {
+    return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  }
+  if (contentType === "image/png") {
+    return [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every(
+      (value, index) => bytes[index] === value,
+    );
+  }
+  return (
+    contentType === "image/webp" &&
+    new TextDecoder().decode(bytes.slice(0, 4)) === "RIFF" &&
+    new TextDecoder().decode(bytes.slice(8, 12)) === "WEBP"
+  );
 }
 
 async function hasClaimedSpeakerRelationship(

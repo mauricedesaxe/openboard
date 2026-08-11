@@ -33,7 +33,12 @@ import {
   slugifyEventName,
   type EventInput,
 } from "../shared/events";
-import type { SpeakerProfileInput } from "../shared/speaker-profiles";
+import { MAX_STORED_FILE_BYTES } from "../shared/files";
+import {
+  speakerHeadshotUploadSchema,
+  type SpeakerHeadshotUpload,
+  type SpeakerProfileInput,
+} from "../shared/speaker-profiles";
 import {
   proposalContentSchema,
   proposalDraftSchema,
@@ -3179,17 +3184,38 @@ function SpeakerInvitationPage({
 function SpeakerProfilePage() {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
-  const profileState = useQuery(trpc.speakerProfile.getOwn.queryOptions());
+  const profileQuery = trpc.speakerProfile.getOwn.queryOptions();
+  const profileState = useQuery(profileQuery);
   const [draft, setDraft] = useState<SpeakerProfileInput>();
+  const [headshotFile, setHeadshotFile] = useState<{
+    file: File;
+    contentType: SpeakerHeadshotUpload["contentType"];
+  }>();
+  const [headshotPreviewUrl, setHeadshotPreviewUrl] = useState<string>();
+  const [headshotError, setHeadshotError] = useState<string>();
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const save = useMutation(
     trpc.speakerProfile.saveOwn.mutationOptions({
       onSuccess: async (saved) => {
-        setDraft(saved);
+        setDraft({ displayName: saved.displayName, bio: saved.bio });
+        setHeadshotFile(undefined);
+        setHeadshotPreviewUrl(undefined);
+        queryClient.setQueryData(profileQuery.queryKey, (current) =>
+          current
+            ? { ...current, profile: saved, suggestedDisplayName: null }
+            : current,
+        );
         await queryClient.invalidateQueries(
           trpc.speakerProfile.getOwn.queryFilter(),
         );
       },
     }),
+  );
+  useEffect(
+    () => () => {
+      if (headshotPreviewUrl) URL.revokeObjectURL(headshotPreviewUrl);
+    },
+    [headshotPreviewUrl],
   );
 
   if (profileState.isPending)
@@ -3215,19 +3241,63 @@ function SpeakerProfilePage() {
     );
   }
 
-  const current = draft ??
-    profileState.data.profile ?? {
-      displayName: profileState.data.suggestedDisplayName ?? "",
-      bio: "",
-      headshotUrl: null,
-    };
+  const current =
+    draft ??
+    (profileState.data.profile
+      ? {
+          displayName: profileState.data.profile.displayName,
+          bio: profileState.data.profile.bio,
+        }
+      : {
+          displayName: profileState.data.suggestedDisplayName ?? "",
+          bio: "",
+        });
   function updateProfile(values: Partial<SpeakerProfileInput>) {
     setDraft({ ...current, ...values });
   }
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    save.mutate(current);
+  function selectHeadshot(file?: File) {
+    const contentType = speakerHeadshotUploadSchema.shape.contentType.safeParse(
+      file?.type,
+    );
+    const valid =
+      file && contentType.success && file.size <= MAX_STORED_FILE_BYTES;
+    if (headshotPreviewUrl) URL.revokeObjectURL(headshotPreviewUrl);
+    setHeadshotError(
+      file && !valid
+        ? "Choose a JPEG, PNG, or WebP image under 10 MB."
+        : undefined,
+    );
+    setHeadshotFile(
+      valid ? { file, contentType: contentType.data } : undefined,
+    );
+    setHeadshotPreviewUrl(valid ? URL.createObjectURL(file) : undefined);
   }
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (headshotError) return;
+    setIsSubmitting(true);
+    try {
+      await save.mutateAsync({
+        ...current,
+        ...(headshotFile
+          ? {
+              headshot: {
+                fileName: headshotFile.file.name,
+                contentType: headshotFile.contentType,
+                contentBase64: await browserFileToBase64(headshotFile.file),
+              },
+            }
+          : {}),
+      });
+    } catch {
+      return;
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+  const pending = isSubmitting || save.isPending;
+  const headshotUrl =
+    headshotPreviewUrl ?? profileState.data.profile?.headshotUrl;
 
   return (
     <div className="page setup-page">
@@ -3247,8 +3317,8 @@ function SpeakerProfilePage() {
         </p>
       </section>
       <section className="form-board submission-form">
-        <form onSubmit={submit}>
-          <fieldset className="submission-fields" disabled={save.isPending}>
+        <form onSubmit={(event) => void submit(event)}>
+          <fieldset className="submission-fields" disabled={pending}>
             <Field label="Display name" name="speaker-profile-name">
               <input
                 id="speaker-profile-name"
@@ -3259,25 +3329,40 @@ function SpeakerProfilePage() {
                 }
               />
             </Field>
-            <Field label="Bio" name="speaker-profile-bio">
+            <Field
+              hint="Optional. Add a biography when you are ready to publish one."
+              label="Bio"
+              name="speaker-profile-bio"
+            >
               <textarea
                 id="speaker-profile-bio"
-                required
                 value={current.bio}
                 onChange={(event) => updateProfile({ bio: event.target.value })}
               />
             </Field>
-            <Field label="Headshot URL" name="speaker-profile-headshot">
+            <Field
+              hint="JPEG, PNG, or WebP. Maximum size 10 MB."
+              label="Headshot"
+              name="speaker-profile-headshot"
+            >
+              {headshotUrl && (
+                <div className="headshot-preview">
+                  <img alt="Headshot preview" src={headshotUrl} />
+                </div>
+              )}
               <input
+                accept="image/jpeg,image/png,image/webp"
                 id="speaker-profile-headshot"
-                type="url"
-                value={current.headshotUrl ?? ""}
-                onChange={(event) =>
-                  updateProfile({ headshotUrl: event.target.value || null })
-                }
+                onChange={(event) => selectHeadshot(event.target.files?.[0])}
+                type="file"
               />
             </Field>
           </fieldset>
+          {headshotError && (
+            <p className="form-error" role="alert">
+              {headshotError}
+            </p>
+          )}
           {save.error && (
             <p className="form-error" role="alert">
               {save.error.message}
@@ -3286,10 +3371,10 @@ function SpeakerProfilePage() {
           <div className="submission-actions">
             <button
               className="primary-button"
-              disabled={save.isPending}
+              disabled={pending || Boolean(headshotError)}
               type="submit"
             >
-              {save.isPending ? "Saving…" : "Save profile"}
+              {pending ? "Saving…" : "Save profile"}
             </button>
           </div>
         </form>

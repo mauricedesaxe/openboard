@@ -15,6 +15,7 @@ import {
 export async function findPublishedSchedule(
   database: Database,
   slug: string,
+  origin: string,
 ): Promise<PublishedSchedule | undefined> {
   const [publication] = await database
     .select({
@@ -162,7 +163,9 @@ export async function findPublishedSchedule(
             id: speaker.id,
             displayName: speaker.displayName,
             bio: speaker.bio,
-            headshotUrl: speaker.headshotUrl,
+            headshotUrl: speaker.headshotUrl
+              ? new URL(speaker.headshotUrl, origin).href
+              : null,
             position: speaker.position,
           })),
       };
