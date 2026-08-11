@@ -145,10 +145,6 @@ CREATE TABLE task_evidence (
 
 CREATE INDEX task_evidence_assignment_idx
   ON task_evidence(assignment_id, completion_revision);
-CREATE UNIQUE INDEX task_evidence_profile_once_idx
-  ON task_evidence(assignment_id, completion_revision, speaker_profile_id)
-  WHERE kind = 'profile';
-
 CREATE TABLE task_evidence_rejections (
   evidence_id TEXT PRIMARY KEY NOT NULL REFERENCES task_evidence(id) ON DELETE CASCADE,
   rejected_by_user_id TEXT NOT NULL REFERENCES user(id),
@@ -193,6 +189,26 @@ BEGIN
   SELECT RAISE(ABORT, 'current_form_evidence_exists');
 END;
 
+CREATE TRIGGER task_evidence_prevent_duplicate_profile_completion
+BEFORE INSERT ON task_evidence
+WHEN NEW.kind = 'profile'
+  AND EXISTS (
+    SELECT 1
+    FROM task_evidence AS existing
+    LEFT JOIN task_evidence_rejections
+      ON task_evidence_rejections.evidence_id = existing.id
+    LEFT JOIN task_evidence_supersessions
+      ON task_evidence_supersessions.previous_evidence_id = existing.id
+    WHERE existing.assignment_id = NEW.assignment_id
+      AND existing.completion_revision = NEW.completion_revision
+      AND existing.kind = 'profile'
+      AND task_evidence_rejections.evidence_id IS NULL
+      AND task_evidence_supersessions.previous_evidence_id IS NULL
+  )
+BEGIN
+  SELECT RAISE(IGNORE);
+END;
+
 CREATE TRIGGER task_assignments_add_existing_profile_evidence
 AFTER INSERT ON task_assignments
 WHEN NEW.target_user_id IS NOT NULL
@@ -218,9 +234,10 @@ BEGIN
     speaker_profile_id, created_at
   )
   SELECT
-    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
-      lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' ||
-      lower(hex(randomblob(6))),
+    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' ||
+      substr(lower(hex(randomblob(2))), 2) || '-' ||
+      substr('89ab', abs(random()) % 4 + 1, 1) ||
+      substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6))),
     NEW.id, NEW.completion_revision, 'profile', NEW.target_user_id,
     speaker_profiles.id, unixepoch('subsec') * 1000
   FROM speaker_profiles
@@ -252,9 +269,10 @@ BEGIN
     speaker_profile_id, created_at
   )
   SELECT
-    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
-      lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' ||
-      lower(hex(randomblob(6))),
+    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' ||
+      substr(lower(hex(randomblob(2))), 2) || '-' ||
+      substr('89ab', abs(random()) % 4 + 1, 1) ||
+      substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6))),
     NEW.id, NEW.completion_revision, 'profile', NEW.target_user_id,
     speaker_profiles.id, unixepoch('subsec') * 1000
   FROM speaker_profiles
@@ -269,9 +287,10 @@ BEGIN
     speaker_profile_id, created_at
   )
   SELECT
-    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
-      lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' ||
-      lower(hex(randomblob(6))),
+    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' ||
+      substr(lower(hex(randomblob(2))), 2) || '-' ||
+      substr('89ab', abs(random()) % 4 + 1, 1) ||
+      substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6))),
     task_assignments.id, task_assignments.completion_revision, 'profile',
     NEW.user_id, NEW.id, unixepoch('subsec') * 1000
   FROM task_assignments
@@ -299,9 +318,10 @@ BEGIN
     speaker_profile_id, created_at
   )
   SELECT
-    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
-      lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' ||
-      lower(hex(randomblob(6))),
+    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' ||
+      substr(lower(hex(randomblob(2))), 2) || '-' ||
+      substr('89ab', abs(random()) % 4 + 1, 1) ||
+      substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6))),
     task_assignments.id, task_assignments.completion_revision, 'profile',
     NEW.user_id, NEW.id, unixepoch('subsec') * 1000
   FROM task_assignments

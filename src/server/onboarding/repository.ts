@@ -273,13 +273,21 @@ export async function cancelTaskAssignment(
   actorUserId: UserId,
   assignmentId: TaskAssignmentId,
 ): Promise<WriteResult<{ canceled: true }>> {
-  const assignment = await findAssignment(database, assignmentId);
+  const [assignment] = await database
+    .select({
+      eventId: taskAssignments.eventId,
+      canceledAt: taskAssignments.canceledAt,
+    })
+    .from(taskAssignments)
+    .where(eq(taskAssignments.id, assignmentId))
+    .limit(1);
   if (!assignment) return { ok: false, error: "not_found" };
   if (
     !(await findOrganizerEventById(database, actorUserId, assignment.eventId))
   ) {
     return { ok: false, error: "not_found" };
   }
+  if (assignment.canceledAt) return { ok: true, value: { canceled: true } };
   const result = await database
     .update(taskAssignments)
     .set({ canceledAt: new Date(), canceledByUserId: actorUserId })
@@ -289,7 +297,15 @@ export async function cancelTaskAssignment(
         isNull(taskAssignments.canceledAt),
       ),
     );
-  return result.meta.changes > 0
+  if (result.meta.changes > 0) {
+    return { ok: true, value: { canceled: true } };
+  }
+  const [raced] = await database
+    .select({ canceledAt: taskAssignments.canceledAt })
+    .from(taskAssignments)
+    .where(eq(taskAssignments.id, assignmentId))
+    .limit(1);
+  return raced?.canceledAt
     ? { ok: true, value: { canceled: true } }
     : { ok: false, error: "invalid_assignment" };
 }
