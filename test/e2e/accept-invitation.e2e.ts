@@ -8,11 +8,10 @@ test("accepts an event invitation after sign-in without a second click", async (
   const suffix = `${Date.now()}`;
   const slug = `browser-invitation-${suffix}`;
   const recipientEmail = `browser-reviewer-${suffix}@example.com`;
-  const acceptanceRequests: string[] = [];
+  let acceptanceOperations = 0;
   page.on("request", (request) => {
-    if (request.url().includes("/api/trpc/invitations.accept")) {
-      acceptanceRequests.push(request.url());
-    }
+    acceptanceOperations +=
+      request.url().match(/invitations\.accept/g)?.length ?? 0;
   });
   await page.goto("/");
   await signIn(page, `browser-owner-${suffix}@example.com`, "Open my board");
@@ -41,7 +40,7 @@ test("accepts an event invitation after sign-in without a second click", async (
   await page.getByRole("textbox", { name: "Sign-in code" }).fill(code);
   await page.getByRole("button", { name: "Continue to invitation" }).click();
 
-  await expect.poll(() => acceptanceRequests).toHaveLength(1);
+  await expect.poll(() => acceptanceOperations).toBe(1);
   await expect(page).toHaveURL(new RegExp(`/events/${slug}$`));
   await expect(
     page.getByRole("heading", { name: "Browser Invitation Conference" }),
