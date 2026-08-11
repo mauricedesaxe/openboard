@@ -3224,7 +3224,7 @@ function CfpBuilder({
             <CommaSeparatedInput
               disabled={cfp?.structureLocked}
               id={`cfp-formats-${formId}`}
-              values={definition.formats}
+              initialValues={definition.formats}
               onValuesChange={(formats) =>
                 setDefinition((current) => ({
                   ...current,
@@ -3332,15 +3332,15 @@ function CfpBuilder({
 function CommaSeparatedInput({
   disabled,
   id,
-  values,
+  initialValues,
   onValuesChange,
 }: {
   disabled?: boolean | undefined;
   id: string;
-  values: string[];
+  initialValues: string[];
   onValuesChange: (values: string[]) => void;
 }) {
-  const [text, setText] = useState(() => values.join(", "));
+  const [text, setText] = useState(() => initialValues.join(", "));
 
   return (
     <input
@@ -3411,8 +3411,8 @@ function CustomFieldEditor({
         >
           <CommaSeparatedInput
             id={fieldId("field-options")}
+            initialValues={field.options}
             key={field.key}
-            values={field.options}
             onValuesChange={(options) =>
               onChange({
                 ...field,
