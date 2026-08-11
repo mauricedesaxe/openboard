@@ -5,7 +5,7 @@ import { signIn } from "./support";
 test("resumes a local draft and submits after sign-in", async ({ page }) => {
   const suffix = `${Date.now()}`;
   const slug = `browser-proposal-${suffix}`;
-  const submitterEmail = `browser-submitter-${suffix}@example.com`;
+  const proposedSpeakerEmail = `browser-speaker-${suffix}@example.com`;
   await page.goto("/");
   await signIn(page, `browser-owner-${suffix}@example.com`, "Open my board");
   await createOpenCfp(page, slug);
@@ -39,7 +39,7 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
     .fill("Browser Submitter");
   await page
     .getByRole("textbox", { name: "Proposed speaker email" })
-    .fill(submitterEmail);
+    .fill(proposedSpeakerEmail);
   expect(
     await measureLocalTransition(page, "#audience", () =>
       page.getByRole("button", { name: "Continue" }).click(),
@@ -65,7 +65,7 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   expect(
     trpcRequests.filter((url) => url.includes("submissions.submit")),
   ).toEqual([]);
-  await signIn(page, submitterEmail, "Return to proposal");
+  await signIn(page, proposedSpeakerEmail, "Return to proposal");
 
   await expect(page).toHaveURL(/\/submissions\/[0-9a-f-]+$/, {
     timeout: 15_000,
@@ -82,7 +82,33 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(
     "A resumed proposal",
   );
-  await expect(page.getByRole("button", { name: "Remove" })).toBeDisabled();
+  const onlyRemoveButton = page.getByRole("button", { name: "Remove" });
+  await expect(onlyRemoveButton).toBeDisabled();
+  await expect(onlyRemoveButton).toHaveAccessibleDescription(
+    "At least one proposed speaker must remain.",
+  );
+  await expect(
+    page.getByText("At least one proposed speaker must remain."),
+  ).toBeVisible();
+
+  await page
+    .getByRole("textbox", { name: "Proposed speaker name" })
+    .fill("Second Browser Speaker");
+  await page
+    .getByRole("textbox", { name: "Proposed speaker email" })
+    .fill(`second-browser-speaker-${suffix}@example.com`);
+  await page.getByRole("button", { name: "Invite proposed speaker" }).click();
+  await expect(page.getByText("Second Browser Speaker")).toBeVisible();
+
+  const ownSpeakerRow = page
+    .locator(".speaker-row")
+    .filter({ hasText: "Browser Submitter" });
+  await page.route("**/api/trpc/submissions.removeSpeaker", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    await route.continue();
+  });
+  await ownSpeakerRow.getByRole("button", { name: "Remove" }).click();
+  await expect(ownSpeakerRow).toBeHidden({ timeout: 500 });
   await expect(
     page.getByText("At least one proposed speaker must remain."),
   ).toBeVisible();
