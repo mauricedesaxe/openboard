@@ -3806,7 +3806,9 @@ function SubmissionSpeakerManager({
         await queryClient.cancelQueries(
           trpc.submissions.get.queryFilter(submissionInput),
         );
-        const previous = queryClient.getQueryData(submissionQuery.queryKey);
+        const previousSubmission = queryClient.getQueryData(
+          submissionQuery.queryKey,
+        );
         queryClient.setQueryData(submissionQuery.queryKey, (current) =>
           current
             ? {
@@ -3817,11 +3819,14 @@ function SubmissionSpeakerManager({
               }
             : current,
         );
-        return { previous };
+        return { previousSubmission };
       },
       onError: (_error, _input, context) => {
-        if (context?.previous) {
-          queryClient.setQueryData(submissionQuery.queryKey, context.previous);
+        if (context?.previousSubmission) {
+          queryClient.setQueryData(
+            submissionQuery.queryKey,
+            context.previousSubmission,
+          );
         }
       },
       onSettled: refresh,
@@ -3853,7 +3858,7 @@ function SubmissionSpeakerManager({
   );
   const mutationError =
     add.error ?? remove.error ?? replace.error ?? resend.error;
-  const isLastSpeaker = submission.proposedSpeakers.length === 1;
+  const isOnlyProposedSpeaker = submission.proposedSpeakers.length === 1;
 
   function invite(event: FormEvent) {
     event.preventDefault();
@@ -3927,12 +3932,12 @@ function SubmissionSpeakerManager({
                 <>
                   <button
                     aria-describedby={
-                      isLastSpeaker
+                      isOnlyProposedSpeaker
                         ? `remove-speaker-reason-${speaker.id}`
                         : undefined
                     }
                     className="text-button danger-button"
-                    disabled={remove.isPending || isLastSpeaker}
+                    disabled={remove.isPending || isOnlyProposedSpeaker}
                     onClick={() =>
                       remove.mutate({
                         ...submissionInput,
@@ -3943,7 +3948,7 @@ function SubmissionSpeakerManager({
                   >
                     Remove
                   </button>
-                  {isLastSpeaker && (
+                  {isOnlyProposedSpeaker && (
                     <span
                       className="speaker-removal-reason"
                       id={`remove-speaker-reason-${speaker.id}`}

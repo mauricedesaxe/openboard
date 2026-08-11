@@ -36,7 +36,7 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
 
   await page
     .getByRole("textbox", { name: "Proposed speaker name" })
-    .fill("Browser Submitter");
+    .fill("Browser Submission Owner");
   await page
     .getByRole("textbox", { name: "Proposed speaker email" })
     .fill(proposedSpeakerEmail);
@@ -100,32 +100,31 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   await page.getByRole("button", { name: "Invite proposed speaker" }).click();
   await expect(page.getByText("Second Browser Speaker")).toBeVisible();
 
-  const ownSpeakerRow = page
+  const signedInProposedSpeakerRow = page
     .locator(".speaker-row")
-    .filter({ hasText: "Browser Submitter" });
+    .filter({ hasText: "Browser Submission Owner" });
+  const removeSpeakerRequestPattern =
+    /\/api\/trpc\/submissions\.removeSpeaker(?:\?|$)/;
   let removalRequestStarted = false;
   let releaseRemovalRequest = () => {};
   const holdRemovalRequest = new Promise<void>((resolve) => {
     releaseRemovalRequest = resolve;
   });
-  await page.route(
-    /\/api\/trpc\/submissions\.removeSpeaker(?:\?|$)/,
-    async (route) => {
-      removalRequestStarted = true;
-      await holdRemovalRequest;
-      await route.continue();
-    },
-  );
-  const removalResponse = page.waitForResponse(
-    /\/api\/trpc\/submissions\.removeSpeaker(?:\?|$)/,
-  );
-  await ownSpeakerRow.getByRole("button", { name: "Remove" }).click();
-  await expect(ownSpeakerRow).toBeHidden({ timeout: 500 });
+  await page.route(removeSpeakerRequestPattern, async (route) => {
+    removalRequestStarted = true;
+    await holdRemovalRequest;
+    await route.continue();
+  });
+  const removalResponse = page.waitForResponse(removeSpeakerRequestPattern);
+  await signedInProposedSpeakerRow
+    .getByRole("button", { name: "Remove" })
+    .click();
+  await expect(signedInProposedSpeakerRow).toBeHidden({ timeout: 500 });
   await expect.poll(() => removalRequestStarted).toBe(true);
   releaseRemovalRequest();
   expect((await removalResponse).ok()).toBe(true);
   await page.reload();
-  await expect(ownSpeakerRow).toBeHidden();
+  await expect(signedInProposedSpeakerRow).toBeHidden();
   await expect(page.getByText("Second Browser Speaker")).toBeVisible();
   await expect(
     page.getByText("At least one proposed speaker must remain."),
