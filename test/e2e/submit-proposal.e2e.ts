@@ -68,9 +68,7 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
     "Return to proposal",
   );
 
-  await expect(page).toHaveURL(/\/submissions\/[0-9a-f-]+$/, {
-    timeout: 15_000,
-  });
+  await expect(page).toHaveURL(/\/submissions\/[0-9a-f-]+$/);
   await expect(
     page.getByRole("heading", { name: "A resumed proposal" }),
   ).toBeVisible();

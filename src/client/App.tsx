@@ -217,8 +217,6 @@ function SignInPage() {
       );
       return;
     }
-
-    window.location.assign(returnTo);
   }
 
   return (
@@ -2670,7 +2668,7 @@ function PublicCfpPage() {
     trpc.submissions.submit.mutationOptions({
       onSuccess: (submission) => {
         if (draftKey) window.localStorage.removeItem(draftKey);
-        window.location.assign(`/submissions/${submission.id}`);
+        void navigate(`/submissions/${submission.id}`);
       },
       onError: () => {
         setDraft((current) => ({ ...current, submitAfterSignIn: false }));
