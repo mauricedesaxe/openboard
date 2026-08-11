@@ -375,17 +375,26 @@ describe("build and publish an agenda", () => {
   test("publishes an agenda above D1 statement binding limits", async () => {
     const slug = "large-agenda-2028";
     const owner = await signIn("large-agenda-owner@example.com");
-    const fixture = await seedAgendaFixture(slug, owner, 20, 3);
+    const fixture = await seedAgendaFixture(
+      slug,
+      owner,
+      62,
+      3,
+      "2028-08-10",
+      "2028-08-13",
+    );
 
     for (const [index, programItemId] of fixture.programItemIds.entries()) {
+      const day = 10 + Math.floor(index / 20);
+      const hour = index % 20;
       await expectOk(
         "agendas.placeProgram",
         {
           slug,
           programItemId,
           roomId: fixture.roomId,
-          startsAtLocal: `2028-08-10T${String(index).padStart(2, "0")}:00`,
-          endsAtLocal: `2028-08-10T${String(index + 1).padStart(2, "0")}:00`,
+          startsAtLocal: `2028-08-${day}T${String(hour).padStart(2, "0")}:00`,
+          endsAtLocal: `2028-08-${day}T${String(hour + 1).padStart(2, "0")}:00`,
         },
         owner.cookie,
       );
@@ -402,7 +411,7 @@ describe("build and publish an agenda", () => {
       ).status,
     ).toBe(200);
     const published = await getPublished(slug);
-    expect(published.items).toHaveLength(20);
+    expect(published.items).toHaveLength(62);
     expect(published.items.every((item) => item.speakers.length === 3)).toBe(
       true,
     );
@@ -801,6 +810,7 @@ async function seedAgendaFixture(
   itemCount: number,
   speakersPerItem: number,
   eventDate = "2028-08-10",
+  eventEndDate = eventDate,
 ) {
   await expectOk(
     "events.create",
@@ -808,7 +818,7 @@ async function seedAgendaFixture(
       name: slug,
       slug,
       startsOn: eventDate,
-      endsOn: eventDate,
+      endsOn: eventEndDate,
       timezone: "Europe/Berlin",
     },
     owner.cookie,

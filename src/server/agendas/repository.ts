@@ -38,9 +38,19 @@ import {
 } from "../database/schema";
 import { findEventForOrganizer } from "../events/repository";
 
-const publishedItemInsertSize = 5;
-const publishedSpeakerInsertSize = 12;
-const calendarChangeInsertSize = 12;
+const d1BindingsPerStatement = 100;
+const publishedItemBindingsPerRow = 17;
+const publishedSpeakerBindingsPerRow = 8;
+const calendarChangeBindingsPerRow = 7;
+const publishedItemInsertSize = Math.floor(
+  d1BindingsPerStatement / publishedItemBindingsPerRow,
+);
+const publishedSpeakerInsertSize = Math.floor(
+  d1BindingsPerStatement / publishedSpeakerBindingsPerRow,
+);
+const calendarChangeInsertSize = Math.floor(
+  d1BindingsPerStatement / calendarChangeBindingsPerRow,
+);
 
 export type AgendaWriteError =
   | "agenda_changed"
@@ -416,11 +426,11 @@ export async function publishAgenda(
   ).map((values) => database.insert(agendaDeliveryWork).values(values));
   const finalizationStatement = database
     .update(agendaPublications)
-    .set({ finalizedAt: now })
+    .set({ finalized: true })
     .where(
       and(
         eq(agendaPublications.id, publicationId),
-        isNull(agendaPublications.finalizedAt),
+        eq(agendaPublications.finalized, false),
       ),
     );
   try {
@@ -449,9 +459,7 @@ export async function getPublishedAgenda(database: Database, slug: string) {
     .select()
     .from(agendaPublications)
     .innerJoin(events, eq(events.id, agendaPublications.eventId))
-    .where(
-      and(eq(events.slug, slug), isNotNull(agendaPublications.finalizedAt)),
-    )
+    .where(and(eq(events.slug, slug), eq(agendaPublications.finalized, true)))
     .orderBy(desc(agendaPublications.revision))
     .limit(1);
   if (!publication) return undefined;

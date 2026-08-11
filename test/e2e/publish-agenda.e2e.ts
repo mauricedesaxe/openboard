@@ -19,7 +19,7 @@ test("publishes a working placement to every public agenda view", async ({
   const event = await mutate(page.request, "events.create", {
     name: "Browser Agenda Conference",
     slug,
-    startsOn: "2028-08-10",
+    startsOn: "2028-08-13",
     endsOn: "2028-08-18",
     timezone: "Europe/Berlin",
   });
@@ -132,8 +132,8 @@ test("publishes a working placement to every public agenda view", async ({
     .getByLabel("Program item")
     .selectOption({ label: "A browser-built agenda · Web systems" });
   await placementForm.getByLabel("Room").selectOption(room.id as string);
-  await placementForm.getByLabel("Starts").fill("2028-08-10T09:00");
-  await placementForm.getByLabel("Ends").fill("2028-08-10T10:00");
+  await placementForm.getByLabel("Starts").fill("2028-08-13T09:00");
+  await placementForm.getByLabel("Ends").fill("2028-08-13T10:00");
   await placementForm
     .getByRole("button", { name: "Place program item" })
     .click();
@@ -142,8 +142,8 @@ test("publishes a working placement to every public agenda view", async ({
     .getByLabel("Program item")
     .selectOption({ label: "A second browser session · Data systems" });
   await placementForm.getByLabel("Room").selectOption(room.id as string);
-  await placementForm.getByLabel("Starts").fill("2028-08-10T09:30");
-  await placementForm.getByLabel("Ends").fill("2028-08-10T10:30");
+  await placementForm.getByLabel("Starts").fill("2028-08-13T09:30");
+  await placementForm.getByLabel("Ends").fill("2028-08-13T10:30");
   await placementForm
     .getByRole("button", { name: "Place program item" })
     .click();
@@ -159,15 +159,15 @@ test("publishes a working placement to every public agenda view", async ({
   await secondWorkingItem
     .getByLabel("Room")
     .selectOption(secondRoom.id as string);
-  await secondWorkingItem.getByLabel("Starts").fill("2028-08-17T10:00");
-  await secondWorkingItem.getByLabel("Ends").fill("2028-08-17T11:00");
+  await secondWorkingItem.getByLabel("Starts").fill("2028-08-14T10:00");
+  await secondWorkingItem.getByLabel("Ends").fill("2028-08-14T11:00");
   await secondWorkingItem.getByRole("button", { name: "Save move" }).click();
   const serviceForm = page
     .getByRole("heading", { name: "Block event time" })
     .locator("..");
   await serviceForm.getByLabel("Title").fill("Lunch");
-  await serviceForm.getByLabel("Starts").fill("2028-08-10T12:00");
-  await serviceForm.getByLabel("Ends").fill("2028-08-10T13:00");
+  await serviceForm.getByLabel("Starts").fill("2028-08-13T12:00");
+  await serviceForm.getByLabel("Ends").fill("2028-08-13T13:00");
   await serviceForm.getByRole("button", { name: "Add service block" }).click();
   await expect(page.getByText("3 durable items")).toBeVisible();
   await page.getByRole("button", { name: "Publish agenda" }).click();
@@ -189,6 +189,11 @@ test("publishes a working placement to every public agenda view", async ({
   await expect(
     page.getByRole("heading", { name: "A browser-built agenda" }),
   ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "A second browser session" }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("Week")).toHaveValue("2028-08-14");
   await expect(
     page.getByRole("heading", { name: "A second browser session" }),
   ).toBeVisible();
@@ -225,7 +230,7 @@ test("publishes a working placement to every public agenda view", async ({
   await expect(
     page.getByRole("heading", { name: "A second browser session" }),
   ).toHaveCount(0);
-  await page.getByLabel("Day").selectOption("2028-08-17");
+  await page.getByLabel("Day").selectOption("2028-08-14");
   await expect(
     page.getByRole("heading", { name: "A second browser session" }),
   ).toBeVisible();

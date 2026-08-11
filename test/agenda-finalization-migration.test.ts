@@ -35,12 +35,12 @@ test("finalizes existing agenda revisions during upgrade", async () => {
   );
 
   const publication = await migrationEnvironment.MIGRATION_DB.prepare(
-    "SELECT finalized_at AS finalizedAt FROM agenda_publications WHERE id = 'publication'",
-  ).first<{ finalizedAt: number }>();
-  expect(publication).toEqual({ finalizedAt: createdAt });
+    "SELECT finalized FROM agenda_publications WHERE id = 'publication'",
+  ).first<{ finalized: number }>();
+  expect(publication).toEqual({ finalized: 1 });
   await expect(
     migrationEnvironment.MIGRATION_DB.prepare(
-      "UPDATE agenda_publications SET finalized_at = finalized_at + 1 WHERE id = 'publication'",
+      "UPDATE agenda_publications SET finalized = 0 WHERE id = 'publication'",
     ).run(),
   ).rejects.toThrow("immutable_agenda_publication");
 });
