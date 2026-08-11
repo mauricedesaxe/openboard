@@ -1,12 +1,19 @@
-import { eq } from "drizzle-orm";
+import { and, eq, like } from "drizzle-orm";
 
 import type { UserId } from "../../shared/events";
 import {
   speakerProfileSchema,
+  type SpeakerHeadshotUpload,
   type SpeakerProfileInput,
 } from "../../shared/speaker-profiles";
 import type { Database } from "../database/client";
-import { speakerProfiles, submissionSpeakers } from "../database/schema";
+import {
+  speakerProfileHeadshots,
+  speakerProfiles,
+  storedFiles,
+  submissionSpeakers,
+} from "../database/schema";
+import { compensateStoredFile, putStoredFile } from "../files/repository";
 
 export async function findOwnSpeakerProfile(
   database: Database,
@@ -81,6 +88,111 @@ export async function saveOwnSpeakerProfile(
   return profile
     ? { ok: true, value: profile }
     : { ok: false, error: "persistence_failed" };
+}
+
+type UploadSpeakerHeadshotResult =
+  | {
+      ok: true;
+      value: NonNullable<Awaited<ReturnType<typeof findOwnSpeakerProfile>>>;
+    }
+  | {
+      ok: false;
+      error:
+        | "invalid_file"
+        | "not_a_speaker"
+        | "profile_required"
+        | "persistence_failed";
+    };
+
+export async function uploadOwnSpeakerHeadshot(
+  database: Database,
+  files: R2Bucket,
+  userId: UserId,
+  input: SpeakerHeadshotUpload,
+): Promise<UploadSpeakerHeadshotResult> {
+  if (!(await hasClaimedSpeakerRelationship(database, userId))) {
+    return { ok: false, error: "not_a_speaker" };
+  }
+
+  const [profile] = await database
+    .select({ id: speakerProfiles.id })
+    .from(speakerProfiles)
+    .where(eq(speakerProfiles.userId, userId))
+    .limit(1);
+  if (!profile) return { ok: false, error: "profile_required" };
+
+  const stored = await putStoredFile(
+    files,
+    userId,
+    `speaker-headshots/${userId}`,
+    input,
+  );
+  if (!stored.ok) {
+    return {
+      ok: false,
+      error:
+        stored.error === "invalid_file" ? "invalid_file" : "persistence_failed",
+    };
+  }
+
+  const now = new Date();
+  try {
+    await database.batch([
+      database.insert(storedFiles).values(stored.value.record),
+      database
+        .insert(speakerProfileHeadshots)
+        .values({
+          speakerProfileId: profile.id,
+          storedFileId: stored.value.record.id,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: speakerProfileHeadshots.speakerProfileId,
+          set: { storedFileId: stored.value.record.id, updatedAt: now },
+        }),
+      database
+        .update(speakerProfiles)
+        .set({
+          headshotUrl: `/api/speaker-headshots/${stored.value.record.id}`,
+          updatedAt: now,
+        })
+        .where(eq(speakerProfiles.id, profile.id)),
+    ]);
+  } catch {
+    await compensateStoredFile(
+      files,
+      stored.value.objectKey,
+      "speaker_headshot_compensation_failed",
+    );
+    return { ok: false, error: "persistence_failed" };
+  }
+
+  const saved = await findOwnSpeakerProfile(database, userId);
+  return saved
+    ? { ok: true, value: saved }
+    : { ok: false, error: "persistence_failed" };
+}
+
+export async function findPublicSpeakerHeadshot(
+  database: Database,
+  fileId: string,
+) {
+  const [headshot] = await database
+    .select({
+      objectKey: storedFiles.objectKey,
+      fileName: storedFiles.fileName,
+      contentType: storedFiles.contentType,
+    })
+    .from(storedFiles)
+    .where(
+      and(
+        eq(storedFiles.id, fileId),
+        like(storedFiles.objectKey, "speaker-headshots/%"),
+      ),
+    )
+    .limit(1);
+  return headshot;
 }
 
 async function hasClaimedSpeakerRelationship(

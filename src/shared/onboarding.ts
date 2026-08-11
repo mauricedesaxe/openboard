@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { storedFileUploadSchema } from "./files";
 import type { speakerProfileInputSchema } from "./speaker-profiles";
 
 export type TaskDefinitionId = string & {
@@ -11,9 +12,6 @@ export type TaskAssignmentId = string & {
 export type TaskEvidenceId = string & {
   readonly __brand: "TaskEvidenceId";
 };
-
-export const MAX_TASK_FILE_BYTES = 10_000_000;
-const MAX_TASK_FILE_BASE64_LENGTH = Math.ceil(MAX_TASK_FILE_BYTES / 3) * 4;
 
 export const taskDefinitionIdSchema = z
   .uuid()
@@ -130,11 +128,9 @@ export const rejectEvidenceSchema = z.object({
 export const saveOnboardingFormSchema = assignmentInputSchema.extend({
   answers: z.record(z.string(), z.string()),
 });
-export const taskFileUploadSchema = assignmentInputSchema.extend({
-  fileName: z.string().trim().min(1).max(255),
-  contentType: z.string().trim().min(1).max(255),
-  contentBase64: z.string().min(1).max(MAX_TASK_FILE_BASE64_LENGTH),
-});
+export const taskFileUploadSchema = assignmentInputSchema.extend(
+  storedFileUploadSchema.shape,
+);
 
 export function profileSatisfiesRequirement(
   profile: z.infer<typeof speakerProfileInputSchema>,

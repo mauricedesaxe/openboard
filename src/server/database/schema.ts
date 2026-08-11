@@ -670,6 +670,21 @@ export const storedFiles = sqliteTable("stored_files", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+export const speakerProfileHeadshots = sqliteTable(
+  "speaker_profile_headshots",
+  {
+    speakerProfileId: text("speaker_profile_id")
+      .primaryKey()
+      .references(() => speakerProfiles.id, { onDelete: "cascade" }),
+    storedFileId: text("stored_file_id")
+      .notNull()
+      .unique()
+      .references(() => storedFiles.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+);
+
 export const taskAssignmentAttachments = sqliteTable(
   "task_assignment_attachments",
   {
@@ -973,6 +988,7 @@ export const schema = {
   rooms,
   session,
   speakerProfiles,
+  speakerProfileHeadshots,
   storedFiles,
   submissions,
   submissionSpeakerInvitations,

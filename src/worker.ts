@@ -9,6 +9,7 @@ import {
   getCapturedAuthenticationCode,
 } from "./server/identity/auth";
 import { findAccessibleTaskFile } from "./server/onboarding/repository";
+import { findPublicSpeakerHeadshot } from "./server/speaker-profiles/repository";
 import { appRouter, createTrpcContext } from "./server/trpc";
 import type { UserId } from "./shared/events";
 
@@ -77,6 +78,26 @@ export default {
         "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
         "Content-Type": file.contentType,
         ETag: object.httpEtag,
+      });
+      return new Response(object.body, { headers });
+    }
+
+    const headshotMatch = url.pathname.match(
+      /^\/api\/speaker-headshots\/([^/]+)$/,
+    );
+    if (headshotMatch) {
+      const fileId = headshotMatch[1];
+      if (!fileId) return new Response("Not found", { status: 404 });
+      const file = await findPublicSpeakerHeadshot(database, fileId);
+      if (!file) return new Response("Not found", { status: 404 });
+      const object = await environment.FILES.get(file.objectKey);
+      if (!object) return new Response("Not found", { status: 404 });
+      const headers = new Headers({
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+        "Content-Type": file.contentType,
+        ETag: object.httpEtag,
+        "X-Content-Type-Options": "nosniff",
       });
       return new Response(object.body, { headers });
     }

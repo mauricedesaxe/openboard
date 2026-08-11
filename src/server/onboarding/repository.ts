@@ -11,7 +11,6 @@ import {
 
 import type { UserId } from "../../shared/events";
 import {
-  MAX_TASK_FILE_BYTES,
   onboardingFormFieldSchema,
   profileSatisfiesRequirement,
   type CreateTaskAssignmentInput,
@@ -40,6 +39,7 @@ import {
   user,
 } from "../database/schema";
 import { findEventForOrganizer } from "../events/repository";
+import { compensateStoredFile, putStoredFile } from "../files/repository";
 
 export type OnboardingWriteError =
   | "already_rejected"
@@ -426,39 +426,30 @@ export async function attachTaskFile(
   if (assignment.completionMechanism !== "file") {
     return { ok: false, error: "invalid_mechanism" };
   }
-  let bytes: Uint8Array;
-  try {
-    bytes = Uint8Array.from(atob(input.contentBase64), (character) =>
-      character.charCodeAt(0),
-    );
-  } catch {
-    return { ok: false, error: "invalid_answers" };
+  const current = await findCurrentFileEvidence(database, assignment);
+  const stored = await putStoredFile(
+    files,
+    actorUserId,
+    `task-files/${assignment.eventId}/${assignment.id}`,
+    input,
+  );
+  if (!stored.ok) {
+    return {
+      ok: false,
+      error:
+        stored.error === "invalid_file"
+          ? "invalid_answers"
+          : "persistence_failed",
+    };
   }
-  if (bytes.byteLength > MAX_TASK_FILE_BYTES) {
-    return { ok: false, error: "invalid_answers" };
-  }
-  const fileId = crypto.randomUUID();
+  const fileId = stored.value.record.id;
   const attachmentId = crypto.randomUUID();
   const evidenceId = crypto.randomUUID() as TaskEvidenceId;
-  const objectKey = `task-files/${assignment.eventId}/${assignment.id}/${fileId}`;
-  const current = await findCurrentFileEvidence(database, assignment);
   const now = new Date();
-  let objectStored = false;
   try {
-    await files.put(objectKey, bytes, {
-      httpMetadata: { contentType: input.contentType },
-      customMetadata: { fileName: input.fileName },
-    });
-    objectStored = true;
-    const storedFileInsert = database.insert(storedFiles).values({
-      id: fileId,
-      objectKey,
-      fileName: input.fileName,
-      contentType: input.contentType,
-      sizeBytes: bytes.byteLength,
-      uploadedByUserId: actorUserId,
-      createdAt: now,
-    });
+    const storedFileInsert = database
+      .insert(storedFiles)
+      .values(stored.value.record);
     const attachmentInsert = database.insert(taskAssignmentAttachments).values({
       id: attachmentId,
       assignmentId: assignment.id,
@@ -497,22 +488,11 @@ export async function attachTaskFile(
       ]);
     }
   } catch (error: unknown) {
-    if (objectStored) {
-      try {
-        await files.delete(objectKey);
-      } catch (cleanupError: unknown) {
-        console.error(
-          JSON.stringify({
-            event: "task_file_compensation_failed",
-            objectKey,
-            error:
-              cleanupError instanceof Error
-                ? cleanupError.message
-                : "Unknown R2 failure",
-          }),
-        );
-      }
-    }
+    await compensateStoredFile(
+      files,
+      stored.value.objectKey,
+      "task_file_compensation_failed",
+    );
     return {
       ok: false,
       error: isCurrentEvidenceConflict(error)

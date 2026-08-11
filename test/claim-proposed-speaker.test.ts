@@ -729,14 +729,58 @@ describe("claim a proposed-speaker invitation", () => {
           "speakerProfile.saveOwn",
           {
             displayName: "Profile Recipient",
-            bio: "A reusable biography for every event and submission.",
-            headshotUrl: "https://example.com/profile.jpg",
+            bio: "",
+            headshotUrl: null,
           },
           recipient.cookie,
         )
       ).body,
       profileSchema,
     );
+    expect(created.bio).toBe("");
+    const uploaded = getResult(
+      (
+        await callTrpc(
+          "speakerProfile.uploadHeadshot",
+          {
+            fileName: "profile.png",
+            contentType: "image/png",
+            contentBase64: btoa("profile image"),
+          },
+          recipient.cookie,
+        )
+      ).body,
+      profileSchema,
+    );
+    expect(uploaded.headshotUrl).toMatch(
+      /^\/api\/speaker-headshots\/[0-9a-f-]+$/,
+    );
+    const headshot = await workerFetch(uploaded.headshotUrl ?? "");
+    expect(headshot.status).toBe(200);
+    expect(headshot.headers.get("content-type")).toBe("image/png");
+    expect(new TextDecoder().decode(await headshot.arrayBuffer())).toBe(
+      "profile image",
+    );
+    expect(
+      await testEnvironment.DB.prepare(
+        "SELECT COUNT(*) AS count FROM speaker_profile_headshots WHERE speaker_profile_id = ?",
+      )
+        .bind(created.id)
+        .first<{ count: number }>(),
+    ).toEqual({ count: 1 });
+    expect(
+      (
+        await callTrpc(
+          "speakerProfile.uploadHeadshot",
+          {
+            fileName: "profile.svg",
+            contentType: "image/svg+xml",
+            contentBase64: btoa("<svg />"),
+          },
+          recipient.cookie,
+        )
+      ).status,
+    ).toBe(400);
     const updated = getResult(
       (
         await callTrpc(
@@ -744,7 +788,7 @@ describe("claim a proposed-speaker invitation", () => {
           {
             displayName: "Riley Profile",
             bio: "An updated biography that keeps the same global profile.",
-            headshotUrl: null,
+            headshotUrl: uploaded.headshotUrl,
           },
           recipient.cookie,
         )
@@ -754,7 +798,7 @@ describe("claim a proposed-speaker invitation", () => {
     expect(updated).toMatchObject({
       id: created.id,
       displayName: "Riley Profile",
-      headshotUrl: null,
+      headshotUrl: uploaded.headshotUrl,
     });
     expect(
       await testEnvironment.DB.prepare(
