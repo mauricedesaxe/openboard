@@ -26,7 +26,7 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     concurrency:
       group: preview-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -42,8 +42,22 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - name: Verify this is the current open pull request head
+        id: current-pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pull } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: context.issue.number,
+            });
+            const eventHead = context.payload.pull_request.head.sha;
+            const current = pull.state === "open" && pull.head.sha === eventHead;
+            core.setOutput("current", String(current));
+            if (!current) core.notice("Skipping stale preview event.");
       - name: Create or reuse the per-PR preview D1
         id: preview-d1
+        if: steps.current-pr.outputs.current == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -51,8 +65,9 @@ jobs:
         run: |
           db_id=$(pnpm exec wrangler d1 list --json | jq -r --arg name "$DB_NAME" '.[] | select(.name == $name) | .uuid' | head -n1)
           if [ -z "$db_id" ]; then
-            pnpm exec wrangler d1 create "$DB_NAME" || true
-            db_id=$(pnpm exec wrangler d1 list --json | jq -r --arg name "$DB_NAME" '.[] | select(.name == $name) | .uuid' | head -n1)
+            create_output=$(pnpm exec wrangler d1 create "$DB_NAME" 2>&1)
+            echo "$create_output"
+            db_id=$(echo "$create_output" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -n1 || true)
           fi
           if [ -z "$db_id" ]; then
             echo "Could not create or find the preview D1 $DB_NAME"
@@ -60,35 +75,75 @@ jobs:
           fi
           echo "id=$db_id" >> "$GITHUB_OUTPUT"
       - name: Generate the preview config
+        if: steps.current-pr.outputs.current == 'true'
         env:
           PREVIEW_NUMBER: ${{ github.event.pull_request.number }}
           PREVIEW_D1_ID: ${{ steps.preview-d1.outputs.id }}
         run: node scripts/write-preview-config.mjs
       - name: Generate the auth secret
         id: auth-secret
+        if: steps.current-pr.outputs.current == 'true'
         run: echo "value=$(openssl rand -base64 48)" >> "$GITHUB_OUTPUT"
+      - name: Recheck the pull request before resource updates
+        id: current-pr-resources
+        if: steps.current-pr.outputs.current == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pull } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: context.issue.number,
+            });
+            core.setOutput(
+              "current",
+              String(
+                pull.state === "open" &&
+                  pull.head.sha === context.payload.pull_request.head.sha,
+              ),
+            );
       - name: Apply migrations to the per-PR preview D1
+        if: steps.current-pr-resources.outputs.current == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm exec wrangler d1 migrations apply openboard-pr-${{ github.event.pull_request.number }} --remote --config wrangler.preview.jsonc
       - name: Set the preview auth secret
+        if: steps.current-pr-resources.outputs.current == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           SECRET_VALUE: ${{ steps.auth-secret.outputs.value }}
         run: echo "$SECRET_VALUE" | pnpm exec wrangler secret put BETTER_AUTH_SECRET --config wrangler.preview.jsonc
+      - name: Recheck the pull request before deploy
+        id: current-pr-deploy
+        if: steps.current-pr-resources.outputs.current == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pull } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: context.issue.number,
+            });
+            core.setOutput(
+              "current",
+              String(
+                pull.state === "open" &&
+                pull.head.sha === context.payload.pull_request.head.sha,
+              ),
+            );
       - name: Deploy the preview worker
+        if: steps.current-pr-deploy.outputs.current == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm exec wrangler deploy --config wrangler.preview.jsonc
       - name: Verify the preview serves the app and boots auth
+        if: steps.current-pr-deploy.outputs.current == 'true'
         run: |
           URL=$(cat preview-url.txt)
           for attempt in 1 2 3 4 5; do
-            STATUS=$(curl -sS --max-time 60 -o /tmp/preview-body.html -w "%{http_code}" "$URL")
-            AUTH_STATUS=$(curl -sS --max-time 60 -o /tmp/auth-session.json -w "%{http_code}" "$URL/api/auth/get-session")
+            STATUS=$(curl -sS --max-time 60 -o /tmp/preview-body.html -w "%{http_code}" "$URL") || STATUS=000
+            AUTH_STATUS=$(curl -sS --max-time 60 -o /tmp/auth-session.json -w "%{http_code}" "$URL/api/auth/get-session") || AUTH_STATUS=000
             if [ "$STATUS" = "200" ] && grep -q 'id="root"' /tmp/preview-body.html \
               && [ "$AUTH_STATUS" = "200" ]; then
               echo "Preview OK: $URL"
@@ -101,6 +156,7 @@ jobs:
           cat /tmp/auth-session.json 2>/dev/null
           exit 1
       - name: Post the preview URL on the PR
+        if: steps.current-pr-deploy.outputs.current == 'true'
         uses: actions/github-script@v7
         with:
           script: |
