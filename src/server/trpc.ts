@@ -74,9 +74,10 @@ import {
   publishDecisions,
   queueDecision,
   reopenReviewRound,
-  retryDecisionPublicationFollowups,
+  retryDecisionCommunicationsAndAuditEvents,
   revokeReviewerAssignment,
   saveReview,
+  type ReviewWriteError,
 } from "./reviews/repository";
 import {
   findOwnSubmission,
@@ -637,13 +638,13 @@ export const appRouter = trpc.router({
         return result.value;
       }),
     closeRound: authenticatedProcedure
-      .input(slugInput.extend({ confirmIncomplete: z.boolean() }))
+      .input(slugInput.extend({ allowMissingReviews: z.boolean() }))
       .mutation(async ({ ctx, input }) => {
         const result = await closeReviewRound(
           ctx.database,
           ctx.userId,
           input.slug,
-          input.confirmIncomplete,
+          input.allowMissingReviews,
         );
         if (!result.ok) throwReviewWriteError(result.error);
         return result.value;
@@ -686,10 +687,10 @@ export const appRouter = trpc.router({
         if (!result.ok) throwReviewWriteError(result.error);
         return result.value;
       }),
-    retryFollowups: authenticatedProcedure
+    retryPublicationRecords: authenticatedProcedure
       .input(slugInput)
       .mutation(async ({ ctx, input }) => {
-        const result = await retryDecisionPublicationFollowups(
+        const result = await retryDecisionCommunicationsAndAuditEvents(
           ctx.database,
           ctx.userId,
           input.slug,
@@ -927,30 +928,12 @@ function throwEventNotFound(): never {
   throw new TRPCError({ code: "NOT_FOUND", message: "Event not found." });
 }
 
-function throwReviewWriteError(
-  error:
-    | "duplicate_assignment"
-    | "invalid_assignment"
-    | "not_found"
-    | "persistence_failed"
-    | "published_outcome_exists"
-    | "round_incomplete"
-    | "round_not_closed"
-    | "round_not_open"
-    | "stale_queue"
-    | "submission_closed",
-): never {
+function throwReviewWriteError(error: ReviewWriteError): never {
   if (error === "not_found") throwEventNotFound();
   if (error === "invalid_assignment") {
     throw new TRPCError({
       code: "CONFLICT",
       message: "Assign an active event reviewer to an active proposal.",
-    });
-  }
-  if (error === "duplicate_assignment") {
-    throw new TRPCError({
-      code: "CONFLICT",
-      message: "That reviewer is already assigned to this proposal.",
     });
   }
   if (error === "round_not_open") {
