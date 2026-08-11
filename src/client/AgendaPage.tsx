@@ -290,8 +290,13 @@ export function PublicAgendaPage() {
     ),
   );
   const visible = agenda.data.items.filter((item) => {
-    if (view === "track" && track) return item.trackName === track;
-    if (view === "room" && room) return item.roomName === room;
+    const eventWideService = item.kind === "service" && item.roomName === null;
+    if (view === "track" && track) {
+      return eventWideService || item.trackName === track;
+    }
+    if (view === "room" && room) {
+      return eventWideService || item.roomName === room;
+    }
     if (view === "day" && date) {
       return localDate(item.startsAt, agenda.data.event.timezone) === date;
     }

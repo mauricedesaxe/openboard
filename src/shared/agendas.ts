@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { roomIdSchema } from "./cfps";
 import { eventInputSchema } from "./events";
 
 export type AgendaItemId = string & { readonly __brand: "AgendaItemId" };
@@ -23,7 +24,7 @@ const agendaTimeRangeSchema = z.object({
 export const placeProgramItemSchema = agendaTimeRangeSchema.extend({
   slug: eventInputSchema.shape.slug,
   programItemId: programItemIdSchema,
-  roomId: z.uuid().nullable(),
+  roomId: roomIdSchema.nullable(),
 });
 
 export const placeServiceBlockSchema = agendaTimeRangeSchema.extend({
@@ -31,14 +32,14 @@ export const placeServiceBlockSchema = agendaTimeRangeSchema.extend({
   title: z.string().trim().min(1).max(160),
   scope: z.discriminatedUnion("type", [
     z.object({ type: z.literal("event") }),
-    z.object({ type: z.literal("room"), roomId: z.uuid() }),
+    z.object({ type: z.literal("room"), roomId: roomIdSchema }),
   ]),
 });
 
 export const moveAgendaItemSchema = agendaTimeRangeSchema.extend({
   slug: eventInputSchema.shape.slug,
   agendaItemId: agendaItemIdSchema,
-  roomId: z.uuid().nullable(),
+  roomId: roomIdSchema.nullable(),
 });
 
 export const agendaItemActionSchema = z.object({

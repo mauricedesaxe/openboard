@@ -206,6 +206,7 @@ CREATE TABLE published_agenda_speakers (
   id TEXT PRIMARY KEY NOT NULL,
   published_agenda_item_id TEXT NOT NULL REFERENCES published_agenda_items(id) ON DELETE CASCADE,
   submission_speaker_id TEXT NOT NULL,
+  source_claimed_user_id TEXT,
   display_name TEXT NOT NULL,
   bio TEXT,
   headshot_url TEXT,
@@ -226,6 +227,7 @@ WHEN NOT EXISTS (
   LEFT JOIN speaker_profiles ON speaker_profiles.user_id = submission_speakers.claimed_user_id
   WHERE published_agenda_items.id = NEW.published_agenda_item_id
     AND COALESCE(speaker_profiles.display_name, submission_speakers.invited_name) = NEW.display_name
+    AND COALESCE(submission_speakers.claimed_user_id, '') = COALESCE(NEW.source_claimed_user_id, '')
     AND COALESCE(speaker_profiles.bio, '') = COALESCE(NEW.bio, '')
     AND COALESCE(speaker_profiles.headshot_url, '') = COALESCE(NEW.headshot_url, '')
     AND submission_speakers.position = NEW.position
@@ -251,7 +253,6 @@ CREATE TABLE agenda_delivery_work (
   action TEXT NOT NULL CHECK (action IN ('publish', 'update', 'cancel', 'restore')),
   calendar_uid TEXT NOT NULL,
   calendar_sequence INTEGER NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'delivered')),
   created_at INTEGER NOT NULL,
   UNIQUE (publication_id, agenda_item_id)
 );

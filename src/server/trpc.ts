@@ -11,8 +11,8 @@ import {
 import {
   cfpDefinitionInputSchema,
   eventOptionNameSchema,
+  roomIdSchema,
   type CfpId,
-  type RoomId,
   type TrackId,
 } from "../shared/cfps";
 import {
@@ -165,7 +165,6 @@ const optionNameInput = slugInput.extend({
   name: eventOptionNameSchema,
 });
 const trackIdSchema = z.uuid().transform((value) => value as TrackId);
-const roomIdSchema = z.uuid().transform((value) => value as RoomId);
 const cfpIdSchema = z.uuid().transform((value) => value as CfpId);
 const userIdSchema = z
   .string()
@@ -1277,6 +1276,7 @@ function throwAgendaWriteError(error: AgendaWriteError): never {
       "Restore or replace archived rooms and tracks before publishing.",
     invalid_time:
       "Every agenda item needs a valid time within the event dates.",
+    invalid_agenda_item: "Use an agenda item that belongs to this event.",
     missing_room:
       "Assign every scheduled session and room-wide block to a room.",
     program_item_unavailable:

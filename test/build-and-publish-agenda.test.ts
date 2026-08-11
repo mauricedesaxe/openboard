@@ -274,6 +274,23 @@ describe("build and publish an agenda", () => {
 
     working = await getWorking(owner.cookie, slug);
     await testEnvironment.DB.prepare(
+      `CREATE TRIGGER mutate_speaker_claim_during_publication AFTER INSERT ON agenda_publications BEGIN UPDATE submission_speakers SET claimed_user_id = '${otherSpeaker.userId}' WHERE submission_id = '${program.firstSubmission}'; END`,
+    ).run();
+    expect(
+      (
+        await callTrpc(
+          "agendas.publish",
+          { slug, expectedRevision: working.revision },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(409);
+    await testEnvironment.DB.prepare(
+      "DROP TRIGGER mutate_speaker_claim_during_publication",
+    ).run();
+    expect((await getPublished(slug)).revision).toBe(1);
+
+    await testEnvironment.DB.prepare(
       "CREATE TRIGGER fail_agenda_snapshot BEFORE INSERT ON published_agenda_items BEGIN SELECT RAISE(ABORT, 'forced_failure'); END",
     ).run();
     expect(
@@ -302,7 +319,7 @@ describe("build and publish an agenda", () => {
           owner.cookie,
         )
       ).status,
-    ).toBe(404);
+    ).toBe(200);
     expect((await getWorking(owner.cookie, slug)).revision).toBe(
       canceledRevision,
     );

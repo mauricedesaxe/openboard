@@ -7,10 +7,7 @@ import type {
   PlaceServiceBlockInput,
   PublishAgendaInput,
 } from "../../shared/agendas";
-import {
-  eventLocalDateTimeToIso,
-  unambiguousEventLocalDateTimeToIso,
-} from "../../shared/date-time";
+import { resolveEventLocalDateTime } from "../../shared/date-time";
 import type { UserId } from "../../shared/events";
 import type { Database } from "../database/client";
 import {
@@ -36,6 +33,7 @@ export type AgendaWriteError =
   | "agenda_changed"
   | "agenda_item_not_found"
   | "archived_reference"
+  | "invalid_agenda_item"
   | "invalid_time"
   | "missing_room"
   | "not_found"
@@ -150,7 +148,7 @@ export async function moveAgendaItem(
     item.serviceScope === "event" &&
     input.roomId
   ) {
-    return { ok: false, error: "program_item_unavailable" };
+    return { ok: false, error: "invalid_agenda_item" };
   }
   if (
     item.kind === "service" &&
@@ -206,7 +204,19 @@ export async function setProgramPlacementCanceled(
           : isNotNull(agendaItems.canceledAt),
       ),
     );
-  return result.meta.changes > 0
+  if (result.meta.changes > 0) return { ok: true, value: { canceled } };
+  const [current] = await database
+    .select({ canceledAt: agendaItems.canceledAt })
+    .from(agendaItems)
+    .where(
+      and(
+        eq(agendaItems.id, agendaItemId),
+        eq(agendaItems.agendaId, event.agendaId),
+        eq(agendaItems.kind, "program"),
+      ),
+    )
+    .limit(1);
+  return current && (current.canceledAt !== null) === canceled
     ? { ok: true, value: { canceled } }
     : { ok: false, error: "agenda_item_not_found" };
 }
@@ -244,8 +254,8 @@ export async function publishAgenda(
   if (working.revision !== input.expectedRevision) {
     return { ok: false, error: "agenda_changed" };
   }
-  const validationError = validateForPublication(working.items, event);
-  if (validationError) return { ok: false, error: validationError };
+  const validation = validateForPublication(working.items, event);
+  if (!validation.ok) return { ok: false, error: validation.error };
 
   const [latestPublication] = await database
     .select({ revision: agendaPublications.revision })
@@ -268,7 +278,9 @@ export async function publishAgenda(
   const publicationId = crypto.randomUUID();
   const revision = (latestPublication?.revision ?? 0) + 1;
   const now = new Date();
-  const snapshots = working.items.map((item) => snapshotItem(item, event));
+  const snapshots = working.items.map((item) =>
+    snapshotItem(item, validation.times.get(item.id)),
+  );
   const calendarChanges = snapshots.flatMap((snapshot) => {
     if (snapshot.kind !== "program") return [];
     const previous = previousStates.find(
@@ -335,6 +347,7 @@ export async function publishAgenda(
       id: crypto.randomUUID(),
       publishedAgendaItemId: snapshot.id,
       submissionSpeakerId: speaker.id,
+      sourceClaimedUserId: speaker.claimedUserId,
       displayName: speaker.displayName,
       bio: speaker.bio,
       headshotUrl: speaker.headshotUrl,
@@ -650,11 +663,19 @@ function addConflict(
 function validateForPublication(
   items: WorkingItem[],
   event: { startsOn: string; endsOn: string; timezone: string },
-): AgendaWriteError | undefined {
+):
+  | {
+      ok: true;
+      times: Map<string, { startsAt: string; endsAt: string }>;
+    }
+  | { ok: false; error: AgendaWriteError } {
+  const times = new Map<string, { startsAt: string; endsAt: string }>();
   for (const item of items) {
-    if (item.kind === "program" && !item.roomId) return "missing_room";
+    if (item.kind === "program" && !item.roomId) {
+      return { ok: false, error: "missing_room" };
+    }
     if (item.roomId && (!item.roomName || item.roomArchivedAt)) {
-      return "archived_reference";
+      return { ok: false, error: "archived_reference" };
     }
     if (
       item.kind === "program" &&
@@ -662,62 +683,43 @@ function validateForPublication(
         item.submissionStatus !== "active" ||
         item.decisionStatus !== "accepted")
     ) {
-      return "program_item_unavailable";
+      return { ok: false, error: "program_item_unavailable" };
     }
     if (item.kind === "program" && (!item.trackName || item.trackArchivedAt)) {
-      return "archived_reference";
+      return { ok: false, error: "archived_reference" };
     }
-    const ordinaryStart = eventLocalDateTimeToIso(
-      item.startsAtLocal,
-      event.timezone,
-    );
-    const ordinaryEnd = eventLocalDateTimeToIso(
-      item.endsAtLocal,
-      event.timezone,
-    );
-    const start = unambiguousEventLocalDateTimeToIso(
-      item.startsAtLocal,
-      event.timezone,
-    );
-    const end = unambiguousEventLocalDateTimeToIso(
-      item.endsAtLocal,
-      event.timezone,
-    );
-    if ((ordinaryStart && !start) || (ordinaryEnd && !end)) {
-      return "timezone_ambiguous";
+    const start = resolveEventLocalDateTime(item.startsAtLocal, event.timezone);
+    const end = resolveEventLocalDateTime(item.endsAtLocal, event.timezone);
+    if (start.status === "ambiguous" || end.status === "ambiguous") {
+      return { ok: false, error: "timezone_ambiguous" };
     }
     if (
-      !start ||
-      !end ||
-      start >= end ||
+      start.status === "invalid" ||
+      end.status === "invalid" ||
+      start.iso >= end.iso ||
       item.startsAtLocal.slice(0, 10) < event.startsOn ||
       item.endsAtLocal.slice(0, 10) > event.endsOn
     ) {
-      return "invalid_time";
+      return { ok: false, error: "invalid_time" };
     }
+    times.set(item.id, { startsAt: start.iso, endsAt: end.iso });
   }
   if (items.some((item) => !item.canceled && item.conflicts.includes("room"))) {
-    return "room_conflict";
+    return { ok: false, error: "room_conflict" };
   }
   if (
     items.some((item) => !item.canceled && item.conflicts.includes("speaker"))
   ) {
-    return "speaker_conflict";
+    return { ok: false, error: "speaker_conflict" };
   }
-  return undefined;
+  return { ok: true, times };
 }
 
-function snapshotItem(item: WorkingItem, event: { timezone: string }) {
-  const startsAt = unambiguousEventLocalDateTimeToIso(
-    item.startsAtLocal,
-    event.timezone,
-  );
-  const endsAt = unambiguousEventLocalDateTimeToIso(
-    item.endsAtLocal,
-    event.timezone,
-  );
-  if (!startsAt || !endsAt)
-    throw new Error("Validated agenda time disappeared.");
+function snapshotItem(
+  item: WorkingItem,
+  times: { startsAt: string; endsAt: string } | undefined,
+) {
+  if (!times) throw new Error("Validated agenda time is missing.");
   return {
     id: crypto.randomUUID(),
     agendaItemId: item.id,
@@ -733,8 +735,8 @@ function snapshotItem(item: WorkingItem, event: { timezone: string }) {
     roomId: item.roomId,
     roomName: item.roomName,
     roomPosition: item.roomPosition,
-    startsAt,
-    endsAt,
+    startsAt: times.startsAt,
+    endsAt: times.endsAt,
     canceled: item.canceled,
     speakers: item.kind === "program" ? item.speakers : [],
   };
@@ -744,13 +746,12 @@ function agendaItemPersistenceError(error: unknown): AgendaWriteError {
   const message = String(error);
   if (
     message.includes("UNIQUE constraint failed") ||
-    message.includes("agenda_items.program_item_id") ||
-    message.includes("SQLITE_CONSTRAINT")
+    message.includes("agenda_items.program_item_id")
   ) {
     return "program_item_unavailable";
   }
   if (message.includes("invalid_agenda_item_scope")) {
-    return "program_item_unavailable";
+    return "invalid_agenda_item";
   }
   return "persistence_failed";
 }

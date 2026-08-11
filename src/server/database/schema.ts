@@ -636,6 +636,7 @@ export const publishedAgendaSpeakers = sqliteTable(
       .notNull()
       .references(() => publishedAgendaItems.id, { onDelete: "cascade" }),
     submissionSpeakerId: text("submission_speaker_id").notNull(),
+    sourceClaimedUserId: text("source_claimed_user_id"),
     displayName: text("display_name").notNull(),
     bio: text("bio"),
     headshotUrl: text("headshot_url"),
@@ -678,9 +679,6 @@ export const agendaDeliveryWork = sqliteTable(
     }).notNull(),
     calendarUid: text("calendar_uid").notNull(),
     calendarSequence: integer("calendar_sequence").notNull(),
-    status: text("status", { enum: ["pending", "delivered"] })
-      .notNull()
-      .default("pending"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [
