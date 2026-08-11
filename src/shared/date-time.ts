@@ -26,6 +26,26 @@ export function eventLocalDateTimeToIso(
     : undefined;
 }
 
+export function unambiguousEventLocalDateTimeToIso(
+  value: string,
+  timezone: string,
+): string | undefined {
+  const resolved = eventLocalDateTimeToIso(value, timezone);
+  if (!resolved) return undefined;
+  const resolvedTime = new Date(resolved).getTime();
+  const matchingInstants = new Set<number>();
+  for (let offsetMinutes = -180; offsetMinutes <= 180; offsetMinutes += 1) {
+    const candidate = resolvedTime + offsetMinutes * 60_000;
+    if (
+      isoToEventLocalDateTime(new Date(candidate).toISOString(), timezone) ===
+      value
+    ) {
+      matchingInstants.add(candidate);
+    }
+  }
+  return matchingInstants.size === 1 ? resolved : undefined;
+}
+
 export function isoToEventLocalDateTime(
   value: string,
   timezone: string,

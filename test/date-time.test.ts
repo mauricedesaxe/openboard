@@ -4,6 +4,7 @@ import {
   eventLocalDateTimeToIso,
   instantFallsAfterLocalDate,
   isoToEventLocalDateTime,
+  unambiguousEventLocalDateTimeToIso,
 } from "../src/shared/date-time";
 
 describe("event deadline timezones", () => {
@@ -26,6 +27,15 @@ describe("event deadline timezones", () => {
     expect(
       eventLocalDateTimeToIso("2027-03-28T02:30", "Europe/Berlin"),
     ).toBeUndefined();
+  });
+
+  test("rejects local times repeated by daylight saving changes", () => {
+    expect(
+      unambiguousEventLocalDateTimeToIso("2027-10-31T02:30", "Europe/Berlin"),
+    ).toBeUndefined();
+    expect(
+      unambiguousEventLocalDateTimeToIso("2027-10-31T03:30", "Europe/Berlin"),
+    ).toBe("2027-10-31T02:30:00.000Z");
   });
 
   test("compares an instant with the event end date", () => {

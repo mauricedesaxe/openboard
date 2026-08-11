@@ -113,6 +113,7 @@ export const agendas = sqliteTable("agendas", {
     .references(() => events.id, { onDelete: "cascade" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  revision: integer("revision").notNull().default(0),
 });
 
 export const invitations = sqliteTable(
@@ -541,10 +542,163 @@ export const communications = sqliteTable(
   (table) => [index("communications_submission_id_idx").on(table.submissionId)],
 );
 
+export const agendaItems = sqliteTable(
+  "agenda_items",
+  {
+    id: text("id").primaryKey(),
+    agendaId: text("agenda_id")
+      .notNull()
+      .references(() => agendas.id, { onDelete: "cascade" }),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["program", "service"] }).notNull(),
+    programItemId: text("program_item_id")
+      .unique()
+      .references(() => programItems.id),
+    serviceScope: text("service_scope", { enum: ["event", "room"] }),
+    serviceTitle: text("service_title"),
+    roomId: text("room_id").references(() => rooms.id),
+    startsAtLocal: text("starts_at_local").notNull(),
+    endsAtLocal: text("ends_at_local").notNull(),
+    canceledAt: integer("canceled_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("agenda_items_agenda_id_idx").on(table.agendaId)],
+);
+
+export const agendaPublications = sqliteTable(
+  "agenda_publications",
+  {
+    id: text("id").primaryKey(),
+    agendaId: text("agenda_id")
+      .notNull()
+      .references(() => agendas.id, { onDelete: "cascade" }),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    workingRevision: integer("working_revision").notNull(),
+    eventName: text("event_name").notNull(),
+    timezone: text("timezone").notNull(),
+    startsOn: text("starts_on").notNull(),
+    endsOn: text("ends_on").notNull(),
+    publishedByUserId: text("published_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("agenda_publications_agenda_revision_idx").on(
+      table.agendaId,
+      table.revision,
+    ),
+  ],
+);
+
+export const publishedAgendaItems = sqliteTable(
+  "published_agenda_items",
+  {
+    id: text("id").primaryKey(),
+    publicationId: text("publication_id")
+      .notNull()
+      .references(() => agendaPublications.id, { onDelete: "cascade" }),
+    agendaItemId: text("agenda_item_id").notNull(),
+    kind: text("kind", { enum: ["program", "service"] }).notNull(),
+    programItemId: text("program_item_id"),
+    title: text("title").notNull(),
+    abstract: text("abstract"),
+    format: text("format"),
+    trackId: text("track_id"),
+    trackName: text("track_name"),
+    trackPosition: integer("track_position"),
+    roomId: text("room_id"),
+    roomName: text("room_name"),
+    roomPosition: integer("room_position"),
+    startsAt: text("starts_at").notNull(),
+    endsAt: text("ends_at").notNull(),
+    canceled: integer("canceled", { mode: "boolean" }).notNull().default(false),
+  },
+  (table) => [
+    uniqueIndex("published_agenda_items_publication_item_idx").on(
+      table.publicationId,
+      table.agendaItemId,
+    ),
+  ],
+);
+
+export const publishedAgendaSpeakers = sqliteTable(
+  "published_agenda_speakers",
+  {
+    id: text("id").primaryKey(),
+    publishedAgendaItemId: text("published_agenda_item_id")
+      .notNull()
+      .references(() => publishedAgendaItems.id, { onDelete: "cascade" }),
+    submissionSpeakerId: text("submission_speaker_id").notNull(),
+    displayName: text("display_name").notNull(),
+    bio: text("bio"),
+    headshotUrl: text("headshot_url"),
+    position: integer("position").notNull(),
+  },
+  (table) => [
+    uniqueIndex("published_agenda_speakers_item_speaker_idx").on(
+      table.publishedAgendaItemId,
+      table.submissionSpeakerId,
+    ),
+  ],
+);
+
+export const calendarSyncStates = sqliteTable("calendar_sync_states", {
+  agendaItemId: text("agenda_item_id")
+    .primaryKey()
+    .references(() => agendaItems.id, { onDelete: "cascade" }),
+  uid: text("uid").notNull().unique(),
+  sequence: integer("sequence").notNull(),
+  canceled: integer("canceled", { mode: "boolean" }).notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  publicationId: text("publication_id")
+    .notNull()
+    .references(() => agendaPublications.id),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const agendaDeliveryWork = sqliteTable(
+  "agenda_delivery_work",
+  {
+    id: text("id").primaryKey(),
+    publicationId: text("publication_id")
+      .notNull()
+      .references(() => agendaPublications.id, { onDelete: "cascade" }),
+    agendaItemId: text("agenda_item_id")
+      .notNull()
+      .references(() => agendaItems.id),
+    action: text("action", {
+      enum: ["publish", "update", "cancel", "restore"],
+    }).notNull(),
+    calendarUid: text("calendar_uid").notNull(),
+    calendarSequence: integer("calendar_sequence").notNull(),
+    status: text("status", { enum: ["pending", "delivered"] })
+      .notNull()
+      .default("pending"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("agenda_delivery_work_publication_item_idx").on(
+      table.publicationId,
+      table.agendaItemId,
+    ),
+  ],
+);
+
 export const schema = {
   account,
   agendas,
+  agendaDeliveryWork,
+  agendaItems,
+  agendaPublications,
   communications,
+  calendarSyncStates,
   decisionPublicationItems,
   decisionPublications,
   decisions,
@@ -554,6 +708,8 @@ export const schema = {
   formResponses,
   invitations,
   programItems,
+  publishedAgendaItems,
+  publishedAgendaSpeakers,
   rateLimit,
   reviewAuditEvents,
   reviewerAssignments,
