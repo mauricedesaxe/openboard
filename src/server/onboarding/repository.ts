@@ -126,7 +126,7 @@ export async function createTaskAssignment(
             ? input.target.submissionSpeakerId
             : null,
         required: input.required,
-        dueAt: input.dueAt,
+        dueAt: input.dueAt ? new Date(input.dueAt).toISOString() : null,
         completionRevision: 1,
         assignedByUserId: actorUserId,
         createdAt: now,
@@ -443,11 +443,13 @@ export async function attachTaskFile(
   const objectKey = `task-files/${assignment.eventId}/${assignment.id}/${fileId}`;
   const current = await findCurrentFileEvidence(database, assignment);
   const now = new Date();
+  let objectStored = false;
   try {
     await files.put(objectKey, bytes, {
       httpMetadata: { contentType: input.contentType },
       customMetadata: { fileName: input.fileName },
     });
+    objectStored = true;
     const storedFileInsert = database.insert(storedFiles).values({
       id: fileId,
       objectKey,
@@ -472,6 +474,7 @@ export async function attachTaskFile(
       kind: "file" as const,
       actorUserId,
       attachmentId,
+      replacementForEvidenceId: current?.evidenceId,
       createdAt: now,
     });
     if (current) {
@@ -493,8 +496,29 @@ export async function attachTaskFile(
         evidenceInsert,
       ]);
     }
-  } catch {
-    return { ok: false, error: "persistence_failed" };
+  } catch (error: unknown) {
+    if (objectStored) {
+      try {
+        await files.delete(objectKey);
+      } catch (cleanupError: unknown) {
+        console.error(
+          JSON.stringify({
+            event: "task_file_compensation_failed",
+            objectKey,
+            error:
+              cleanupError instanceof Error
+                ? cleanupError.message
+                : "Unknown R2 failure",
+          }),
+        );
+      }
+    }
+    return {
+      ok: false,
+      error: isCurrentEvidenceConflict(error)
+        ? "current_evidence_exists"
+        : "persistence_failed",
+    };
   }
   return { ok: true, value: { evidenceId, fileId } };
 }
@@ -642,6 +666,40 @@ export async function recordTaskReminder(
   return { ok: true, value: { reminderId } };
 }
 
+export async function findAccessibleTaskFile(
+  database: Database,
+  actorUserId: UserId,
+  fileId: string,
+) {
+  const [file] = await database
+    .select({
+      assignmentId: taskAssignments.id,
+      eventId: taskAssignments.eventId,
+      objectKey: storedFiles.objectKey,
+      fileName: storedFiles.fileName,
+      contentType: storedFiles.contentType,
+    })
+    .from(storedFiles)
+    .innerJoin(
+      taskAssignmentAttachments,
+      eq(taskAssignmentAttachments.storedFileId, storedFiles.id),
+    )
+    .innerJoin(
+      taskAssignments,
+      eq(taskAssignments.id, taskAssignmentAttachments.assignmentId),
+    )
+    .where(eq(storedFiles.id, fileId))
+    .limit(1);
+  if (!file) return undefined;
+  if (await findOrganizerEventById(database, actorUserId, file.eventId)) {
+    return file;
+  }
+  const assignments = await listAccessibleAssignments(database, actorUserId);
+  return assignments.some((assignment) => assignment.id === file.assignmentId)
+    ? file
+    : undefined;
+}
+
 async function addOrganizerEvidence(
   database: Database,
   actorUserId: UserId,
@@ -666,6 +724,9 @@ async function insertEvidence(
   kind: "manual" | "waiver" | "organizer_override",
   source: { reason?: string },
 ): Promise<WriteResult<{ evidenceId: TaskEvidenceId }>> {
+  if (await assignmentIsComplete(database, assignment)) {
+    return { ok: false, error: "current_evidence_exists" };
+  }
   const evidenceId = crypto.randomUUID() as TaskEvidenceId;
   try {
     await database.insert(taskEvidence).values({
@@ -677,8 +738,13 @@ async function insertEvidence(
       reason: source.reason,
       createdAt: new Date(),
     });
-  } catch {
-    return { ok: false, error: "persistence_failed" };
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      error: isCurrentEvidenceConflict(error)
+        ? "current_evidence_exists"
+        : "persistence_failed",
+    };
   }
   return { ok: true, value: { evidenceId } };
 }
@@ -888,6 +954,7 @@ async function listAssignmentEvidence(
       createdAt: taskEvidence.createdAt,
       rejectedReason: taskEvidenceRejections.reason,
       supersededBy: taskEvidenceSupersessions.replacementEvidenceId,
+      fileId: storedFiles.id,
       fileName: storedFiles.fileName,
     })
     .from(taskEvidence)
@@ -1168,7 +1235,7 @@ function earliestDueAt(
   return (
     assignments
       .flatMap((assignment) => (assignment.dueAt ? [assignment.dueAt] : []))
-      .sort()[0] ?? null
+      .sort((left, right) => Date.parse(left) - Date.parse(right))[0] ?? null
   );
 }
 
@@ -1188,4 +1255,16 @@ function parseOnboardingFormFields(formSchemaJson: string | null) {
   return formSchemaJson
     ? onboardingFormFieldSchema.array().parse(JSON.parse(formSchemaJson))
     : null;
+}
+
+function isCurrentEvidenceConflict(error: unknown): boolean {
+  const message = String(error);
+  return (
+    message.includes("current_completion_evidence_exists") ||
+    message.includes("current_file_evidence_exists") ||
+    message.includes("stale_file_replacement") ||
+    message.includes("task_evidence_one_replacement_idx") ||
+    message.includes("task_evidence.replacement_for_evidence_id") ||
+    message.toLowerCase().includes("constraint")
+  );
 }

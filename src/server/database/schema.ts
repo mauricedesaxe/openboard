@@ -720,6 +720,7 @@ export const taskEvidence = sqliteTable(
     attachmentId: text("attachment_id").references(
       () => taskAssignmentAttachments.id,
     ),
+    replacementForEvidenceId: text("replacement_for_evidence_id"),
     reason: text("reason"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
@@ -728,6 +729,13 @@ export const taskEvidence = sqliteTable(
       table.assignmentId,
       table.completionRevision,
     ),
+    uniqueIndex("task_evidence_one_replacement_idx")
+      .on(table.replacementForEvidenceId)
+      .where(sql`${table.replacementForEvidenceId} IS NOT NULL`),
+    foreignKey({
+      columns: [table.replacementForEvidenceId],
+      foreignColumns: [table.id],
+    }),
   ],
 );
 

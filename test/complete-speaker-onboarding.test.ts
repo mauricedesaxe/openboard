@@ -25,6 +25,7 @@ const mineSchema = z.array(
         kind: z.string(),
         rejectedReason: z.string().nullable(),
         supersededBy: z.string().nullable(),
+        fileId: z.string().nullable(),
         fileName: z.string().nullable(),
       }),
     ),
@@ -186,6 +187,15 @@ describe("complete speaker onboarding tasks", () => {
       { assignmentId: preClaimAssignment.id },
       leo.cookie,
     );
+    expect(
+      (
+        await callTrpc(
+          "onboarding.confirmManual",
+          { assignmentId: preClaimAssignment.id },
+          leo.cookie,
+        )
+      ).status,
+    ).toBe(409);
 
     const profileDefinition = await createDefinition(owner.cookie, {
       slug,
@@ -194,6 +204,22 @@ describe("complete speaker onboarding tasks", () => {
       completionMechanism: "profile",
       profileRequirement: "complete",
     });
+    expect(
+      (
+        await callTrpc(
+          "onboarding.createDefinition",
+          {
+            slug,
+            name: "Invalid shared profile",
+            scope: "program_item",
+            completionMechanism: "profile",
+            profileRequirement: "complete",
+            formFields: null,
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(400);
     const slidesDefinition = await createDefinition(owner.cookie, {
       slug,
       name: "Upload shared slides",
@@ -267,14 +293,14 @@ describe("complete speaker onboarding tasks", () => {
           ) ?? "",
       },
       required: true,
-      dueAt: null,
+      dueAt: "2027-06-20T10:00:00+02:00",
     });
     const overrideAssignment = await createAssignment(owner.cookie, {
       slug,
       taskDefinitionId: overrideDefinition.id,
       target: { scope: "program_item", programItemId: evaluating.id },
       required: true,
-      dueAt: null,
+      dueAt: "2027-06-20T08:30:00Z",
     });
     expect(
       (
@@ -292,6 +318,10 @@ describe("complete speaker onboarding tasks", () => {
       ).status,
     ).toBe(404);
 
+    const beforeExceptions = await getBoard(owner.cookie, slug);
+    expect(readiness(beforeExceptions, evaluating.id).nextDueAt).toBe(
+      "2027-06-20T08:00:00.000Z",
+    );
     await callTrpc(
       "onboarding.waive",
       { assignmentId: waiverAssignment.id, reason: "No rehearsal is needed." },
@@ -349,7 +379,7 @@ describe("complete speaker onboarding tasks", () => {
     expect(readiness(board, evaluating.id)).toMatchObject({ ready: true });
     expect(readiness(board, practical.id)).toMatchObject({
       ready: false,
-      nextDueAt: "2027-06-20T10:00:00Z",
+      nextDueAt: "2027-06-20T10:00:00.000Z",
     });
     expect(
       readiness(board, practical.id).blockers.map(
@@ -479,12 +509,35 @@ describe("complete speaker onboarding tasks", () => {
       "slides-v2.pdf",
       "second slides",
     );
-    await uploadFile(
-      leo.cookie,
-      slidesAssignment.id,
-      "slides-v3.pdf",
-      "final slides",
-    );
+    const concurrentReplacements = await Promise.all([
+      callTrpc(
+        "onboarding.uploadFile",
+        {
+          assignmentId: slidesAssignment.id,
+          fileName: "slides-v3.pdf",
+          contentType: "application/pdf",
+          contentBase64: btoa("final slides three"),
+        },
+        leo.cookie,
+      ),
+      callTrpc(
+        "onboarding.uploadFile",
+        {
+          assignmentId: slidesAssignment.id,
+          fileName: "slides-v4.pdf",
+          contentType: "application/pdf",
+          contentBase64: btoa("final slides four"),
+        },
+        maya.cookie,
+      ),
+    ]);
+    const successfulReplacements = concurrentReplacements.filter(
+      ({ status }) => status === 200,
+    ).length;
+    expect(successfulReplacements).toBeGreaterThanOrEqual(1);
+    expect(
+      concurrentReplacements.every(({ status }) => [200, 409].includes(status)),
+    ).toBe(true);
     board = await getBoard(owner.cookie, slug);
     expect(readiness(board, practical.id).ready).toBe(true);
     const mayaTasks = getResult(
@@ -495,11 +548,15 @@ describe("complete speaker onboarding tasks", () => {
       (assignment) => assignment.id === slidesAssignment.id,
     );
     expect(slides).toMatchObject({ completed: true, completionRevision: 2 });
-    expect(slides?.evidence.map((evidence) => evidence.fileName)).toEqual([
-      "slides-v3.pdf",
-      "slides-v2.pdf",
-      "slides-v1.pdf",
-    ]);
+    const fileNames =
+      slides?.evidence.map((evidence) => evidence.fileName) ?? [];
+    expect(fileNames).toContain("slides-v1.pdf");
+    expect(fileNames).toContain("slides-v2.pdf");
+    expect(
+      fileNames.filter(
+        (name) => name === "slides-v3.pdf" || name === "slides-v4.pdf",
+      ).length,
+    ).toBe(successfulReplacements);
     expect(
       slides?.evidence.find((evidence) => evidence.fileName === "slides-v2.pdf")
         ?.supersededBy,
@@ -510,7 +567,47 @@ describe("complete speaker onboarding tasks", () => {
       )
         .bind(slidesAssignment.id)
         .first<{ count: number }>(),
-    ).toEqual({ count: 3 });
+    ).toEqual({ count: 2 + successfulReplacements });
+    expect(
+      await testEnvironment.DB.prepare(
+        `SELECT COUNT(*) AS count
+         FROM task_evidence
+         LEFT JOIN task_evidence_supersessions
+           ON task_evidence_supersessions.previous_evidence_id = task_evidence.id
+         WHERE task_evidence.assignment_id = ?
+           AND task_evidence.completion_revision = 2
+           AND task_evidence.kind = 'file'
+           AND task_evidence_supersessions.previous_evidence_id IS NULL`,
+      )
+        .bind(slidesAssignment.id)
+        .first<{ count: number }>(),
+    ).toEqual({ count: 1 });
+    const currentFile = slides?.evidence.find(
+      (evidence) =>
+        evidence.fileId && !evidence.supersededBy && !evidence.rejectedReason,
+    );
+    if (!currentFile?.fileId || !currentFile.fileName) {
+      throw new Error("Expected current task file");
+    }
+    const expectedContent =
+      currentFile.fileName === "slides-v3.pdf"
+        ? "final slides three"
+        : "final slides four";
+    const speakerDownload = await workerFetch(
+      `/api/task-files/${currentFile.fileId}`,
+      { headers: { Cookie: maya.cookie } },
+    );
+    expect(speakerDownload.status).toBe(200);
+    expect(new TextDecoder().decode(await speakerDownload.arrayBuffer())).toBe(
+      expectedContent,
+    );
+    expect(
+      (
+        await workerFetch(`/api/task-files/${currentFile.fileId}`, {
+          headers: { Cookie: unrelated.cookie },
+        })
+      ).status,
+    ).toBe(404);
     const fileRows = await testEnvironment.DB.prepare(
       "SELECT object_key AS objectKey FROM stored_files WHERE id IN (SELECT stored_file_id FROM task_assignment_attachments WHERE assignment_id = ?)",
     )
@@ -519,6 +616,9 @@ describe("complete speaker onboarding tasks", () => {
     for (const file of fileRows.results) {
       expect(await testEnvironment.FILES.get(file.objectKey)).not.toBeNull();
     }
+    expect(
+      (await testEnvironment.FILES.list({ prefix: `task-files/` })).objects,
+    ).toHaveLength(2 + successfulReplacements);
     expect(firstFile.evidenceId).toEqual(expect.any(String));
   });
 });

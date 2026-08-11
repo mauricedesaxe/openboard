@@ -62,6 +62,15 @@ export const createTaskDefinitionSchema = z
       .default(null),
   })
   .superRefine((input, context) => {
+    if (
+      input.completionMechanism === "profile" &&
+      input.scope !== "event_speaker"
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Profile tasks must use event-speaker scope.",
+      });
+    }
     if (input.completionMechanism === "profile" && !input.profileRequirement) {
       context.addIssue({
         code: "custom",
