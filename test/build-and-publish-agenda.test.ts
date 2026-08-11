@@ -371,6 +371,303 @@ describe("build and publish an agenda", () => {
       "restore",
     ]);
   });
+
+  test("publishes an agenda above D1 statement binding limits", async () => {
+    const slug = "large-agenda-2028";
+    const owner = await signIn("large-agenda-owner@example.com");
+    const fixture = await seedAgendaFixture(slug, owner, 20, 3);
+
+    for (const [index, programItemId] of fixture.programItemIds.entries()) {
+      await expectOk(
+        "agendas.placeProgram",
+        {
+          slug,
+          programItemId,
+          roomId: fixture.roomId,
+          startsAtLocal: `2028-08-10T${String(index).padStart(2, "0")}:00`,
+          endsAtLocal: `2028-08-10T${String(index + 1).padStart(2, "0")}:00`,
+        },
+        owner.cookie,
+      );
+    }
+
+    const working = await getWorking(owner.cookie, slug);
+    expect(
+      (
+        await callTrpc(
+          "agendas.publish",
+          { slug, expectedRevision: working.revision },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(200);
+    const published = await getPublished(slug);
+    expect(published.items).toHaveLength(20);
+    expect(published.items.every((item) => item.speakers.length === 3)).toBe(
+      true,
+    );
+  });
+
+  test("exposes only finalized revisions and closes them to later rows", async () => {
+    const slug = "finalized-agenda-2028";
+    const owner = await signIn("finalized-agenda-owner@example.com");
+    await expectOk(
+      "events.create",
+      {
+        name: "Finalized Agenda",
+        slug,
+        startsOn: "2028-08-10",
+        endsOn: "2028-08-10",
+        timezone: "Europe/Berlin",
+      },
+      owner.cookie,
+    );
+    await expectOk(
+      "agendas.placeService",
+      {
+        slug,
+        title: "Doors open",
+        scope: { type: "event" },
+        startsAtLocal: "2028-08-10T08:00",
+        endsAtLocal: "2028-08-10T09:00",
+      },
+      owner.cookie,
+    );
+    let working = await getWorking(owner.cookie, slug);
+    await expectOk(
+      "agendas.publish",
+      { slug, expectedRevision: working.revision },
+      owner.cookie,
+    );
+    const laterItem = getResult(
+      (
+        await callTrpc(
+          "agendas.placeService",
+          {
+            slug,
+            title: "Reception",
+            scope: { type: "event" },
+            startsAtLocal: "2028-08-10T17:00",
+            endsAtLocal: "2028-08-10T18:00",
+          },
+          owner.cookie,
+        )
+      ).body,
+      idSchema,
+    );
+    working = await getWorking(owner.cookie, slug);
+    await testEnvironment.DB.prepare(
+      "INSERT INTO agenda_publications (id, agenda_id, event_id, revision, working_revision, event_name, timezone, starts_on, ends_on, published_by_user_id, created_at) SELECT ?, agendas.id, events.id, 2, agendas.revision, events.name, events.timezone, events.starts_on, events.ends_on, ?, ? FROM agendas INNER JOIN events ON events.id = agendas.event_id WHERE events.slug = ?",
+    )
+      .bind(crypto.randomUUID(), owner.userId, Date.now(), slug)
+      .run();
+    expect((await getPublished(slug)).revision).toBe(1);
+
+    const firstPublication = await testEnvironment.DB.prepare(
+      "SELECT agenda_publications.id FROM agenda_publications INNER JOIN events ON events.id = agenda_publications.event_id WHERE events.slug = ? AND agenda_publications.revision = 1",
+    )
+      .bind(slug)
+      .first<{ id: string }>();
+    expect(firstPublication).toBeTruthy();
+    await expect(
+      testEnvironment.DB.prepare(
+        "INSERT INTO published_agenda_items (id, publication_id, agenda_item_id, kind, title, starts_at, ends_at, canceled) VALUES (?, ?, ?, 'service', 'Reception', '2028-08-10T15:00:00.000Z', '2028-08-10T16:00:00.000Z', 0)",
+      )
+        .bind(crypto.randomUUID(), firstPublication?.id, laterItem.id)
+        .run(),
+    ).rejects.toThrow("immutable_agenda_publication");
+  });
+
+  test("publishes cancellations after references become unavailable", async () => {
+    const slug = "agenda-cancellation-2028";
+    const owner = await signIn("agenda-cancellation-owner@example.com");
+    const fixture = await seedAgendaFixture(slug, owner, 2, 1);
+    const firstPlacement = getResult(
+      (
+        await callTrpc(
+          "agendas.placeProgram",
+          {
+            slug,
+            programItemId: fixture.programItemIds[0],
+            roomId: fixture.roomId,
+            startsAtLocal: "2028-08-10T09:00",
+            endsAtLocal: "2028-08-10T10:00",
+          },
+          owner.cookie,
+        )
+      ).body,
+      idSchema,
+    );
+    let working = await getWorking(owner.cookie, slug);
+    await expectOk(
+      "agendas.publish",
+      { slug, expectedRevision: working.revision },
+      owner.cookie,
+    );
+
+    const neverPublishedPlacement = getResult(
+      (
+        await callTrpc(
+          "agendas.placeProgram",
+          {
+            slug,
+            programItemId: fixture.programItemIds[1],
+            roomId: fixture.roomId,
+            startsAtLocal: "2028-08-10T10:00",
+            endsAtLocal: "2028-08-10T11:00",
+          },
+          owner.cookie,
+        )
+      ).body,
+      idSchema,
+    );
+    await expectOk(
+      "agendas.cancel",
+      { slug, agendaItemId: neverPublishedPlacement.id },
+      owner.cookie,
+    );
+    await expectOk(
+      "rooms.archive",
+      { slug, roomId: fixture.roomId },
+      owner.cookie,
+    );
+    await expectOk(
+      "agendas.cancel",
+      { slug, agendaItemId: firstPlacement.id },
+      owner.cookie,
+    );
+    working = await getWorking(owner.cookie, slug);
+    await expectOk(
+      "agendas.publish",
+      { slug, expectedRevision: working.revision },
+      owner.cookie,
+    );
+    expect((await getPublished(slug)).items).toEqual([]);
+
+    const neverPublishedWork = await testEnvironment.DB.prepare(
+      "SELECT action FROM agenda_delivery_work WHERE agenda_item_id = ?",
+    )
+      .bind(neverPublishedPlacement.id)
+      .all<{ action: string }>();
+    expect(neverPublishedWork.results).toEqual([]);
+    expect(
+      await testEnvironment.DB.prepare(
+        "SELECT sequence FROM calendar_sync_states WHERE agenda_item_id = ?",
+      )
+        .bind(neverPublishedPlacement.id)
+        .first(),
+    ).toBeNull();
+
+    const replacementRoom = getResult(
+      (
+        await callTrpc(
+          "rooms.create",
+          { slug, name: "Replacement room" },
+          owner.cookie,
+        )
+      ).body,
+      idSchema,
+    );
+    await expectOk(
+      "agendas.move",
+      {
+        slug,
+        agendaItemId: neverPublishedPlacement.id,
+        roomId: replacementRoom.id,
+        startsAtLocal: "2028-08-10T10:00",
+        endsAtLocal: "2028-08-10T11:00",
+      },
+      owner.cookie,
+    );
+    await expectOk(
+      "agendas.restore",
+      { slug, agendaItemId: neverPublishedPlacement.id },
+      owner.cookie,
+    );
+    working = await getWorking(owner.cookie, slug);
+    await expectOk(
+      "agendas.publish",
+      { slug, expectedRevision: working.revision },
+      owner.cookie,
+    );
+    const initialDelivery = await testEnvironment.DB.prepare(
+      "SELECT action, calendar_sequence AS sequence FROM agenda_delivery_work WHERE agenda_item_id = ?",
+    )
+      .bind(neverPublishedPlacement.id)
+      .first<{ action: string; sequence: number }>();
+    expect(initialDelivery).toEqual({ action: "publish", sequence: 0 });
+  });
+
+  test("rejects every invalid active placement from authoritative state", async () => {
+    const slug = "agenda-validation-2028";
+    const owner = await signIn("agenda-validation-owner@example.com");
+    const fixture = await seedAgendaFixture(slug, owner, 1, 1, "2028-10-29");
+    const placement = getResult(
+      (
+        await callTrpc(
+          "agendas.placeProgram",
+          {
+            slug,
+            programItemId: fixture.programItemIds[0],
+            roomId: null,
+            startsAtLocal: "2028-10-29T09:00",
+            endsAtLocal: "2028-10-29T10:00",
+          },
+          owner.cookie,
+        )
+      ).body,
+      idSchema,
+    );
+    await expectPublicationFailure(slug, owner.cookie);
+
+    await expectOk(
+      "agendas.move",
+      {
+        slug,
+        agendaItemId: placement.id,
+        roomId: fixture.roomId,
+        startsAtLocal: "2028-10-29T02:30",
+        endsAtLocal: "2028-10-29T03:30",
+      },
+      owner.cookie,
+    );
+    await expectPublicationFailure(slug, owner.cookie);
+
+    await expectOk(
+      "agendas.move",
+      {
+        slug,
+        agendaItemId: placement.id,
+        roomId: fixture.roomId,
+        startsAtLocal: "2028-10-29T10:00",
+        endsAtLocal: "2028-10-29T09:00",
+      },
+      owner.cookie,
+    );
+    await expectPublicationFailure(slug, owner.cookie, 400);
+
+    await expectOk(
+      "agendas.move",
+      {
+        slug,
+        agendaItemId: placement.id,
+        roomId: fixture.roomId,
+        startsAtLocal: "2028-10-29T09:00",
+        endsAtLocal: "2028-10-29T10:00",
+      },
+      owner.cookie,
+    );
+    await expectOk(
+      "rooms.archive",
+      { slug, roomId: fixture.roomId },
+      owner.cookie,
+    );
+    await expectPublicationFailure(slug, owner.cookie);
+    expect(
+      (await callTrpc("agendas.published", { slug }, undefined, "query"))
+        .status,
+    ).toBe(404);
+  });
 });
 
 async function getWorking(cookie: string, slug: string) {
@@ -389,6 +686,23 @@ async function getPublished(slug: string) {
 
 async function expectOk(procedure: string, input: unknown, cookie: string) {
   expect((await callTrpc(procedure, input, cookie)).status).toBe(200);
+}
+
+async function expectPublicationFailure(
+  slug: string,
+  cookie: string,
+  expectedStatus = 409,
+) {
+  const working = await getWorking(cookie, slug);
+  expect(
+    (
+      await callTrpc(
+        "agendas.publish",
+        { slug, expectedRevision: working.revision },
+        cookie,
+      )
+    ).status,
+  ).toBe(expectedStatus);
 }
 
 async function seedAcceptedProgram(
@@ -479,4 +793,103 @@ async function seedAcceptedProgram(
     third: seeded[2]?.programItemId ?? "",
     firstSubmission: seeded[0]?.submissionId ?? "",
   };
+}
+
+async function seedAgendaFixture(
+  slug: string,
+  owner: { cookie: string; userId: string },
+  itemCount: number,
+  speakersPerItem: number,
+  eventDate = "2028-08-10",
+) {
+  await expectOk(
+    "events.create",
+    {
+      name: slug,
+      slug,
+      startsOn: eventDate,
+      endsOn: eventDate,
+      timezone: "Europe/Berlin",
+    },
+    owner.cookie,
+  );
+  const track = getResult(
+    (await callTrpc("tracks.create", { slug, name: "Track" }, owner.cookie))
+      .body,
+    idSchema,
+  );
+  const room = getResult(
+    (await callTrpc("rooms.create", { slug, name: "Room" }, owner.cookie)).body,
+    idSchema,
+  );
+  const event = await testEnvironment.DB.prepare(
+    "SELECT id FROM events WHERE slug = ?",
+  )
+    .bind(slug)
+    .first<{ id: string }>();
+  if (!event) throw new Error("Event fixture missing.");
+  const now = Date.now();
+  const cfpId = crypto.randomUUID();
+  await testEnvironment.DB.batch([
+    testEnvironment.DB.prepare(
+      "INSERT INTO cfps (id, event_id, name, deadline, status, formats_json, custom_fields_json, structure_locked_at, created_at, updated_at) VALUES (?, ?, 'Agenda CFP', ?, 'open', '[\"Talk\"]', '[]', ?, ?, ?)",
+    ).bind(cfpId, event.id, "2028-01-01T00:00:00.000Z", now, now, now),
+    testEnvironment.DB.prepare(
+      "INSERT INTO review_rounds (id, event_id, cfp_id, name, status, closed_at, created_at, updated_at) VALUES (?, ?, ?, 'Agenda review', 'closed', ?, ?, ?)",
+    ).bind(crypto.randomUUID(), event.id, cfpId, now, now, now),
+  ]);
+  const programItemIds: string[] = [];
+  for (let itemIndex = 0; itemIndex < itemCount; itemIndex += 1) {
+    const submissionId = crypto.randomUUID();
+    const programItemId = crypto.randomUUID();
+    await testEnvironment.DB.batch([
+      testEnvironment.DB.prepare(
+        "INSERT INTO submissions (id, event_id, cfp_id, cfp_revision, owner_user_id, client_draft_id, track_id, title, abstract, format, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Talk', 'active', ?, ?)",
+      ).bind(
+        submissionId,
+        event.id,
+        cfpId,
+        now,
+        owner.userId,
+        crypto.randomUUID(),
+        track.id,
+        `Session ${itemIndex + 1}`,
+        `Session ${itemIndex + 1} abstract`,
+        now,
+        now,
+      ),
+      testEnvironment.DB.prepare(
+        "INSERT INTO decisions (id, submission_id, status, revision, created_at, updated_at) VALUES (?, ?, 'pending', 0, ?, ?)",
+      ).bind(crypto.randomUUID(), submissionId, now, now),
+    ]);
+    for (
+      let speakerIndex = 0;
+      speakerIndex < speakersPerItem;
+      speakerIndex += 1
+    ) {
+      await testEnvironment.DB.prepare(
+        "INSERT INTO submission_speakers (id, submission_id, invited_name, invited_email, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+        .bind(
+          crypto.randomUUID(),
+          submissionId,
+          `Speaker ${itemIndex + 1}-${speakerIndex + 1}`,
+          `speaker-${itemIndex + 1}-${speakerIndex + 1}@example.com`,
+          speakerIndex,
+          now,
+          now,
+        )
+        .run();
+    }
+    await testEnvironment.DB.batch([
+      testEnvironment.DB.prepare(
+        "UPDATE decisions SET status = 'accepted', revision = 1, updated_at = ? WHERE submission_id = ?",
+      ).bind(now, submissionId),
+      testEnvironment.DB.prepare(
+        "INSERT INTO program_items (id, event_id, submission_id, created_at) VALUES (?, ?, ?, ?)",
+      ).bind(programItemId, event.id, submissionId, now),
+    ]);
+    programItemIds.push(programItemId);
+  }
+  return { programItemIds, roomId: room.id, trackId: track.id };
 }

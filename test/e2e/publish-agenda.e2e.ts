@@ -20,7 +20,7 @@ test("publishes a working placement to every public agenda view", async ({
     name: "Browser Agenda Conference",
     slug,
     startsOn: "2028-08-10",
-    endsOn: "2028-08-12",
+    endsOn: "2028-08-18",
     timezone: "Europe/Berlin",
   });
   expect(event.id).toBeTruthy();
@@ -28,9 +28,17 @@ test("publishes a working placement to every public agenda view", async ({
     slug,
     name: "Web systems",
   });
+  const secondTrack = await mutate(page.request, "tracks.create", {
+    slug,
+    name: "Data systems",
+  });
   const room = await mutate(page.request, "rooms.create", {
     slug,
     name: "Main hall",
+  });
+  const secondRoom = await mutate(page.request, "rooms.create", {
+    slug,
+    name: "Studio",
   });
   const cfp = await mutate(page.request, "cfps.createDraft", {
     slug,
@@ -70,7 +78,7 @@ test("publishes a working placement to every public agenda view", async ({
     abstract:
       "This second accepted item creates and then resolves a room conflict.",
     format: "Talk",
-    trackId: track.id,
+    trackId: secondTrack.id,
     proposedSpeakers: [
       { name: "Second Browser Speaker", email: submitterEmail },
     ],
@@ -132,7 +140,7 @@ test("publishes a working placement to every public agenda view", async ({
   await expect(page.getByText("1 durable item")).toBeVisible();
   await placementForm
     .getByLabel("Program item")
-    .selectOption({ label: "A second browser session · Web systems" });
+    .selectOption({ label: "A second browser session · Data systems" });
   await placementForm.getByLabel("Room").selectOption(room.id as string);
   await placementForm.getByLabel("Starts").fill("2028-08-10T09:30");
   await placementForm.getByLabel("Ends").fill("2028-08-10T10:30");
@@ -148,8 +156,11 @@ test("publishes a working placement to every public agenda view", async ({
   const secondWorkingItem = page
     .locator(".working-agenda-item")
     .filter({ hasText: "A second browser session" });
-  await secondWorkingItem.getByLabel("Starts").fill("2028-08-10T10:00");
-  await secondWorkingItem.getByLabel("Ends").fill("2028-08-10T11:00");
+  await secondWorkingItem
+    .getByLabel("Room")
+    .selectOption(secondRoom.id as string);
+  await secondWorkingItem.getByLabel("Starts").fill("2028-08-17T10:00");
+  await secondWorkingItem.getByLabel("Ends").fill("2028-08-17T11:00");
   await secondWorkingItem.getByRole("button", { name: "Save move" }).click();
   const serviceForm = page
     .getByRole("heading", { name: "Block event time" })
@@ -166,15 +177,66 @@ test("publishes a working placement to every public agenda view", async ({
   await expect(
     page.getByRole("heading", { name: "A browser-built agenda" }),
   ).toBeVisible();
-  for (const view of ["day", "week", "track", "room", "list"]) {
-    await page.getByRole("button", { name: view, exact: true }).click();
-    await expect(
-      page.getByRole("heading", { name: "A browser-built agenda" }),
-    ).toBeVisible();
-    if (view === "track" || view === "room") {
-      await expect(page.getByRole("heading", { name: "Lunch" })).toBeVisible();
-    }
-  }
+
+  await page.getByRole("button", { name: "week", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "A browser-built agenda" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "A second browser session" }),
+  ).toHaveCount(0);
+  await page.getByLabel("Week").selectOption("2028-08-14");
+  await expect(
+    page.getByRole("heading", { name: "A browser-built agenda" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "A second browser session" }),
+  ).toBeVisible();
+
+  await page.goto(`/events/${slug}/schedule?view=room`);
+  await expect(page.getByLabel("Room")).toHaveValue("Main hall");
+  await expect(
+    page.getByRole("heading", { name: "A browser-built agenda" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "A second browser session" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Lunch" })).toBeVisible();
+  await page.getByLabel("Room").selectOption("Studio");
+  await expect(
+    page.getByRole("heading", { name: "A second browser session" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "track", exact: true }).click();
+  await expect(page.getByLabel("Track")).toHaveValue("Web systems");
+  await expect(
+    page.getByRole("heading", { name: "A second browser session" }),
+  ).toHaveCount(0);
+  await page.getByLabel("Track").selectOption("Data systems");
+  await expect(
+    page.getByRole("heading", { name: "A second browser session" }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Lunch" })).toBeVisible();
+
+  await page.getByRole("button", { name: "day", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "A browser-built agenda" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "A second browser session" }),
+  ).toHaveCount(0);
+  await page.getByLabel("Day").selectOption("2028-08-17");
+  await expect(
+    page.getByRole("heading", { name: "A second browser session" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "list", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "A browser-built agenda" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "A second browser session" }),
+  ).toBeVisible();
   await page.reload();
   await expect(
     page.getByRole("heading", { name: "A browser-built agenda" }),
@@ -197,6 +259,10 @@ test("publishes a working placement to every public agenda view", async ({
   await expect(
     page.getByRole("heading", { name: "A second browser session" }),
   ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "A browser-built agenda" }),
+  ).toHaveCount(0);
 
   await page.goto(`/events/${slug}/agenda`);
   await page
@@ -213,6 +279,10 @@ test("publishes a working placement to every public agenda view", async ({
   await page.getByRole("button", { name: "Publish agenda" }).click();
   await expect(page.getByText(/Public revision 3 is live/)).toBeVisible();
   await page.goto(`/events/${slug}/schedule`);
+  await expect(
+    page.getByRole("heading", { name: "A browser-built agenda" }),
+  ).toBeVisible();
+  await page.reload();
   await expect(
     page.getByRole("heading", { name: "A browser-built agenda" }),
   ).toBeVisible();
