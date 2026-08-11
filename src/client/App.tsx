@@ -3221,17 +3221,14 @@ function CfpBuilder({
             label="Formats"
             name={`cfp-formats-${formId}`}
           >
-            <input
+            <CommaSeparatedInput
               disabled={cfp?.structureLocked}
               id={`cfp-formats-${formId}`}
-              value={definition.formats.join(", ")}
-              onChange={(event) =>
+              values={definition.formats}
+              onValuesChange={(formats) =>
                 setDefinition((current) => ({
                   ...current,
-                  formats: event.target.value
-                    .split(",")
-                    .map((value) => value.trim())
-                    .filter(Boolean),
+                  formats,
                 }))
               }
             />
@@ -3332,6 +3329,38 @@ function CfpBuilder({
   );
 }
 
+function CommaSeparatedInput({
+  disabled,
+  id,
+  values,
+  onValuesChange,
+}: {
+  disabled?: boolean | undefined;
+  id: string;
+  values: string[];
+  onValuesChange: (values: string[]) => void;
+}) {
+  const [text, setText] = useState(() => values.join(", "));
+
+  return (
+    <input
+      disabled={disabled}
+      id={id}
+      value={text}
+      onChange={(event) => {
+        const nextText = event.target.value;
+        setText(nextText);
+        onValuesChange(
+          nextText
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean),
+        );
+      }}
+    />
+  );
+}
+
 function CustomFieldEditor({
   disabled,
   field,
@@ -3380,16 +3409,14 @@ function CustomFieldEditor({
           label="Options"
           name={fieldId("field-options")}
         >
-          <input
+          <CommaSeparatedInput
             id={fieldId("field-options")}
-            value={field.options.join(", ")}
-            onChange={(event) =>
+            key={field.key}
+            values={field.options}
+            onValuesChange={(options) =>
               onChange({
                 ...field,
-                options: event.target.value
-                  .split(",")
-                  .map((value) => value.trim())
-                  .filter(Boolean),
+                options,
               })
             }
           />
