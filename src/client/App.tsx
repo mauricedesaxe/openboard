@@ -3953,18 +3953,34 @@ function SubmissionSpeakerManager({
                   </button>
                 )}
               {submission.permissions.canManageSpeakers && (
-                <button
-                  className="text-button danger-button"
-                  disabled={
-                    remove.isPending || submission.proposedSpeakers.length === 1
-                  }
-                  onClick={() =>
-                    remove.mutate({ ...submissionInput, speakerId: speaker.id })
-                  }
-                  type="button"
-                >
-                  Remove
-                </button>
+                <>
+                  <button
+                    aria-describedby={
+                      submission.proposedSpeakers.length === 1
+                        ? `remove-speaker-reason-${speaker.id}`
+                        : undefined
+                    }
+                    className="text-button danger-button"
+                    disabled={
+                      remove.isPending ||
+                      submission.proposedSpeakers.length === 1
+                    }
+                    onClick={() =>
+                      remove.mutate({
+                        ...submissionInput,
+                        speakerId: speaker.id,
+                      })
+                    }
+                    type="button"
+                  >
+                    Remove
+                  </button>
+                  {submission.proposedSpeakers.length === 1 && (
+                    <span id={`remove-speaker-reason-${speaker.id}`}>
+                      At least one proposed speaker must remain.
+                    </span>
+                  )}
+                </>
               )}
             </div>
           </div>
