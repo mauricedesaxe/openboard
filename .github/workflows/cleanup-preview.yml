@@ -9,16 +9,34 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     concurrency:
       group: preview-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
+      - name: Verify the pull request is still closed
+        id: closed-pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pull } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: context.issue.number,
+            });
+            const closed = pull.state === "closed";
+            core.setOutput("closed", String(closed));
+            if (!closed) core.notice("Skipping stale preview cleanup event.");
       - name: Delete the preview worker
+        if: steps.closed-pr.outputs.closed == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          set +e
           output=$(npx --yes wrangler@4.120.0 delete "openboard-pr-${{ github.event.pull_request.number }}" --force 2>&1)
           status=$?
+          set -e
           if [ $status -eq 0 ]; then
             echo "$output"
             exit 0
@@ -31,11 +49,12 @@ jobs:
           echo "$output"
           exit $status
       - name: Delete the per-PR preview D1
-        if: always()
+        if: always() && steps.closed-pr.outputs.closed == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          DB_NAME: openboard-pr-${{ github.event.pull_request.number }}
+          DB_BASE: openboard-pr-${{ github.event.pull_request.number }}
+          DB_PREFIX: openboard-pr-${{ github.event.pull_request.number }}-
         run: |
           set +e
           list_json=$(npx --yes wrangler@4.120.0 d1 list --json 2>&1)
@@ -46,9 +65,12 @@ jobs:
             echo "$list_json"
             exit 1
           fi
-          if echo "$list_json" | jq -e --arg name "$DB_NAME" 'any(.[]; .name == $name)' >/dev/null; then
-            npx --yes wrangler@4.120.0 d1 delete "$DB_NAME" --skip-confirmation
-            echo "deleted preview D1 $DB_NAME"
-          else
+          db_names=$(echo "$list_json" | jq -r --arg base "$DB_BASE" --arg prefix "$DB_PREFIX" '.[] | select(.name == $base or (.name | startswith($prefix))) | .name')
+          if [ -z "$db_names" ]; then
             echo "no preview D1 to delete"
+            exit 0
           fi
+          while IFS= read -r db_name; do
+            npx --yes wrangler@4.120.0 d1 delete "$db_name" --skip-confirmation
+            echo "deleted preview D1 $db_name"
+          done <<< "$db_names"

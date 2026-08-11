@@ -2,7 +2,10 @@ import { env, exports } from "cloudflare:workers";
 import { expect } from "vitest";
 import { z } from "zod";
 
-export const testEnvironment = env as unknown as { DB: D1Database };
+export const testEnvironment = env as unknown as {
+  DB: D1Database;
+  FILES: R2Bucket;
+};
 
 const worker = exports as unknown as {
   default: { fetch(request: Request): Promise<Response> };

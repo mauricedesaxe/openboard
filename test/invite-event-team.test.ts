@@ -530,6 +530,113 @@ describe("invite the event team", () => {
     expect(Boolean(role)).toBe(acceptance.status === 200);
   });
 
+  test("allows only one replacement for a source invitation", async () => {
+    const owner = await signIn("replace-owner@example.com", "192.0.2.41");
+    await createEvent(owner.cookie, "replace-race-event");
+    const source = getResult(
+      (
+        await callTrpc<{ id: string }>(
+          "eventTeam.invite",
+          {
+            slug: "replace-race-event",
+            email: "replace-source@example.com",
+            role: "reviewer",
+          },
+          owner.cookie,
+        )
+      ).body,
+    );
+
+    const replacements = await Promise.all([
+      callTrpc(
+        "eventTeam.invite",
+        {
+          slug: "replace-race-event",
+          email: "replace-first@example.com",
+          role: "reviewer",
+          replacesInvitationId: source.id,
+        },
+        owner.cookie,
+      ),
+      callTrpc(
+        "eventTeam.invite",
+        {
+          slug: "replace-race-event",
+          email: "replace-second@example.com",
+          role: "reviewer",
+          replacesInvitationId: source.id,
+        },
+        owner.cookie,
+      ),
+    ]);
+    expect(replacements.map(({ status }) => status).sort()).toEqual([200, 409]);
+
+    const rows = await testEnvironment.DB.prepare(
+      `SELECT status, replacement_for_invitation_id AS sourceId
+       FROM invitations
+       WHERE event_id = (SELECT id FROM events WHERE slug = ?)
+       ORDER BY created_at`,
+    )
+      .bind("replace-race-event")
+      .all<{ status: string; sourceId: string | null }>();
+    expect(
+      rows.results.filter(({ sourceId }) => sourceId === source.id),
+    ).toHaveLength(1);
+    expect(
+      rows.results.filter(({ status }) => status === "pending"),
+    ).toHaveLength(1);
+  });
+
+  test("allows either acceptance or replacement to claim an invitation", async () => {
+    const owner = await signIn("claim-owner@example.com", "192.0.2.43");
+    const recipient = await signIn("claim-recipient@example.com", "192.0.2.44");
+    await createEvent(owner.cookie, "claim-race-event");
+    const source = getResult(
+      (
+        await callTrpc<{ id: string }>(
+          "eventTeam.invite",
+          {
+            slug: "claim-race-event",
+            email: "claim-recipient@example.com",
+            role: "reviewer",
+          },
+          owner.cookie,
+        )
+      ).body,
+    );
+    const secret = await getInvitationSecret("claim-recipient@example.com");
+
+    const [acceptance, replacement] = await Promise.all([
+      callTrpc("invitations.accept", { secret }, recipient.cookie),
+      callTrpc(
+        "eventTeam.invite",
+        {
+          slug: "claim-race-event",
+          email: "claim-corrected@example.com",
+          role: "reviewer",
+          replacesInvitationId: source.id,
+        },
+        owner.cookie,
+      ),
+    ]);
+    expect([acceptance.status, replacement.status].sort()).toEqual([200, 409]);
+
+    const sourceRow = await testEnvironment.DB.prepare(
+      "SELECT status FROM invitations WHERE id = ?",
+    )
+      .bind(source.id)
+      .first<{ status: string }>();
+    const role = await testEnvironment.DB.prepare(
+      "SELECT id FROM event_roles WHERE invitation_id = ? AND revoked_at IS NULL",
+    )
+      .bind(source.id)
+      .first<{ id: string }>();
+    expect(sourceRow?.status).toBe(
+      acceptance.status === 200 ? "accepted" : "revoked",
+    );
+    expect(Boolean(role)).toBe(acceptance.status === 200);
+  });
+
   test("keeps a failed email delivery resendable", async () => {
     const owner = await signIn("delivery-owner@example.com", "192.0.2.40");
     await createEvent(owner.cookie, "delivery-event");

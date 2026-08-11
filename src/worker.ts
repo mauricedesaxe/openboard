@@ -8,7 +8,9 @@ import {
   createAuth,
   getCapturedAuthenticationCode,
 } from "./server/identity/auth";
+import { findAccessibleTaskFile } from "./server/onboarding/repository";
 import { appRouter, createTrpcContext } from "./server/trpc";
+import type { UserId } from "./shared/events";
 
 export default {
   async fetch(request, environment): Promise<Response> {
@@ -57,13 +59,41 @@ export default {
         : Response.json({ code: "SECRET_NOT_FOUND" }, { status: 404 });
     }
 
+    const taskFileMatch = url.pathname.match(/^\/api\/task-files\/([^/]+)$/);
+    if (taskFileMatch) {
+      const session = await auth.api.getSession({ headers: request.headers });
+      const fileId = taskFileMatch[1];
+      if (!session || !fileId)
+        return new Response("Not found", { status: 404 });
+      const file = await findAccessibleTaskFile(
+        database,
+        session.user.id as UserId,
+        fileId,
+      );
+      if (!file) return new Response("Not found", { status: 404 });
+      const object = await environment.FILES.get(file.objectKey);
+      if (!object) return new Response("Not found", { status: 404 });
+      const headers = new Headers({
+        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+        "Content-Type": file.contentType,
+        ETag: object.httpEtag,
+      });
+      return new Response(object.body, { headers });
+    }
+
     if (url.pathname.startsWith("/api/trpc")) {
       return fetchRequestHandler({
         endpoint: "/api/trpc",
         req: request,
         router: appRouter,
         createContext: () =>
-          createTrpcContext({ auth, config, database, request }),
+          createTrpcContext({
+            auth,
+            config,
+            database,
+            files: environment.FILES,
+            request,
+          }),
       });
     }
 

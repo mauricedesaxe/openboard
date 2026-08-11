@@ -121,12 +121,15 @@ export async function createInvitation(
   const secret = createInvitationSecret();
   const secretHash = await hashInvitationSecret(secret);
   const expiresAt = new Date(now.getTime() + invitationLifetimeMs);
+  const replacementToken = input.replacesInvitationId
+    ? crypto.randomUUID()
+    : undefined;
 
   try {
     await database.batch([
       database
         .update(invitations)
-        .set({ status: "revoked", resolvedAt: now })
+        .set({ status: "revoked", resolvedAt: now, replacementToken })
         .where(
           input.replacesInvitationId
             ? and(
@@ -157,11 +160,27 @@ export async function createInvitation(
         status: "pending",
         invitedByUserId: ownerUserId,
         replacementForInvitationId: input.replacesInvitationId,
+        replacementToken,
         expiresAt,
         createdAt: now,
       }),
     ]);
   } catch {
+    if (input.replacesInvitationId) {
+      const [source] = await database
+        .select({ status: invitations.status })
+        .from(invitations)
+        .where(
+          and(
+            eq(invitations.id, input.replacesInvitationId),
+            eq(invitations.eventId, event.id),
+          ),
+        )
+        .limit(1);
+      if (source?.status !== "pending") {
+        return { ok: false, error: "invitation_not_replaceable" };
+      }
+    }
     if (!input.replacesInvitationId) {
       const pending = await findUsablePendingGrant(
         database,

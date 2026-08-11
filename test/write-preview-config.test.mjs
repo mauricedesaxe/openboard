@@ -62,11 +62,12 @@ describe("preview config generation", () => {
     });
   });
 
-  test("builds a preview config against a per-PR D1", () => {
+  test("builds a preview config against a per-head D1", () => {
     const { config, appUrl } = buildPreviewConfig({
       baseConfigText: jsoncWithCommentAndTrailingComma,
       reviewNumber: "42",
       previewD1Id: "11111111-2222-4333-8444-555566667777",
+      previewD1Name: "openboard-pr-42-abc123",
     });
 
     expect(appUrl).toBe("https://openboard-pr-42.sweet-mouse-22c9.workers.dev");
@@ -74,7 +75,7 @@ describe("preview config generation", () => {
       d1_databases: [
         {
           binding: "DB",
-          database_name: "openboard-pr-42",
+          database_name: "openboard-pr-42-abc123",
           database_id: "11111111-2222-4333-8444-555566667777",
         },
       ],

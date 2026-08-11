@@ -22,6 +22,15 @@ import {
 } from "../shared/event-team";
 import { eventInputSchema, roomIdSchema, type UserId } from "../shared/events";
 import {
+  assignmentInputSchema,
+  assignmentReasonSchema,
+  createTaskAssignmentSchema,
+  createTaskDefinitionSchema,
+  rejectEvidenceSchema,
+  saveOnboardingFormSchema,
+  taskFileUploadSchema,
+} from "../shared/onboarding";
+import {
   decisionPublicationSchema,
   decisionQueueStatusSchema,
   reviewerAssignmentIdSchema,
@@ -76,6 +85,23 @@ import {
 } from "./events/repository";
 import type { Auth } from "./identity/auth";
 import {
+  attachTaskFile,
+  cancelTaskAssignment,
+  confirmManualTask,
+  createTaskAssignment,
+  createTaskDefinition,
+  getOrganizerOnboardingBoard,
+  listOwnOnboardingAssignments,
+  overrideTask,
+  recordTaskReminder,
+  rejectTaskEvidence,
+  reopenTaskAssignment,
+  saveOnboardingFormDraft,
+  submitOnboardingForm,
+  waiveTask,
+  type OnboardingWriteError,
+} from "./onboarding/repository";
+import {
   archiveRoom,
   archiveTrack,
   createRoom,
@@ -128,6 +154,7 @@ type Context = {
   auth: Auth;
   config: AppConfig;
   database: Database;
+  files: R2Bucket;
   request: Request;
 };
 
@@ -946,6 +973,160 @@ export const appRouter = trpc.router({
         return result.value;
       }),
   }),
+  onboarding: trpc.router({
+    organizerBoard: authenticatedProcedure
+      .input(slugInput)
+      .query(async ({ ctx, input }) => {
+        const board = await getOrganizerOnboardingBoard(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+        );
+        if (!board) throwEventNotFound();
+        return board;
+      }),
+    mine: authenticatedProcedure.query(({ ctx }) =>
+      listOwnOnboardingAssignments(ctx.database, ctx.userId),
+    ),
+    createDefinition: authenticatedProcedure
+      .input(createTaskDefinitionSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await createTaskDefinition(
+          ctx.database,
+          ctx.userId,
+          input,
+        );
+        if (!result.ok) throwOnboardingWriteError(result.error);
+        return result.value;
+      }),
+    createAssignment: authenticatedProcedure
+      .input(createTaskAssignmentSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await createTaskAssignment(
+          ctx.database,
+          ctx.userId,
+          input,
+        );
+        if (!result.ok) throwOnboardingWriteError(result.error);
+        return result.value;
+      }),
+    confirmManual: authenticatedProcedure
+      .input(assignmentInputSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await confirmManualTask(
+          ctx.database,
+          ctx.userId,
+          input.assignmentId,
+        );
+        if (!result.ok) throwOnboardingWriteError(result.error);
+        return result.value;
+      }),
+    saveFormDraft: authenticatedProcedure
+      .input(saveOnboardingFormSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await saveOnboardingFormDraft(
+          ctx.database,
+          ctx.userId,
+          input.assignmentId,
+          input.answers,
+        );
+        if (!result.ok) throwOnboardingWriteError(result.error);
+        return result.value;
+      }),
+    submitForm: authenticatedProcedure
+      .input(assignmentInputSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await submitOnboardingForm(
+          ctx.database,
+          ctx.userId,
+          input.assignmentId,
+        );
+        if (!result.ok) throwOnboardingWriteError(result.error);
+        return result.value;
+      }),
+    uploadFile: authenticatedProcedure
+      .input(taskFileUploadSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await attachTaskFile(
+          ctx.database,
+          ctx.files,
+          ctx.userId,
+          input,
+        );
+        if (!result.ok) throwOnboardingWriteError(result.error);
+        return result.value;
+      }),
+    waive: authenticatedProcedure
+      .input(assignmentReasonSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await waiveTask(
+          ctx.database,
+          ctx.userId,
+          input.assignmentId,
+          input.reason,
+        );
+        if (!result.ok) throwOnboardingWriteError(result.error);
+        return result.value;
+      }),
+    override: authenticatedProcedure
+      .input(assignmentReasonSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await overrideTask(
+          ctx.database,
+          ctx.userId,
+          input.assignmentId,
+          input.reason,
+        );
+        if (!result.ok) throwOnboardingWriteError(result.error);
+        return result.value;
+      }),
+    rejectEvidence: authenticatedProcedure
+      .input(rejectEvidenceSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await rejectTaskEvidence(
+          ctx.database,
+          ctx.userId,
+          input.evidenceId,
+          input.reason,
+        );
+        if (!result.ok) throwOnboardingWriteError(result.error);
+        return result.value;
+      }),
+    reopen: authenticatedProcedure
+      .input(assignmentReasonSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await reopenTaskAssignment(
+          ctx.database,
+          ctx.userId,
+          input.assignmentId,
+          input.reason,
+        );
+        if (!result.ok) throwOnboardingWriteError(result.error);
+        return result.value;
+      }),
+    cancelAssignment: authenticatedProcedure
+      .input(assignmentInputSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await cancelTaskAssignment(
+          ctx.database,
+          ctx.userId,
+          input.assignmentId,
+        );
+        if (!result.ok) throwOnboardingWriteError(result.error);
+        return result.value;
+      }),
+    recordReminder: authenticatedProcedure
+      .input(assignmentInputSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await recordTaskReminder(
+          ctx.database,
+          ctx.userId,
+          input.assignmentId,
+        );
+        if (!result.ok) throwOnboardingWriteError(result.error);
+        return result.value;
+      }),
+  }),
   speakerProfile: trpc.router({
     getOwn: authenticatedProcedure.query(({ ctx }) =>
       getOwnSpeakerProfileState(ctx.database, ctx.userId),
@@ -1132,6 +1313,7 @@ function throwProposalWriteError(
     | "invalid_track"
     | "not_found"
     | "persistence_failed"
+    | "submission_changed"
     | "submission_closed",
 ): never {
   if (error === "not_found") throwSubmissionNotFound();
@@ -1139,6 +1321,12 @@ function throwProposalWriteError(
     throw new TRPCError({
       code: "CONFLICT",
       message: "This proposal can no longer be edited.",
+    });
+  }
+  if (error === "submission_changed") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "This proposal changed elsewhere. The latest version is shown.",
     });
   }
   if (error === "cfp_unavailable" || error === "deadline_passed") {
@@ -1293,6 +1481,38 @@ function throwAgendaWriteError(error: AgendaWriteError): never {
   throw new TRPCError({
     code: "INTERNAL_SERVER_ERROR",
     message: "The agenda could not be saved.",
+  });
+}
+
+function throwOnboardingWriteError(error: OnboardingWriteError): never {
+  if (error === "not_found") {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Task not found." });
+  }
+  if (error === "already_rejected") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "This evidence was already rejected.",
+    });
+  }
+  if (
+    error === "invalid_assignment" ||
+    error === "invalid_mechanism" ||
+    error === "current_evidence_exists"
+  ) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "This action does not match the current task assignment.",
+    });
+  }
+  if (error === "invalid_answers") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Complete every required answer before submission.",
+    });
+  }
+  throw new TRPCError({
+    code: "INTERNAL_SERVER_ERROR",
+    message: "The onboarding task could not be saved.",
   });
 }
 

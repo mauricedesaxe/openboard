@@ -9,6 +9,7 @@ const idSchema = z.object({ id: z.string() });
 const submissionSchema = z.object({
   id: z.string(),
   status: z.enum(["active", "withdrawn"]),
+  revision: z.number().int().positive(),
   event: z.object({ name: z.string(), slug: z.string() }),
   cfp: z.object({ id: z.string(), name: z.string() }),
   title: z.string(),
@@ -333,33 +334,96 @@ describe("submit a proposal through the local-first flow", () => {
       ).status,
     ).toBe(409);
 
-    const updated = getResult(
+    const competingUpdates = [
+      {
+        title: "Operating a calm platform",
+        customAnswers: {
+          audience: "Experienced",
+          requirements: "A projector and a room with tables.",
+        },
+      },
+      {
+        title: "Operating a reliable platform",
+        customAnswers: {
+          audience: "Beginner",
+          requirements: "A whiteboard.",
+        },
+      },
+    ];
+    const updateResponses = await Promise.all(
+      competingUpdates.map(({ title, customAnswers }) =>
+        callTrpc(
+          "submissions.updateOwn",
+          {
+            submissionId: submitted.id,
+            expectedRevision: submitted.revision,
+            title,
+            abstract: proposal.abstract,
+            format: proposal.format,
+            trackId: proposal.trackId,
+            customAnswers,
+          },
+          submitter.cookie,
+        ),
+      ),
+    );
+    expect(updateResponses.map(({ status }) => status).sort()).toEqual([
+      200, 409,
+    ]);
+    const winningIndex = updateResponses.findIndex(
+      ({ status }) => status === 200,
+    );
+    if (winningIndex < 0)
+      throw new Error("Expected one proposal update to win.");
+    const winningUpdate = competingUpdates[winningIndex];
+    if (!winningUpdate) throw new Error("Expected the winning proposal input.");
+    const winningResponse = updateResponses[winningIndex];
+    if (!winningResponse)
+      throw new Error("Expected the winning proposal response.");
+    const updated = getResult(winningResponse.body, submissionSchema);
+    expect(updated).toMatchObject({
+      revision: submitted.revision + 1,
+      title: winningUpdate.title,
+      customAnswers: winningUpdate.customAnswers,
+    });
+    const preserved = getResult(
+      (
+        await callTrpc(
+          "submissions.get",
+          { submissionId: submitted.id },
+          submitter.cookie,
+          "query",
+        )
+      ).body,
+      submissionSchema,
+    );
+    expect(preserved).toMatchObject({
+      revision: updated.revision,
+      title: winningUpdate.title,
+      customAnswers: winningUpdate.customAnswers,
+    });
+
+    const followUp = getResult(
       (
         await callTrpc(
           "submissions.updateOwn",
           {
             submissionId: submitted.id,
-            title: "Operating a calm platform",
+            expectedRevision: updated.revision,
+            title: "Operating a recovered platform",
             abstract: proposal.abstract,
             format: proposal.format,
             trackId: proposal.trackId,
-            proposedSpeakers: proposal.proposedSpeakers,
-            customAnswers: {
-              audience: "Experienced",
-              requirements: "A projector and a room with tables.",
-            },
+            customAnswers: winningUpdate.customAnswers,
           },
           submitter.cookie,
         )
       ).body,
       submissionSchema,
     );
-    expect(updated).toMatchObject({
-      title: "Operating a calm platform",
-      customAnswers: {
-        audience: "Experienced",
-        requirements: "A projector and a room with tables.",
-      },
+    expect(followUp).toMatchObject({
+      revision: updated.revision + 1,
+      title: "Operating a recovered platform",
     });
 
     await testEnvironment.DB.prepare(
@@ -420,11 +484,11 @@ describe("submit a proposal through the local-first flow", () => {
           "submissions.updateOwn",
           {
             submissionId: submitted.id,
+            expectedRevision: withdrawn.revision,
             title: "Too late",
             abstract: proposal.abstract,
             format: proposal.format,
             trackId: proposal.trackId,
-            proposedSpeakers: proposal.proposedSpeakers,
             customAnswers: { audience: "Beginner" },
           },
           submitter.cookie,

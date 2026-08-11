@@ -14,6 +14,7 @@ export function buildPreviewConfig({
   baseConfigText,
   reviewNumber,
   previewD1Id,
+  previewD1Name,
   workersDevSubdomain = defaultWorkersDevSubdomain,
 }) {
   const appUrl = `https://openboard-pr-${reviewNumber}.${workersDevSubdomain}.workers.dev`;
@@ -21,7 +22,9 @@ export function buildPreviewConfig({
   delete base.$schema;
 
   const databaseName =
-    previewD1Id == null ? "openboard-preview" : `openboard-pr-${reviewNumber}`;
+    previewD1Id == null
+      ? "openboard-preview"
+      : (previewD1Name ?? `openboard-pr-${reviewNumber}`);
 
   base.name = `openboard-pr-${reviewNumber}`;
   base.d1_databases = [
@@ -52,6 +55,7 @@ function main() {
     baseConfigText: readFileSync("wrangler.jsonc", "utf8"),
     reviewNumber,
     previewD1Id: process.env.PREVIEW_D1_ID,
+    previewD1Name: process.env.PREVIEW_D1_NAME,
     workersDevSubdomain: process.env.WORKERS_DEV_SUBDOMAIN,
   });
 

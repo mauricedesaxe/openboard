@@ -46,6 +46,9 @@ import { AgendaPage, PublicAgendaPage } from "./AgendaPage";
 import { authClient } from "./auth";
 import { useTRPC } from "./trpc";
 
+const ONBOARDING_REFETCH_INTERVAL_MS = 15_000;
+const FILE_ENCODING_CHUNK_BYTES = 32_768;
+
 export function App() {
   const location = useLocation();
   useEffect(() => {
@@ -132,9 +135,14 @@ function AuthenticatedApp({ email }: { email: string }) {
         </Link>
         <div className="account-strip">
           {speakerProfile.data?.eligible && (
-            <Link className="text-button" to="/speaker-profile">
-              Speaker profile
-            </Link>
+            <>
+              <Link className="text-button" to="/tasks">
+                My tasks
+              </Link>
+              <Link className="text-button" to="/speaker-profile">
+                Speaker profile
+              </Link>
+            </>
           )}
           <span>{email}</span>
           <button
@@ -155,10 +163,15 @@ function AuthenticatedApp({ email }: { email: string }) {
           <Route path="events/:slug/review" element={<ReviewPage />} />
           <Route path="events/:slug/agenda" element={<AgendaPage />} />
           <Route
+            path="events/:slug/onboarding"
+            element={<OrganizerOnboardingPage />}
+          />
+          <Route
             path="submissions/:submissionId"
             element={<SubmissionPage />}
           />
           <Route path="speaker-profile" element={<SpeakerProfilePage />} />
+          <Route path="tasks" element={<SpeakerTasksPage />} />
         </Routes>
       </main>
     </div>
@@ -168,13 +181,20 @@ function AuthenticatedApp({ email }: { email: string }) {
 function SignInPage() {
   const [searchParams] = useSearchParams();
   const returnTo = safeReturnTo(searchParams.get("returnTo"));
+  const pendingEmail = window.sessionStorage.getItem(
+    pendingSignInKey(returnTo),
+  );
   const invitationSignIn =
     returnTo.startsWith("/invitations/") ||
     returnTo.startsWith("/speaker-invitations/");
   const proposalSignIn = /^\/events\/[^/]+\/cfp$/.test(returnTo);
-  const [email, setEmail] = useState(searchParams.get("email") ?? "");
+  const [email, setEmail] = useState(
+    pendingEmail ?? searchParams.get("email") ?? "",
+  );
   const [code, setCode] = useState("");
-  const [step, setStep] = useState<"email" | "code">("email");
+  const [step, setStep] = useState<"email" | "code">(
+    pendingEmail ? "code" : "email",
+  );
   const [devCode, setDevCode] = useState<string>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -201,6 +221,7 @@ function SignInPage() {
     }
 
     setStep("code");
+    window.sessionStorage.setItem(pendingSignInKey(returnTo), email);
     if (import.meta.env.DEV) {
       const response = await fetch(
         `/api/dev/auth-code?email=${encodeURIComponent(email)}`,
@@ -224,6 +245,7 @@ function SignInPage() {
     setCode("");
     setDevCode(undefined);
     setError(undefined);
+    window.sessionStorage.removeItem(pendingSignInKey(returnTo));
   }
 
   async function verifyCode(event: FormEvent) {
@@ -240,6 +262,8 @@ function SignInPage() {
       );
       return;
     }
+
+    window.sessionStorage.removeItem(pendingSignInKey(returnTo));
   }
 
   return (
@@ -360,6 +384,10 @@ function SignInPage() {
       </section>
     </main>
   );
+}
+
+function pendingSignInKey(returnTo: string): string {
+  return `openboard:pending-sign-in:${returnTo}`;
 }
 
 function EventIndex() {
@@ -674,8 +702,804 @@ function EventPage() {
           Open review board
         </Link>
       </section>
+      {event.data.access !== "reviewer" && (
+        <section className="setup-callout onboarding-callout">
+          <div>
+            <div className="eyebrow">Speaker readiness</div>
+            <h2>Turn accepted work into a ready program.</h2>
+            <p>
+              Assign onboarding requirements, review evidence, and see every
+              current blocker without maintaining a separate status field.
+            </p>
+          </div>
+          <Link
+            className="primary-button link-button"
+            to={`/events/${slug}/onboarding`}
+          >
+            Open readiness
+          </Link>
+        </section>
+      )}
     </div>
   );
+}
+
+function OrganizerOnboardingPage() {
+  const { slug = "" } = useParams();
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const board = useQuery(
+    trpc.onboarding.organizerBoard.queryOptions(
+      { slug },
+      { refetchInterval: ONBOARDING_REFETCH_INTERVAL_MS },
+    ),
+  );
+  const refresh = () =>
+    queryClient.invalidateQueries(
+      trpc.onboarding.organizerBoard.queryFilter({ slug }),
+    );
+  const createDefinition = useMutation(
+    trpc.onboarding.createDefinition.mutationOptions({ onSuccess: refresh }),
+  );
+  const createAssignment = useMutation(
+    trpc.onboarding.createAssignment.mutationOptions({ onSuccess: refresh }),
+  );
+  const waive = useMutation(
+    trpc.onboarding.waive.mutationOptions({ onSuccess: refresh }),
+  );
+  const override = useMutation(
+    trpc.onboarding.override.mutationOptions({ onSuccess: refresh }),
+  );
+  const reopen = useMutation(
+    trpc.onboarding.reopen.mutationOptions({ onSuccess: refresh }),
+  );
+  const recordReminder = useMutation(
+    trpc.onboarding.recordReminder.mutationOptions({ onSuccess: refresh }),
+  );
+  const cancelAssignment = useMutation(
+    trpc.onboarding.cancelAssignment.mutationOptions({ onSuccess: refresh }),
+  );
+  const rejectEvidence = useMutation(
+    trpc.onboarding.rejectEvidence.mutationOptions({ onSuccess: refresh }),
+  );
+  const [definition, setDefinition] = useState({
+    name: "",
+    scope: "event_speaker" as
+      "event_speaker" | "program_item" | "program_item_speaker",
+    completionMechanism: "manual" as "manual" | "profile" | "form" | "file",
+    profileRequirement: "complete" as "complete" | "bio" | "headshot",
+    formLabel: "Response",
+  });
+  const [assignment, setAssignment] = useState({
+    taskDefinitionId: "",
+    target: "",
+    required: true,
+    dueAt: "",
+  });
+
+  if (board.isPending)
+    return <FullPageStatus label="Opening speaker readiness" />;
+  if (board.isError) {
+    return (
+      <div className="page">
+        <BoardStatus
+          label="Speaker readiness unavailable"
+          detail={board.error.message}
+        />
+      </div>
+    );
+  }
+
+  const selectedDefinition = board.data.definitions.find(
+    (candidate) => candidate.id === assignment.taskDefinitionId,
+  );
+  const targetOptions = selectedDefinition
+    ? onboardingTargetOptions(board.data.targets, selectedDefinition.scope)
+    : [];
+  const mutationError =
+    createDefinition.error ??
+    createAssignment.error ??
+    waive.error ??
+    override.error ??
+    reopen.error ??
+    recordReminder.error ??
+    cancelAssignment.error ??
+    rejectEvidence.error;
+
+  function addDefinition(event: FormEvent) {
+    event.preventDefault();
+    createDefinition.mutate({
+      slug,
+      name: definition.name,
+      scope: definition.scope,
+      completionMechanism: definition.completionMechanism,
+      profileRequirement:
+        definition.completionMechanism === "profile"
+          ? definition.profileRequirement
+          : null,
+      formFields:
+        definition.completionMechanism === "form"
+          ? [
+              {
+                key: "response",
+                label: definition.formLabel,
+                type: "long_text",
+                required: true,
+              },
+            ]
+          : null,
+    });
+  }
+
+  function addAssignment(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedDefinition || !assignment.target) return;
+    const [scope, id] = assignment.target.split(":", 2);
+    if (!id) return;
+    const target =
+      scope === "event_speaker"
+        ? ({ scope, userId: id } as const)
+        : scope === "program_item"
+          ? ({ scope, programItemId: id } as const)
+          : ({
+              scope: "program_item_speaker",
+              submissionSpeakerId: id,
+            } as const);
+    createAssignment.mutate({
+      slug,
+      taskDefinitionId: selectedDefinition.id,
+      target,
+      required: assignment.required,
+      dueAt: assignment.dueAt ? new Date(assignment.dueAt).toISOString() : null,
+    });
+  }
+
+  function reasonFor(action: string): string | undefined {
+    const reason = window.prompt(`Reason to ${action}`)?.trim();
+    return reason || undefined;
+  }
+
+  return (
+    <div className="page onboarding-page">
+      <Link className="arrow-link" to={`/events/${slug}`}>
+        ← Back to event
+      </Link>
+      <section className="review-heading">
+        <div>
+          <div className="eyebrow">Speaker readiness</div>
+          <h1>Act on what is blocking the program.</h1>
+          <p>Completion comes from current evidence, not a status checkbox.</p>
+        </div>
+      </section>
+      {mutationError && (
+        <p className="form-error" role="alert">
+          {mutationError.message}
+        </p>
+      )}
+      <div className="onboarding-builders">
+        <form className="form-board" onSubmit={addDefinition}>
+          <div className="eyebrow">New task definition</div>
+          <h2>Define the onboarding task</h2>
+          <Field label="Name" name="task-name">
+            <input
+              id="task-name"
+              onChange={(event) =>
+                setDefinition((current) => ({
+                  ...current,
+                  name: event.target.value,
+                }))
+              }
+              required
+              value={definition.name}
+            />
+          </Field>
+          <div className="field-pair">
+            <Field label="Scope" name="task-scope">
+              <select
+                id="task-scope"
+                onChange={(event) =>
+                  setDefinition((current) => ({
+                    ...current,
+                    scope: event.target.value as typeof current.scope,
+                    completionMechanism:
+                      event.target.value !== "event_speaker" &&
+                      current.completionMechanism === "profile"
+                        ? "manual"
+                        : current.completionMechanism,
+                  }))
+                }
+                value={definition.scope}
+              >
+                <option value="event_speaker">Event-speaker task</option>
+                <option value="program_item">Program-item task</option>
+                <option value="program_item_speaker">
+                  Program-item-speaker task
+                </option>
+              </select>
+            </Field>
+            <Field label="Completion" name="task-mechanism">
+              <select
+                id="task-mechanism"
+                onChange={(event) =>
+                  setDefinition((current) => ({
+                    ...current,
+                    completionMechanism: event.target
+                      .value as typeof current.completionMechanism,
+                    scope:
+                      event.target.value === "profile"
+                        ? "event_speaker"
+                        : current.scope,
+                  }))
+                }
+                value={definition.completionMechanism}
+              >
+                <option value="manual">Manual confirmation</option>
+                <option value="profile">Speaker profile</option>
+                <option value="form">Form response</option>
+                <option value="file">File upload</option>
+              </select>
+            </Field>
+          </div>
+          {definition.completionMechanism === "profile" && (
+            <Field label="Profile requirement" name="profile-requirement">
+              <select
+                id="profile-requirement"
+                onChange={(event) =>
+                  setDefinition((current) => ({
+                    ...current,
+                    profileRequirement: event.target
+                      .value as typeof current.profileRequirement,
+                  }))
+                }
+                value={definition.profileRequirement}
+              >
+                <option value="complete">Name and bio</option>
+                <option value="bio">Bio</option>
+                <option value="headshot">Headshot</option>
+              </select>
+            </Field>
+          )}
+          {definition.completionMechanism === "form" && (
+            <Field label="Required question" name="form-label">
+              <input
+                id="form-label"
+                onChange={(event) =>
+                  setDefinition((current) => ({
+                    ...current,
+                    formLabel: event.target.value,
+                  }))
+                }
+                required
+                value={definition.formLabel}
+              />
+            </Field>
+          )}
+          <button
+            className="primary-button"
+            disabled={createDefinition.isPending}
+            type="submit"
+          >
+            Create task definition
+          </button>
+        </form>
+        <form className="form-board" onSubmit={addAssignment}>
+          <div className="eyebrow">New assignment</div>
+          <h2>Target accepted work</h2>
+          <Field label="Task definition" name="assignment-definition">
+            <select
+              id="assignment-definition"
+              onChange={(event) =>
+                setAssignment((current) => ({
+                  ...current,
+                  taskDefinitionId: event.target.value,
+                  target: "",
+                }))
+              }
+              required
+              value={assignment.taskDefinitionId}
+            >
+              <option value="">Choose requirement</option>
+              {board.data.definitions.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  {candidate.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Target" name="assignment-target">
+            <select
+              disabled={!selectedDefinition}
+              id="assignment-target"
+              onChange={(event) =>
+                setAssignment((current) => ({
+                  ...current,
+                  target: event.target.value,
+                }))
+              }
+              required
+              value={assignment.target}
+            >
+              <option value="">Choose target</option>
+              {targetOptions.map((target) => (
+                <option key={target.value} value={target.value}>
+                  {target.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Due date and time" name="assignment-due">
+            <input
+              id="assignment-due"
+              onChange={(event) =>
+                setAssignment((current) => ({
+                  ...current,
+                  dueAt: event.target.value,
+                }))
+              }
+              type="datetime-local"
+              value={assignment.dueAt}
+            />
+          </Field>
+          <label className="publication-selection">
+            <input
+              checked={assignment.required}
+              onChange={(event) =>
+                setAssignment((current) => ({
+                  ...current,
+                  required: event.target.checked,
+                }))
+              }
+              type="checkbox"
+            />
+            Required for readiness
+          </label>
+          <button
+            className="primary-button"
+            disabled={createAssignment.isPending}
+            type="submit"
+          >
+            Create assignment
+          </button>
+        </form>
+      </div>
+      <section className="readiness-section">
+        <div className="eyebrow">Fixed readiness view</div>
+        <h2>Program items</h2>
+        <div className="readiness-table" role="table">
+          {board.data.readiness.programItems.map((item) => (
+            <div className="readiness-row" key={item.id} role="row">
+              <strong>{item.title}</strong>
+              <span
+                className={`status-chip ${item.ready ? "status-open" : "status-closed"}`}
+              >
+                {item.ready ? "Ready" : "Blocked"}
+              </span>
+              <span>
+                {item.blockers
+                  .map((blocker) => blocker.requirement)
+                  .join(", ") || "No blockers"}
+              </span>
+              <span>
+                {item.nextDueAt
+                  ? new Date(item.nextDueAt).toLocaleString()
+                  : "No due date"}
+              </span>
+            </div>
+          ))}
+        </div>
+        <h2>Speakers</h2>
+        <div className="readiness-table" role="table">
+          {board.data.readiness.speakers.map((speaker) => (
+            <div className="readiness-row" key={speaker.key} role="row">
+              <strong>{speaker.name}</strong>
+              <span
+                className={`status-chip ${speaker.ready ? "status-open" : "status-closed"}`}
+              >
+                {speaker.ready ? "Ready" : "Blocked"}
+              </span>
+              <span>
+                {speaker.blockers
+                  .map((blocker) => blocker.requirement)
+                  .join(", ") || "No blockers"}
+              </span>
+              <span>
+                {speaker.nextDueAt
+                  ? new Date(speaker.nextDueAt).toLocaleString()
+                  : "No due date"}
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="assignment-cards">
+        {board.data.assignments.map((item) => (
+          <article className="task-card" key={item.id}>
+            <div>
+              <div className="eyebrow">Revision {item.completionRevision}</div>
+              <h3>{item.name}</h3>
+              <p>
+                {item.required ? "Required" : "Optional"} ·{" "}
+                {item.completionMechanism}
+              </p>
+              {item.lastReminderAt && (
+                <p>
+                  Last reminder recorded{" "}
+                  {new Date(item.lastReminderAt).toLocaleString()}
+                </p>
+              )}
+            </div>
+            <span
+              className={`status-chip ${item.completed ? "status-open" : "status-closed"}`}
+            >
+              {item.completed ? "Complete" : "Incomplete"}
+            </span>
+            <div className="task-actions">
+              <button
+                className="text-button"
+                onClick={() => recordReminder.mutate({ assignmentId: item.id })}
+                type="button"
+              >
+                Record reminder
+              </button>
+              <button
+                className="text-button"
+                onClick={() => {
+                  const reason = reasonFor("reopen this assignment");
+                  if (reason) reopen.mutate({ assignmentId: item.id, reason });
+                }}
+                type="button"
+              >
+                Reopen
+              </button>
+              <button
+                className="text-button"
+                onClick={() => {
+                  const reason = reasonFor("waive this assignment");
+                  if (reason) waive.mutate({ assignmentId: item.id, reason });
+                }}
+                type="button"
+              >
+                Waive
+              </button>
+              <button
+                className="text-button"
+                onClick={() => {
+                  const reason = reasonFor("override this assignment");
+                  if (reason)
+                    override.mutate({ assignmentId: item.id, reason });
+                }}
+                type="button"
+              >
+                Organizer override
+              </button>
+              <button
+                className="text-button"
+                onClick={() => {
+                  if (window.confirm("Cancel this assignment?")) {
+                    cancelAssignment.mutate({ assignmentId: item.id });
+                  }
+                }}
+                type="button"
+              >
+                Cancel assignment
+              </button>
+            </div>
+            {item.evidence.map((evidence) => (
+              <div className="evidence-row" key={evidence.id}>
+                <span>
+                  {evidence.kind}
+                  {evidence.fileName && evidence.fileId ? (
+                    <>
+                      {" · "}
+                      <a href={`/api/task-files/${evidence.fileId}`}>
+                        {evidence.fileName}
+                      </a>
+                    </>
+                  ) : null}
+                </span>
+                <span>
+                  {evidence.rejectedReason
+                    ? `Rejected: ${evidence.rejectedReason}`
+                    : evidence.supersededBy
+                      ? "Superseded"
+                      : "Current history"}
+                </span>
+                {!evidence.rejectedReason && !evidence.supersededBy && (
+                  <button
+                    className="text-button"
+                    onClick={() => {
+                      const reason = reasonFor("reject this evidence");
+                      if (reason)
+                        rejectEvidence.mutate({
+                          evidenceId: evidence.id,
+                          reason,
+                        });
+                    }}
+                    type="button"
+                  >
+                    Reject
+                  </button>
+                )}
+              </div>
+            ))}
+          </article>
+        ))}
+      </section>
+    </div>
+  );
+}
+
+function onboardingTargetOptions(
+  targets: {
+    speakers: Array<{ userId: string; name: string }>;
+    programItems: Array<{
+      id: string;
+      title: string;
+      speakers: Array<{ id: string; name: string }>;
+    }>;
+  },
+  scope: "event_speaker" | "program_item" | "program_item_speaker",
+) {
+  if (scope === "event_speaker") {
+    return targets.speakers.map((speaker) => ({
+      value: `event_speaker:${speaker.userId}`,
+      label: speaker.name,
+    }));
+  }
+  if (scope === "program_item") {
+    return targets.programItems.map((item) => ({
+      value: `program_item:${item.id}`,
+      label: item.title,
+    }));
+  }
+  return targets.programItems.flatMap((item) =>
+    item.speakers.map((speaker) => ({
+      value: `program_item_speaker:${speaker.id}`,
+      label: `${item.title} · ${speaker.name}`,
+    })),
+  );
+}
+
+function SpeakerTasksPage() {
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const tasks = useQuery(
+    trpc.onboarding.mine.queryOptions(undefined, {
+      refetchInterval: ONBOARDING_REFETCH_INTERVAL_MS,
+    }),
+  );
+  const refresh = () =>
+    queryClient.invalidateQueries(trpc.onboarding.mine.queryFilter());
+  const confirm = useMutation(
+    trpc.onboarding.confirmManual.mutationOptions({ onSuccess: refresh }),
+  );
+  const saveDraft = useMutation(
+    trpc.onboarding.saveFormDraft.mutationOptions(),
+  );
+  const submitForm = useMutation(
+    trpc.onboarding.submitForm.mutationOptions({ onSuccess: refresh }),
+  );
+  const upload = useMutation(
+    trpc.onboarding.uploadFile.mutationOptions({ onSuccess: refresh }),
+  );
+  const [answers, setAnswers] = useState<
+    Record<string, Record<string, string>>
+  >({});
+
+  if (tasks.isPending) return <FullPageStatus label="Opening your tasks" />;
+  if (tasks.isError) {
+    return (
+      <div className="page">
+        <BoardStatus label="Tasks unavailable" detail={tasks.error.message} />
+      </div>
+    );
+  }
+
+  async function submitAnswers(
+    event: FormEvent,
+    assignmentId: string,
+    savedAnswers: Record<string, string> | undefined,
+  ) {
+    event.preventDefault();
+    await saveDraft.mutateAsync({
+      assignmentId,
+      answers: answers[assignmentId] ?? savedAnswers ?? {},
+    });
+    await submitForm.mutateAsync({ assignmentId });
+  }
+
+  async function uploadFile(assignmentId: string, file: File | undefined) {
+    if (!file) return;
+    upload.mutate({
+      assignmentId,
+      fileName: file.name,
+      contentType: file.type || "application/octet-stream",
+      contentBase64: await browserFileToBase64(file),
+    });
+  }
+
+  return (
+    <div className="page onboarding-page">
+      <Link className="arrow-link" to="/">
+        ← Back to board
+      </Link>
+      <section className="review-heading">
+        <div>
+          <div className="eyebrow">Your onboarding</div>
+          <h1>Clear the next program blocker.</h1>
+          <p>
+            Submitted evidence stays in the history if an organizer asks for a
+            replacement.
+          </p>
+        </div>
+      </section>
+      {tasks.data.length === 0 && (
+        <BoardStatus
+          label="No onboarding tasks"
+          detail="Accepted program work and assigned requirements will appear here."
+        />
+      )}
+      <section className="assignment-cards">
+        {tasks.data.map((task) => {
+          const fields = task.formFields ?? [];
+          return (
+            <article className="task-card" key={task.id}>
+              <div>
+                <div className="eyebrow">
+                  {task.required ? "Required" : "Optional"} · Revision{" "}
+                  {task.completionRevision}
+                </div>
+                <h2>{task.name}</h2>
+                <p>
+                  {task.dueAt
+                    ? `Due ${new Date(task.dueAt).toLocaleString()}`
+                    : "No due date"}
+                </p>
+              </div>
+              <span
+                className={`status-chip ${task.completed ? "status-open" : "status-closed"}`}
+              >
+                {task.completed ? "Complete" : "Incomplete"}
+              </span>
+              {task.completionMechanism === "profile" && !task.completed && (
+                <Link
+                  className="primary-button link-button"
+                  to="/speaker-profile"
+                >
+                  Complete profile
+                </Link>
+              )}
+              {task.completionMechanism === "manual" && !task.completed && (
+                <button
+                  className="primary-button"
+                  disabled={confirm.isPending}
+                  onClick={() => confirm.mutate({ assignmentId: task.id })}
+                  type="button"
+                >
+                  Confirm complete
+                </button>
+              )}
+              {task.completionMechanism === "file" && (
+                <Field label="Upload current file" name={`file-${task.id}`}>
+                  <input
+                    id={`file-${task.id}`}
+                    onChange={(event) =>
+                      void uploadFile(task.id, event.target.files?.[0])
+                    }
+                    type="file"
+                  />
+                </Field>
+              )}
+              {task.completionMechanism === "form" && !task.completed && (
+                <form
+                  onSubmit={(event) =>
+                    void submitAnswers(event, task.id, task.draft?.answers)
+                  }
+                >
+                  {fields.map((field) => (
+                    <Field
+                      key={field.key}
+                      label={field.label}
+                      name={`${task.id}-${field.key}`}
+                    >
+                      {field.type === "long_text" ? (
+                        <textarea
+                          id={`${task.id}-${field.key}`}
+                          onChange={(event) =>
+                            setAnswers((current) => ({
+                              ...current,
+                              [task.id]: {
+                                ...(current[task.id] ??
+                                  task.draft?.answers ??
+                                  {}),
+                                [field.key]: event.target.value,
+                              },
+                            }))
+                          }
+                          required={field.required}
+                          value={
+                            answers[task.id]?.[field.key] ??
+                            task.draft?.answers[field.key] ??
+                            ""
+                          }
+                        />
+                      ) : (
+                        <input
+                          id={`${task.id}-${field.key}`}
+                          onChange={(event) =>
+                            setAnswers((current) => ({
+                              ...current,
+                              [task.id]: {
+                                ...(current[task.id] ??
+                                  task.draft?.answers ??
+                                  {}),
+                                [field.key]: event.target.value,
+                              },
+                            }))
+                          }
+                          required={field.required}
+                          value={
+                            answers[task.id]?.[field.key] ??
+                            task.draft?.answers[field.key] ??
+                            ""
+                          }
+                        />
+                      )}
+                    </Field>
+                  ))}
+                  <button
+                    className="primary-button"
+                    disabled={saveDraft.isPending || submitForm.isPending}
+                    type="submit"
+                  >
+                    Submit response
+                  </button>
+                </form>
+              )}
+              {task.evidence.length > 0 && (
+                <div className="evidence-history">
+                  <div className="eyebrow">Evidence history</div>
+                  {task.evidence.map((evidence) => (
+                    <p key={evidence.id}>
+                      {evidence.kind}
+                      {evidence.fileName && evidence.fileId ? (
+                        <>
+                          {" · "}
+                          <a href={`/api/task-files/${evidence.fileId}`}>
+                            {evidence.fileName}
+                          </a>
+                        </>
+                      ) : null}
+                      {evidence.rejectedReason
+                        ? ` · Rejected: ${evidence.rejectedReason}`
+                        : evidence.supersededBy
+                          ? " · Superseded"
+                          : ""}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </section>
+    </div>
+  );
+}
+
+async function browserFileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (
+    let offset = 0;
+    offset < bytes.length;
+    offset += FILE_ENCODING_CHUNK_BYTES
+  ) {
+    binary += String.fromCharCode(
+      ...bytes.subarray(offset, offset + FILE_ENCODING_CHUNK_BYTES),
+    );
+  }
+  return btoa(binary);
 }
 
 function ReviewPage() {
@@ -2654,6 +3478,8 @@ function CustomFieldEditor({
   );
 }
 
+type ProposalEditContent = Omit<ProposalContent, "proposedSpeakers">;
+
 function SubmissionPage() {
   const { submissionId = "" } = useParams();
   const [searchParams] = useSearchParams();
@@ -2665,7 +3491,8 @@ function SubmissionPage() {
   );
   const [editState, setEditState] = useState<{
     submissionId: string;
-    content: ProposalContent;
+    content: ProposalEditContent;
+    revision: number;
   }>();
   const update = useMutation(
     trpc.submissions.updateOwn.mutationOptions({
@@ -2673,10 +3500,23 @@ function SubmissionPage() {
         setEditState({
           submissionId: saved.id,
           content: submissionContent(saved),
+          revision: saved.revision,
         });
         await queryClient.invalidateQueries(
           trpc.submissions.get.queryFilter(submissionInput),
         );
+      },
+      onError: async (error, attempted) => {
+        if (error.data?.code !== "CONFLICT") return;
+        const latest = await queryClient.fetchQuery(
+          trpc.submissions.get.queryOptions(submissionInput),
+        );
+        if (latest.revision === attempted.expectedRevision) return;
+        setEditState({
+          submissionId: latest.id,
+          content: submissionContent(latest),
+          revision: latest.revision,
+        });
       },
     }),
   );
@@ -2711,10 +3551,14 @@ function SubmissionPage() {
   const editable = submission.data.permissions.canEdit;
 
   function changeContent(
-    update: (current: ProposalContent) => ProposalContent,
+    update: (current: ProposalEditContent) => ProposalEditContent,
   ) {
     setEditState((current) => ({
       submissionId: loadedSubmission.id,
+      revision:
+        current?.submissionId === loadedSubmission.id
+          ? current.revision
+          : loadedSubmission.revision,
       content: update(
         current?.submissionId === loadedSubmission.id
           ? current.content
@@ -2727,6 +3571,10 @@ function SubmissionPage() {
     event.preventDefault();
     update.mutate({
       submissionId: submissionInput.submissionId,
+      expectedRevision:
+        editState?.submissionId === loadedSubmission.id
+          ? editState.revision
+          : loadedSubmission.revision,
       ...currentContent,
     });
   }
@@ -2795,7 +3643,7 @@ function SubmissionPage() {
                       changeContent((current) => ({
                         ...current,
                         trackId: event.target
-                          .value as ProposalContent["trackId"],
+                          .value as ProposalEditContent["trackId"],
                       }))
                     }
                   >
@@ -3553,16 +4401,12 @@ function proposalDraftKey(slug: string): string {
   return `openboard:proposal-draft:${slug}`;
 }
 
-function submissionContent(submission: Submission): ProposalContent {
+function submissionContent(submission: Submission): ProposalEditContent {
   return {
     title: submission.title,
     abstract: submission.abstract,
     format: submission.format,
     trackId: submission.track.id,
-    proposedSpeakers: submission.proposedSpeakers.map(({ name, email }) => ({
-      name,
-      email: email ?? "",
-    })),
     customAnswers: submission.customAnswers,
   };
 }

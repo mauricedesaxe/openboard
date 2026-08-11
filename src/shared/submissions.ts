@@ -50,9 +50,11 @@ export const submitProposalSchema = proposalContentSchema.extend({
 });
 
 export type ProposalContent = z.infer<typeof proposalContentSchema>;
-export const proposalUpdateSchema = proposalContentSchema.omit({
-  proposedSpeakers: true,
-});
+export const proposalUpdateSchema = proposalContentSchema
+  .omit({
+    proposedSpeakers: true,
+  })
+  .extend({ expectedRevision: z.number().int().positive() });
 export type ProposalUpdate = z.infer<typeof proposalUpdateSchema>;
 export type SubmitProposalInput = z.infer<typeof submitProposalSchema>;
 
@@ -93,6 +95,7 @@ export type ProposalDraft = z.infer<typeof proposalDraftSchema>;
 export const submissionSchema = z.object({
   id: submissionIdSchema,
   status: z.enum(["active", "withdrawn"]),
+  revision: z.number().int().positive(),
   event: z.object({ name: z.string(), slug: z.string() }),
   cfp: z.object({
     id: z.string().transform((value) => value as CfpId),

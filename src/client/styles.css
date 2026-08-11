@@ -1376,6 +1376,90 @@ a {
   }
 }
 
+.onboarding-page > .arrow-link {
+  display: inline-block;
+  margin-bottom: 54px;
+}
+.onboarding-builders {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 34px;
+  margin: 46px 0 72px;
+}
+.onboarding-builders .form-board {
+  box-shadow: 7px 7px 0 var(--acid);
+}
+.onboarding-builders h2,
+.readiness-section h2,
+.task-card h2,
+.task-card h3 {
+  margin: 12px 0 28px;
+  font:
+    600 32px/1 "Newsreader",
+    serif;
+  letter-spacing: -0.035em;
+}
+.readiness-section {
+  margin: 72px 0;
+}
+.readiness-section > h2 {
+  margin-top: 34px;
+}
+.readiness-table {
+  border-top: 1px solid var(--ink);
+}
+.readiness-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) 100px minmax(220px, 1fr) 180px;
+  gap: 22px;
+  align-items: center;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.assignment-cards {
+  display: grid;
+  gap: 22px;
+}
+.task-card {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 24px;
+  padding: 30px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.18);
+}
+.task-card h2,
+.task-card h3 {
+  margin-bottom: 8px;
+}
+.task-card p {
+  color: rgba(27, 39, 36, 0.62);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.task-card form,
+.task-card > .field,
+.evidence-history,
+.task-actions,
+.evidence-row {
+  grid-column: 1 / -1;
+}
+.task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+.evidence-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(220px, 2fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .invite-form-replacement {
     animation: none;
@@ -1389,6 +1473,21 @@ a {
   .team-columns,
   .setup-grid,
   .public-form-shell {
+    grid-template-columns: 1fr;
+  }
+  .onboarding-builders {
+    grid-template-columns: 1fr;
+  }
+  .readiness-row {
+    grid-template-columns: 1fr auto;
+  }
+  .readiness-row > span:nth-child(n + 3) {
+    grid-column: 1 / -1;
+  }
+  .task-card {
+    grid-template-columns: 1fr;
+  }
+  .evidence-row {
     grid-template-columns: 1fr;
   }
   .speaker-invite-form {

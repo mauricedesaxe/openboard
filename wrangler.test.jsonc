@@ -11,6 +11,17 @@
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations",
     },
+    {
+      "binding": "MIGRATION_DB",
+      "database_name": "openboard-migration-test",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "openboard-test-files",
+    },
   ],
   "vars": {
     "APP_ENV": "test",
