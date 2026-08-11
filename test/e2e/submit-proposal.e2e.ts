@@ -124,6 +124,7 @@ async function signIn(page: Page, email: string, buttonName: string) {
     page.waitForURL((url) => !url.pathname.startsWith("/sign-in")),
     page.getByRole("button", { name: buttonName }).click(),
   ]);
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
 }
 
 async function createOpenCfp(page: Page, slug: string) {
