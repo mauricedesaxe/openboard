@@ -219,10 +219,7 @@ function SignInPage() {
     setError(undefined);
     setCode("");
     setDevCode(undefined);
-    const result = await authClient.emailOtp.sendVerificationOtp({
-      email,
-      type: "sign-in",
-    });
+    const result = await beginEmailSignIn(email, returnTo);
     setBusy(false);
 
     if (result.error) {
@@ -231,7 +228,6 @@ function SignInPage() {
     }
 
     setStep("code");
-    window.sessionStorage.setItem(pendingSignInKey(returnTo), email);
     if (import.meta.env.DEV) {
       setDevCode(await fetchCapturedAuthCode(email));
     }
@@ -385,6 +381,17 @@ function SignInPage() {
 
 function pendingSignInKey(returnTo: string): string {
   return `openboard:pending-sign-in:${returnTo}`;
+}
+
+async function beginEmailSignIn(email: string, returnTo: string) {
+  const result = await authClient.emailOtp.sendVerificationOtp({
+    email,
+    type: "sign-in",
+  });
+  if (!result.error) {
+    window.sessionStorage.setItem(pendingSignInKey(returnTo), email);
+  }
+  return result;
 }
 
 async function fetchCapturedAuthCode(
@@ -4203,10 +4210,7 @@ function PublicCfpPage() {
       const pendingDraft = { ...draft, submitAfterSignIn: true };
       const speakerEmail = parsed.value.proposedSpeakers[0]!.email;
       setSignInPending(true);
-      const result = await authClient.emailOtp.sendVerificationOtp({
-        email: speakerEmail,
-        type: "sign-in",
-      });
+      const result = await beginEmailSignIn(speakerEmail, returnTo);
       setSignInPending(false);
       if (result.error) {
         setProposalError("The sign-in code could not be sent. Try again.");
@@ -4214,7 +4218,6 @@ function PublicCfpPage() {
       }
       setDraft(pendingDraft);
       window.localStorage.setItem(draftKey, JSON.stringify(pendingDraft));
-      window.sessionStorage.setItem(pendingSignInKey(returnTo), speakerEmail);
       void navigate(`/sign-in?returnTo=${encodeURIComponent(returnTo)}`);
       return;
     }
