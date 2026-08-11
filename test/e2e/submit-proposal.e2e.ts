@@ -5,6 +5,7 @@ import { requestSignInCode } from "./support";
 test("resumes a local draft and submits after sign-in", async ({ page }) => {
   const suffix = `${Date.now()}`;
   const slug = `browser-proposal-${suffix}`;
+  const submitterEmail = `browser-submitter-${suffix}@example.com`;
   await page.goto("/");
   await signIn(page, `browser-owner-${suffix}@example.com`, "Open my board");
   await createOpenCfp(page, slug);
@@ -38,7 +39,7 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
     .fill("Browser Submitter");
   await page
     .getByRole("textbox", { name: "Proposed speaker email" })
-    .fill(`browser-speaker-${suffix}@example.com`);
+    .fill(submitterEmail);
   expect(
     await measureLocalTransition(page, "#audience", () =>
       page.getByRole("button", { name: "Continue" }).click(),
@@ -64,11 +65,7 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   expect(
     trpcRequests.filter((url) => url.includes("submissions.submit")),
   ).toEqual([]);
-  await signIn(
-    page,
-    `browser-submitter-${suffix}@example.com`,
-    "Return to proposal",
-  );
+  await signIn(page, submitterEmail, "Return to proposal");
 
   await expect(page).toHaveURL(/\/submissions\/[0-9a-f-]+$/, {
     timeout: 15_000,
@@ -85,6 +82,10 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(
     "A resumed proposal",
   );
+  await expect(page.getByRole("button", { name: "Remove" })).toBeDisabled();
+  await expect(
+    page.getByText("At least one proposed speaker must remain."),
+  ).toBeVisible();
 });
 
 async function measureLocalTransition(
