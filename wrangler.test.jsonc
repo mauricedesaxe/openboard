@@ -12,6 +12,12 @@
       "migrations_dir": "migrations",
     },
   ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "openboard-test-files",
+    },
+  ],
   "vars": {
     "APP_ENV": "test",
     "APP_URL": "https://localhost",

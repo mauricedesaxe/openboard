@@ -18,6 +18,12 @@
       "migrations_dir": "migrations",
     },
   ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "openboard-files",
+    },
+  ],
   "send_email": [
     {
       "name": "EMAIL",
