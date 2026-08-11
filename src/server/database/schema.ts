@@ -875,6 +875,8 @@ export const publishedAgendaItems = sqliteTable(
     startsAt: text("starts_at").notNull(),
     endsAt: text("ends_at").notNull(),
     canceled: integer("canceled", { mode: "boolean" }).notNull().default(false),
+    calendarUid: text("calendar_uid"),
+    calendarSequence: integer("calendar_sequence"),
   },
   (table) => [
     uniqueIndex("published_agenda_items_publication_item_idx").on(
@@ -936,6 +938,17 @@ export const agendaDeliveryWork = sqliteTable(
     calendarUid: text("calendar_uid").notNull(),
     calendarSequence: integer("calendar_sequence").notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    status: text("status", {
+      enum: ["pending", "failed", "completed", "superseded"],
+    })
+      .notNull()
+      .default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }),
+    claimedAt: integer("claimed_at", { mode: "timestamp_ms" }),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    supersededAt: integer("superseded_at", { mode: "timestamp_ms" }),
+    lastError: text("last_error"),
   },
   (table) => [
     uniqueIndex("agenda_delivery_work_publication_item_idx").on(
@@ -945,10 +958,35 @@ export const agendaDeliveryWork = sqliteTable(
   ],
 );
 
+export const agendaDeliveryAttempts = sqliteTable(
+  "agenda_delivery_attempts",
+  {
+    id: text("id").primaryKey(),
+    workId: text("work_id")
+      .notNull()
+      .references(() => agendaDeliveryWork.id, { onDelete: "cascade" }),
+    attemptNumber: integer("attempt_number").notNull(),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
+    finishedAt: integer("finished_at", { mode: "timestamp_ms" }).notNull(),
+    latencyMs: integer("latency_ms").notNull(),
+    result: text("result", {
+      enum: ["delivered", "failed", "superseded"],
+    }).notNull(),
+    error: text("error"),
+  },
+  (table) => [
+    uniqueIndex("agenda_delivery_attempts_work_number_idx").on(
+      table.workId,
+      table.attemptNumber,
+    ),
+  ],
+);
+
 export const schema = {
   account,
   agendas,
   agendaDeliveryWork,
+  agendaDeliveryAttempts,
   agendaItems,
   agendaPublications,
   communications,
