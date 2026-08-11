@@ -35,8 +35,7 @@ import {
 } from "../database/schema";
 import { findEventForOrganizer } from "../events/repository";
 
-type ReviewWriteError =
-  | "duplicate_assignment"
+export type ReviewWriteError =
   | "invalid_assignment"
   | "not_found"
   | "persistence_failed"
@@ -57,7 +56,7 @@ export async function getOrganizerReviewBoard(
 ) {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return undefined;
-  const round = await findCurrentRound(database, event.id);
+  const round = await findOpenOrLatestReviewRound(database, event.id);
   if (!round) return undefined;
 
   const activeReviewers = await database
@@ -76,7 +75,7 @@ export async function getOrganizerReviewBoard(
       ),
     )
     .orderBy(asc(user.email));
-  const proposalRows = await database
+  const submissionRows = await database
     .select({
       id: submissions.id,
       title: submissions.title,
@@ -115,7 +114,7 @@ export async function getOrganizerReviewBoard(
   return {
     round: { id: round.id, name: round.name, status: round.status },
     reviewers: activeReviewers,
-    submissions: proposalRows.map((submission) => {
+    submissions: submissionRows.map((submission) => {
       const assignments = assignmentRows.filter(
         (assignment) => assignment.submissionId === submission.id,
       );
@@ -290,7 +289,24 @@ export async function assignReviewer(
       return { ok: false, error: "invalid_assignment" };
     }
     if (String(error).includes("UNIQUE constraint failed")) {
-      return { ok: false, error: "duplicate_assignment" };
+      const [raced] = await database
+        .select({ id: reviewerAssignments.id })
+        .from(reviewerAssignments)
+        .where(
+          and(
+            eq(reviewerAssignments.reviewRoundId, target.roundId),
+            eq(reviewerAssignments.submissionId, submissionId),
+            eq(reviewerAssignments.reviewerUserId, reviewerUserId),
+            isNull(reviewerAssignments.revokedAt),
+          ),
+        )
+        .limit(1);
+      return raced
+        ? {
+            ok: true,
+            value: { id: raced.id as ReviewerAssignmentId },
+          }
+        : { ok: false, error: "persistence_failed" };
     }
     return { ok: false, error: "persistence_failed" };
   }
@@ -332,11 +348,31 @@ export async function revokeReviewerAssignment(
         eq(reviewerAssignments.id, assignmentId),
         eq(reviewerAssignments.eventId, event.id),
         isNull(reviewerAssignments.revokedAt),
+        inArray(
+          reviewerAssignments.reviewRoundId,
+          database
+            .select({ id: reviewRounds.id })
+            .from(reviewRounds)
+            .where(inArray(reviewRounds.status, ["draft", "open"])),
+        ),
       ),
     );
-  return result.meta.changes > 0
-    ? { ok: true, value: { revoked: true } }
-    : { ok: false, error: "not_found" };
+  if (result.meta.changes > 0) {
+    return { ok: true, value: { revoked: true } };
+  }
+  const [latestRound] = await database
+    .select({ status: reviewRounds.status })
+    .from(reviewRounds)
+    .innerJoin(
+      reviewerAssignments,
+      eq(reviewerAssignments.reviewRoundId, reviewRounds.id),
+    )
+    .where(eq(reviewerAssignments.id, assignmentId))
+    .limit(1);
+  return {
+    ok: false,
+    error: latestRound?.status === "closed" ? "round_not_open" : "not_found",
+  };
 }
 
 export async function saveReview(
@@ -410,7 +446,7 @@ export async function openReviewRound(
 ): Promise<ReviewWriteResult<{ opened: true }>> {
   const event = await findEventForOrganizer(database, actorUserId, slug);
   if (!event) return { ok: false, error: "not_found" };
-  const round = await findCurrentRound(database, event.id);
+  const round = await findOpenOrLatestReviewRound(database, event.id);
   if (!round || round.status !== "draft") {
     return { ok: false, error: "round_not_open" };
   }
@@ -430,15 +466,15 @@ export async function closeReviewRound(
   database: Database,
   actorUserId: UserId,
   slug: string,
-  confirmIncomplete: boolean,
+  allowMissingReviews: boolean,
 ): Promise<ReviewWriteResult<{ closed: true }>> {
   const event = await findEventForOrganizer(database, actorUserId, slug);
   if (!event) return { ok: false, error: "not_found" };
-  const round = await findCurrentRound(database, event.id);
+  const round = await findOpenOrLatestReviewRound(database, event.id);
   if (!round || round.status !== "open") {
     return { ok: false, error: "round_not_open" };
   }
-  if (!confirmIncomplete) {
+  if (!allowMissingReviews) {
     const [incomplete] = await database
       .select({ id: reviewerAssignments.id })
       .from(reviewerAssignments)
@@ -475,7 +511,7 @@ export async function reopenReviewRound(
 ): Promise<ReviewWriteResult<{ reopened: true }>> {
   const event = await findEventForOrganizer(database, actorUserId, slug);
   if (!event) return { ok: false, error: "not_found" };
-  const round = await findCurrentRound(database, event.id);
+  const round = await findOpenOrLatestReviewRound(database, event.id);
   if (!round || round.status !== "closed") {
     return { ok: false, error: "round_not_closed" };
   }
@@ -529,7 +565,7 @@ export async function queueDecision(
 ): Promise<ReviewWriteResult<{ queued: true }>> {
   const event = await findEventForOrganizer(database, actorUserId, slug);
   if (!event) return { ok: false, error: "not_found" };
-  const round = await findCurrentRound(database, event.id);
+  const round = await findOpenOrLatestReviewRound(database, event.id);
   if (!round) return { ok: false, error: "not_found" };
   const result = await database
     .update(decisions)
@@ -570,7 +606,7 @@ export async function publishDecisions(
 ): Promise<ReviewWriteResult<{ published: number }>> {
   const event = await findEventForOrganizer(database, actorUserId, input.slug);
   if (!event) return { ok: false, error: "not_found" };
-  const round = await findCurrentRound(database, event.id);
+  const round = await findOpenOrLatestReviewRound(database, event.id);
   if (!round || round.status !== "closed") {
     return { ok: false, error: "round_not_closed" };
   }
@@ -631,7 +667,6 @@ export async function publishDecisions(
           decisionId: selection.decisionId,
           outcome: selection.outcome,
           expectedRevision: selection.expectedRevision,
-          createdAt: now,
         })),
       ),
       ...selections.map((selection) =>
@@ -674,7 +709,11 @@ export async function publishDecisions(
   }
 
   try {
-    await recordDecisionPublicationFollowups(database, event.id, publicationId);
+    await recordDecisionCommunicationsAndAuditEvents(
+      database,
+      event.id,
+      publicationId,
+    );
   } catch (error: unknown) {
     console.error(
       JSON.stringify({
@@ -688,7 +727,7 @@ export async function publishDecisions(
   return { ok: true, value: { published: selections.length } };
 }
 
-export async function retryDecisionPublicationFollowups(
+export async function retryDecisionCommunicationsAndAuditEvents(
   database: Database,
   actorUserId: UserId,
   slug: string,
@@ -696,7 +735,7 @@ export async function retryDecisionPublicationFollowups(
   const event = await findEventForOrganizer(database, actorUserId, slug);
   if (!event) return { ok: false, error: "not_found" };
   try {
-    const recorded = await recordDecisionPublicationFollowups(
+    const recorded = await recordDecisionCommunicationsAndAuditEvents(
       database,
       event.id,
     );
@@ -706,7 +745,7 @@ export async function retryDecisionPublicationFollowups(
   }
 }
 
-async function recordDecisionPublicationFollowups(
+async function recordDecisionCommunicationsAndAuditEvents(
   database: Database,
   eventId: string,
   publicationId?: string,
@@ -767,7 +806,10 @@ async function recordDecisionPublicationFollowups(
   return rows.length;
 }
 
-async function findCurrentRound(database: Database, eventId: string) {
+async function findOpenOrLatestReviewRound(
+  database: Database,
+  eventId: string,
+) {
   const [round] = await database
     .select({
       id: reviewRounds.id,

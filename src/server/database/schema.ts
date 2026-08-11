@@ -444,7 +444,6 @@ export const decisionPublicationItems = sqliteTable(
       .references(() => decisions.id),
     outcome: text("outcome", { enum: ["accepted", "declined"] }).notNull(),
     expectedRevision: integer("expected_revision").notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
 );
 

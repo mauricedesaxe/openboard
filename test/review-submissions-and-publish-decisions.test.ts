@@ -80,9 +80,11 @@ describe("review submissions and publish decisions", () => {
     const organizer = await signIn("review-organizer@example.com");
     const reviewer = await signIn("reviewer-one@example.com");
     const secondReviewer = await signIn("reviewer-two@example.com");
-    const firstSubmitter = await signIn("review-submit-one@example.com");
-    const secondSubmitter = await signIn("review-submit-two@example.com");
-    const thirdSubmitter = await signIn("review-submit-three@example.com");
+    const firstSubmissionOwner = await signIn("review-submit-one@example.com");
+    const secondSubmissionOwner = await signIn("review-submit-two@example.com");
+    const thirdSubmissionOwner = await signIn(
+      "review-submit-three@example.com",
+    );
     const unrelated = await signIn("review-outsider@example.com");
 
     await createEvent(owner.cookie, slug);
@@ -159,7 +161,7 @@ describe("review submissions and publish decisions", () => {
       owner.cookie,
     );
     const first = await submitProposal(
-      firstSubmitter.cookie,
+      firstSubmissionOwner.cookie,
       slug,
       cfp.id,
       track.id,
@@ -167,7 +169,7 @@ describe("review submissions and publish decisions", () => {
       "Visible abstract for the first proposal.",
     );
     const second = await submitProposal(
-      secondSubmitter.cookie,
+      secondSubmissionOwner.cookie,
       slug,
       cfp.id,
       track.id,
@@ -175,7 +177,7 @@ describe("review submissions and publish decisions", () => {
       "Visible abstract for the second proposal.",
     );
     const withdrawn = await submitProposal(
-      thirdSubmitter.cookie,
+      thirdSubmissionOwner.cookie,
       slug,
       cfp.id,
       track.id,
@@ -298,7 +300,7 @@ describe("review submissions and publish decisions", () => {
       },
       review: null,
     });
-    expect(JSON.stringify(mine)).not.toContain(firstSubmitter.userId);
+    expect(JSON.stringify(mine)).not.toContain(firstSubmissionOwner.userId);
     expect(JSON.stringify(mine)).not.toContain("review-submit-one@example.com");
     expect(JSON.stringify(mine)).not.toContain("Private identifying note");
 
@@ -403,7 +405,7 @@ describe("review submissions and publish decisions", () => {
       (
         await callTrpc(
           "reviews.closeRound",
-          { slug, confirmIncomplete: false },
+          { slug, allowMissingReviews: false },
           organizer.cookie,
         )
       ).status,
@@ -412,7 +414,7 @@ describe("review submissions and publish decisions", () => {
       (
         await callTrpc(
           "reviews.closeRound",
-          { slug, confirmIncomplete: true },
+          { slug, allowMissingReviews: true },
           organizer.cookie,
         )
       ).status,
@@ -452,7 +454,7 @@ describe("review submissions and publish decisions", () => {
           await callTrpc(
             "submissions.getOwn",
             { submissionId: first.id },
-            firstSubmitter.cookie,
+            firstSubmissionOwner.cookie,
             "query",
           )
         ).body,
@@ -483,6 +485,21 @@ describe("review submissions and publish decisions", () => {
       { slug, submissionId: first.id, status: "accept_queued" },
       owner.cookie,
     );
+    board = getResult(
+      (
+        await callTrpc(
+          "reviews.organizerBoard",
+          { slug },
+          owner.cookie,
+          "query",
+        )
+      ).body,
+      boardSchema,
+    );
+    const queuedWhileOpen = board.submissions.find(
+      (submission) => submission.id === first.id,
+    );
+    if (!queuedWhileOpen) throw new Error("Expected queued submission");
     expect(
       (
         await callTrpc(
@@ -493,7 +510,7 @@ describe("review submissions and publish decisions", () => {
               {
                 submissionId: first.id,
                 expectedStatus: "accept_queued",
-                expectedRevision: 3,
+                expectedRevision: queuedWhileOpen.decision.revision,
               },
             ],
           },
@@ -504,7 +521,7 @@ describe("review submissions and publish decisions", () => {
 
     await callTrpc(
       "reviews.closeRound",
-      { slug, confirmIncomplete: true },
+      { slug, allowMissingReviews: true },
       owner.cookie,
     );
     await callTrpc(
@@ -601,8 +618,13 @@ describe("review submissions and publish decisions", () => {
     );
     expect(published.status).toBe(200);
     expect(
-      (await callTrpc("decisions.retryFollowups", { slug }, unrelated.cookie))
-        .status,
+      (
+        await callTrpc(
+          "decisions.retryPublicationRecords",
+          { slug },
+          unrelated.cookie,
+        )
+      ).status,
     ).toBe(404);
     expect(
       await testEnvironment.DB.prepare(
@@ -638,12 +660,22 @@ describe("review submissions and publish decisions", () => {
     ).run();
     await testEnvironment.DB.prepare("DELETE FROM review_audit_events").run();
     expect(
-      (await callTrpc("decisions.retryFollowups", { slug }, owner.cookie))
-        .status,
+      (
+        await callTrpc(
+          "decisions.retryPublicationRecords",
+          { slug },
+          owner.cookie,
+        )
+      ).status,
     ).toBe(200);
     expect(
-      (await callTrpc("decisions.retryFollowups", { slug }, owner.cookie))
-        .status,
+      (
+        await callTrpc(
+          "decisions.retryPublicationRecords",
+          { slug },
+          owner.cookie,
+        )
+      ).status,
     ).toBe(200);
     expect(
       await testEnvironment.DB.prepare(
@@ -670,14 +702,14 @@ describe("review submissions and publish decisions", () => {
         [
           first.id,
           {
-            recipientUserId: firstSubmitter.userId,
+            recipientUserId: firstSubmissionOwner.userId,
             purpose: "decision_acceptance",
           },
         ],
         [
           second.id,
           {
-            recipientUserId: secondSubmitter.userId,
+            recipientUserId: secondSubmissionOwner.userId,
             purpose: "decision_decline",
           },
         ],
@@ -689,7 +721,7 @@ describe("review submissions and publish decisions", () => {
           await callTrpc(
             "submissions.getOwn",
             { submissionId: first.id },
-            firstSubmitter.cookie,
+            firstSubmissionOwner.cookie,
             "query",
           )
         ).body,
@@ -714,7 +746,7 @@ describe("review submissions and publish decisions", () => {
         await callTrpc(
           "submissions.withdrawOwn",
           { submissionId: withdrawn.id },
-          thirdSubmitter.cookie,
+          thirdSubmissionOwner.cookie,
         )
       ).status,
     ).toBe(200);

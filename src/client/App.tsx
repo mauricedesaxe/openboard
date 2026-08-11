@@ -749,7 +749,7 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
         "Close this round? Incomplete assignments will remain as history and reviewers can no longer edit.",
       )
     ) {
-      closeRound.mutate({ slug, confirmIncomplete: true });
+      closeRound.mutate({ slug, allowMissingReviews: true });
     }
   }
 
@@ -816,7 +816,7 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
       )}
       <div className="review-list">
         {board.data.submissions.map((submission) => {
-          const terminal =
+          const hasPublishedDecision =
             submission.decision.status === "accepted" ||
             submission.decision.status === "declined";
           return (
@@ -844,7 +844,9 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
                   name={`decision-${submission.id}`}
                 >
                   <select
-                    disabled={terminal || submission.status === "withdrawn"}
+                    disabled={
+                      hasPublishedDecision || submission.status === "withdrawn"
+                    }
                     id={`decision-${submission.id}`}
                     onChange={(event) =>
                       queue.mutate({
@@ -859,7 +861,7 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
                     <option value="pending">Pending</option>
                     <option value="accept_queued">Queue acceptance</option>
                     <option value="decline_queued">Queue decline</option>
-                    {terminal && (
+                    {hasPublishedDecision && (
                       <option value={submission.decision.status}>
                         {submission.decision.status}
                       </option>
@@ -882,7 +884,7 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
                       Include in this publication
                     </label>
                   )}
-                {!terminal &&
+                {!hasPublishedDecision &&
                   submission.status === "active" &&
                   board.data.round.status !== "closed" && (
                     <div className="assignment-control">

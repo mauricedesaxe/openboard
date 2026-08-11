@@ -15,7 +15,7 @@ CREATE INDEX review_rounds_event_id_idx ON review_rounds(event_id);
 INSERT INTO review_rounds (
   id, event_id, cfp_id, name, status, opened_at, created_at, updated_at
 )
-SELECT id, event_id, id, 'Review round', 'draft', NULL, created_at, updated_at
+SELECT id, event_id, id, name || ' review', 'draft', NULL, created_at, updated_at
 FROM cfps;
 
 DROP TABLE reviewer_assignments;
@@ -139,8 +139,7 @@ CREATE TABLE decision_publication_items (
   publication_id TEXT NOT NULL REFERENCES decision_publications(id) ON DELETE CASCADE,
   decision_id TEXT NOT NULL UNIQUE REFERENCES decisions(id),
   outcome TEXT NOT NULL CHECK (outcome IN ('accepted', 'declined')),
-  expected_revision INTEGER NOT NULL,
-  created_at INTEGER NOT NULL
+  expected_revision INTEGER NOT NULL
 );
 
 CREATE TRIGGER decision_publication_items_require_current_queue
