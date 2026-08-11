@@ -950,6 +950,7 @@ export const agendaDeliveryWork = sqliteTable(
     attemptCount: integer("attempt_count").notNull().default(0),
     nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }),
     claimedAt: integer("claimed_at", { mode: "timestamp_ms" }),
+    claimToken: text("claim_token"),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     supersededAt: integer("superseded_at", { mode: "timestamp_ms" }),
     lastError: text("last_error"),
@@ -959,6 +960,8 @@ export const agendaDeliveryWork = sqliteTable(
       table.publicationId,
       table.agendaItemId,
       table.recipientKey,
+      table.destination,
+      table.action,
     ),
   ],
 );

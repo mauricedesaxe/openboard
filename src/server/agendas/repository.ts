@@ -328,6 +328,26 @@ export async function publishAgenda(
         ]
       : [],
   );
+  const previousRecipientRows =
+    previousStates.length === 0
+      ? []
+      : await database
+          .select({
+            agendaItemId: agendaDeliveryWork.agendaItemId,
+            recipientKey: agendaDeliveryWork.recipientKey,
+            recipientUserId: agendaDeliveryWork.recipientUserId,
+            destination: agendaDeliveryWork.destination,
+            recipientName: agendaDeliveryWork.recipientName,
+            action: agendaDeliveryWork.action,
+            sequence: agendaDeliveryWork.calendarSequence,
+          })
+          .from(agendaDeliveryWork)
+          .where(
+            inArray(
+              agendaDeliveryWork.agendaItemId,
+              previousStates.map((state) => state.agendaItemId),
+            ),
+          );
   const publicationId = crypto.randomUUID();
   const revision = (publicationStateRows[0]?.revision ?? 0) + 1;
   const now = new Date();
@@ -336,6 +356,7 @@ export async function publishAgenda(
   );
   const calendarChanges = snapshots.flatMap((snapshot) => {
     if (snapshot.kind !== "program") return [];
+    const recipients = snapshotRecipients(snapshot);
     const previous = previousStates.find(
       (state) => state.agendaItemId === snapshot.agendaItemId,
     );
@@ -350,6 +371,7 @@ export async function publishAgenda(
       format: snapshot.format,
       track: snapshot.trackName,
       speakers: snapshot.speakers.map((speaker) => speaker.displayName),
+      recipients,
     });
     if (previous?.fingerprint === fingerprint) return [];
     const sequence = (previous?.sequence ?? -1) + 1;
@@ -361,7 +383,9 @@ export async function publishAgenda(
         : previous.canceled
           ? "restore"
           : "update";
-    return [{ snapshot, fingerprint, sequence, uid, action } as const];
+    return [
+      { snapshot, recipients, fingerprint, sequence, uid, action } as const,
+    ];
   });
   const calendarMetadata = new Map(
     snapshots.flatMap((snapshot) => {
@@ -467,25 +491,19 @@ export async function publishAgenda(
       }),
   );
   const deliveryValues = calendarChanges.flatMap((change) =>
-    [
-      ...new Map(
-        change.snapshot.speakers.map(
-          (speaker) =>
-            [
-              speaker.claimedUserId ?? `speaker:${speaker.id}`,
-              speaker,
-            ] as const,
-        ),
-      ).values(),
-    ].map((speaker) => ({
+    calendarDeliveryRecipients(
+      change,
+      previousStates,
+      previousRecipientRows,
+    ).map((recipient) => ({
       id: crypto.randomUUID(),
       publicationId,
       agendaItemId: change.snapshot.agendaItemId,
-      recipientKey: speaker.claimedUserId ?? `speaker:${speaker.id}`,
-      recipientUserId: speaker.claimedUserId,
-      destination: speaker.claimedEmail ?? speaker.invitedEmail,
-      recipientName: speaker.displayName,
-      action: change.action,
+      recipientKey: recipient.key,
+      recipientUserId: recipient.userId,
+      destination: recipient.destination,
+      recipientName: recipient.name,
+      action: recipient.action,
       calendarUid: change.uid,
       calendarSequence: change.sequence,
       createdAt: now,
@@ -884,6 +902,114 @@ function snapshotItem(
     canceled: item.canceled,
     speakers: item.kind === "program" ? item.speakers : [],
   };
+}
+
+type CalendarRecipient = {
+  key: string;
+  userId: string | null;
+  destination: string;
+  name: string;
+};
+
+function snapshotRecipients(
+  snapshot: ReturnType<typeof snapshotItem>,
+): CalendarRecipient[] {
+  return [
+    ...new Map(
+      snapshot.speakers.map((speaker) => {
+        const key = speaker.claimedUserId ?? `speaker:${speaker.id}`;
+        return [
+          key,
+          {
+            key,
+            userId: speaker.claimedUserId,
+            destination: speaker.claimedEmail ?? speaker.invitedEmail,
+            name: speaker.displayName,
+          },
+        ] as const;
+      }),
+    ).values(),
+  ].sort(
+    (left, right) =>
+      left.key.localeCompare(right.key) ||
+      left.destination.localeCompare(right.destination),
+  );
+}
+
+function calendarDeliveryRecipients(
+  change: {
+    snapshot: ReturnType<typeof snapshotItem>;
+    recipients: CalendarRecipient[];
+    action: "publish" | "update" | "cancel" | "restore";
+  },
+  previousStates: Array<{ agendaItemId: string; sequence: number }>,
+  previousRows: Array<{
+    agendaItemId: string;
+    recipientKey: string | null;
+    recipientUserId: string | null;
+    destination: string | null;
+    recipientName: string | null;
+    action: "publish" | "update" | "cancel" | "restore";
+    sequence: number;
+  }>,
+) {
+  const previousSequence = previousStates.find(
+    (state) => state.agendaItemId === change.snapshot.agendaItemId,
+  )?.sequence;
+  const previous = previousRows.flatMap((row) =>
+    row.agendaItemId === change.snapshot.agendaItemId &&
+    row.sequence === previousSequence &&
+    row.action !== "cancel" &&
+    row.recipientKey &&
+    row.destination &&
+    row.recipientName
+      ? [
+          {
+            key: row.recipientKey,
+            userId: row.recipientUserId,
+            destination: row.destination,
+            name: row.recipientName,
+          },
+        ]
+      : [],
+  );
+  if (change.action === "cancel") {
+    return deduplicateCalendarRecipients([
+      ...previous,
+      ...change.recipients,
+    ]).map((recipient) => ({ ...recipient, action: "cancel" as const }));
+  }
+  const removed = previous.filter(
+    (recipient) =>
+      !change.recipients.some(
+        (current) =>
+          current.key === recipient.key &&
+          current.destination === recipient.destination,
+      ),
+  );
+  return [
+    ...change.recipients.map((recipient) => ({
+      ...recipient,
+      action: change.action,
+    })),
+    ...removed.map((recipient) => ({
+      ...recipient,
+      action: "cancel" as const,
+    })),
+  ];
+}
+
+function deduplicateCalendarRecipients(
+  recipients: CalendarRecipient[],
+): CalendarRecipient[] {
+  return [
+    ...new Map(
+      recipients.map((recipient) => [
+        `${recipient.key}\0${recipient.destination}`,
+        recipient,
+      ]),
+    ).values(),
+  ];
 }
 
 function agendaItemPersistenceError(error: unknown): AgendaWriteError {

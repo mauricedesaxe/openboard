@@ -6,13 +6,13 @@ export type AgendaCalendarMessageInput = {
   publishedAt: string;
   destination: string;
   recipientName: string;
+  organizerEmail: string;
   action: "publish" | "update" | "cancel" | "restore";
   uid: string;
   sequence: number;
   item: {
     title: string;
     abstract: string | null;
-    format: string | null;
     trackName: string | null;
     roomName: string | null;
     startsAt: string;
@@ -102,6 +102,7 @@ export function renderAgendaCalendarMessage(input: AgendaCalendarMessageInput) {
     `DTSTART:${calendarDateTime(input.item.startsAt)}`,
     `DTEND:${calendarDateTime(input.item.endsAt)}`,
     `SUMMARY:${escapeText(input.item.title)}`,
+    `ORGANIZER:mailto:${input.organizerEmail}`,
     `ATTENDEE;CN=${escapeParameter(input.recipientName)}:mailto:${input.destination}`,
   ];
   if (input.item.roomName) {
@@ -149,7 +150,12 @@ function escapeText(value: string): string {
 }
 
 function escapeParameter(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  return `"${value
+    .replaceAll("^", "^^")
+    .replaceAll("\r\n", "^n")
+    .replaceAll("\r", "^n")
+    .replaceAll("\n", "^n")
+    .replaceAll('"', "^'")}"`;
 }
 
 function foldLine(line: string): string[] {

@@ -129,6 +129,12 @@ async function deliverPendingAgendaCalendars(
   const result = await processAgendaDeliveryWork(
     createDatabase(environment.DB),
     (delivery) => sendAgendaCalendarDelivery(configResult.value, delivery),
+    {
+      organizerEmail:
+        configResult.value.email.type === "cloudflare"
+          ? configResult.value.email.from
+          : `calendar@${new URL(configResult.value.appUrl).hostname}`,
+    },
   );
   console.log(
     JSON.stringify({ event: "agenda_calendar_worker_completed", ...result }),
