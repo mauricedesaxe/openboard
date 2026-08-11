@@ -17,6 +17,13 @@ test("refreshes the public CFP after its definition changes", async ({
   await page.getByRole("button", { name: "Add" }).first().click();
   await expect(page.getByText("Track created", { exact: true })).toBeVisible();
 
+  const deadline = page.getByLabel("Deadline");
+  await expect(deadline).toHaveValue("2028-08-10T00:00");
+  await deadline.fill("2028-07-01T09:00");
+  await expect(
+    page.getByText("The deadline is before the event starts."),
+  ).toBeVisible();
+
   const formats = page.getByRole("textbox", { name: "Formats" });
   await formats.fill("");
   await formats.pressSequentially("Talk, Lightning talk");

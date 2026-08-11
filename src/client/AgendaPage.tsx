@@ -3,6 +3,8 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
+import { formatEventDateRange } from "../shared/date-time";
+
 import { MutationStatus } from "./MutationStatus";
 import { useMutationStatuses } from "./mutation-feedback";
 import { useTRPC } from "./trpc";
@@ -17,13 +19,13 @@ export function AgendaPage() {
   );
   const [programItemId, setProgramItemId] = useState("");
   const [programRoomId, setProgramRoomId] = useState("");
-  const [programStart, setProgramStart] = useState("");
-  const [programEnd, setProgramEnd] = useState("");
+  const [programStart, setProgramStart] = useState<string>();
+  const [programEnd, setProgramEnd] = useState<string>();
   const [serviceTitle, setServiceTitle] = useState("");
   const [serviceScope, setServiceScope] = useState<"event" | "room">("event");
   const [serviceRoomId, setServiceRoomId] = useState("");
-  const [serviceStart, setServiceStart] = useState("");
-  const [serviceEnd, setServiceEnd] = useState("");
+  const [serviceStart, setServiceStart] = useState<string>();
+  const [serviceEnd, setServiceEnd] = useState<string>();
   const refresh = () =>
     queryClient.invalidateQueries(trpc.agendas.working.queryFilter({ slug }));
   const placeProgram = useMutation(
@@ -107,21 +109,27 @@ export function AgendaPage() {
     );
   }
 
+  const eventTimeWindow = agendaTimeWindow(agenda.data);
+  const resolvedProgramStart = programStart ?? eventTimeWindow.defaultStart;
+  const resolvedProgramEnd = programEnd ?? eventTimeWindow.defaultEnd;
+  const resolvedServiceStart = serviceStart ?? eventTimeWindow.defaultStart;
+  const resolvedServiceEnd = serviceEnd ?? eventTimeWindow.defaultEnd;
+
   function submitProgram(event: FormEvent) {
     event.preventDefault();
-    if (!programItemId || !programStart || !programEnd) return;
+    if (!programItemId) return;
     placeProgram.mutate({
       slug,
       programItemId,
       roomId: programRoomId || null,
-      startsAtLocal: programStart,
-      endsAtLocal: programEnd,
+      startsAtLocal: resolvedProgramStart,
+      endsAtLocal: resolvedProgramEnd,
     });
   }
 
   function submitService(event: FormEvent) {
     event.preventDefault();
-    if (!serviceTitle || !serviceStart || !serviceEnd) return;
+    if (!serviceTitle) return;
     placeService.mutate({
       slug,
       title: serviceTitle,
@@ -129,8 +137,8 @@ export function AgendaPage() {
         serviceScope === "event"
           ? { type: "event" }
           : { type: "room", roomId: serviceRoomId },
-      startsAtLocal: serviceStart,
-      endsAtLocal: serviceEnd,
+      startsAtLocal: resolvedServiceStart,
+      endsAtLocal: resolvedServiceEnd,
     });
   }
 
@@ -220,11 +228,14 @@ export function AgendaPage() {
             value={programRoomId}
           />
           <AgendaTimeFields
-            end={programEnd}
+            end={resolvedProgramEnd}
+            max={eventTimeWindow.max}
+            min={eventTimeWindow.min}
             onEnd={setProgramEnd}
             onStart={setProgramStart}
-            start={programStart}
+            start={resolvedProgramStart}
           />
+          <AgendaEventContext eventTimeWindow={eventTimeWindow} />
           <button
             className="secondary-button"
             disabled={placeProgram.isPending}
@@ -267,11 +278,14 @@ export function AgendaPage() {
             />
           )}
           <AgendaTimeFields
-            end={serviceEnd}
+            end={resolvedServiceEnd}
+            max={eventTimeWindow.max}
+            min={eventTimeWindow.min}
             onEnd={setServiceEnd}
             onStart={setServiceStart}
-            start={serviceStart}
+            start={resolvedServiceStart}
           />
+          <AgendaEventContext eventTimeWindow={eventTimeWindow} />
           <button
             className="secondary-button"
             disabled={placeService.isPending}
@@ -321,6 +335,7 @@ export function AgendaPage() {
               }
               item={item}
               key={item.id}
+              eventTimeWindow={eventTimeWindow}
               onCancel={() => cancel.mutate({ slug, agendaItemId: item.id })}
               onMove={(input) =>
                 move.mutate({ slug, agendaItemId: item.id, ...input })
@@ -504,6 +519,7 @@ export function PublicAgendaPage() {
 
 function AgendaItemEditor({
   item,
+  eventTimeWindow,
   rooms,
   onMove,
   onCancel,
@@ -525,6 +541,7 @@ function AgendaItemEditor({
     conflicts: Array<"room" | "speaker">;
     speakers: Array<{ displayName: string }>;
   };
+  eventTimeWindow: AgendaTimeWindow;
   rooms: Array<{ id: string; name: string }>;
   onMove: (input: {
     roomId: string | null;
@@ -564,7 +581,17 @@ function AgendaItemEditor({
           </p>
         )}
       </div>
-      <div className="working-item-controls">
+      <form
+        className="working-item-controls"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onMove({
+            roomId: item.serviceScope === "event" ? null : roomId || null,
+            startsAtLocal: start,
+            endsAtLocal: end,
+          });
+        }}
+      >
         {item.serviceScope !== "event" && (
           <AgendaRoomSelect
             allowEmpty={item.kind === "program"}
@@ -576,22 +603,18 @@ function AgendaItemEditor({
         )}
         <AgendaTimeFields
           end={end}
+          max={eventTimeWindow.max}
+          min={eventTimeWindow.min}
           onEnd={setEnd}
           onStart={setStart}
           start={start}
         />
+        <AgendaEventContext eventTimeWindow={eventTimeWindow} />
         <div className="working-item-actions">
           <button
             className="text-button"
             disabled={busy === "move"}
-            onClick={() =>
-              onMove({
-                roomId: item.serviceScope === "event" ? null : roomId || null,
-                startsAtLocal: start,
-                endsAtLocal: end,
-              })
-            }
-            type="button"
+            type="submit"
           >
             {busy === "move" ? "Saving…" : "Save move"}
           </button>
@@ -621,7 +644,7 @@ function AgendaItemEditor({
             </button>
           )}
         </div>
-      </div>
+      </form>
     </article>
   );
 }
@@ -661,11 +684,15 @@ function AgendaRoomSelect({
 function AgendaTimeFields({
   start,
   end,
+  min,
+  max,
   onStart,
   onEnd,
 }: {
   start: string;
   end: string;
+  min: string;
+  max: string;
   onStart: (value: string) => void;
   onEnd: (value: string) => void;
 }) {
@@ -674,6 +701,8 @@ function AgendaTimeFields({
       <label>
         Starts
         <input
+          max={max}
+          min={min}
           onChange={(event) => onStart(event.target.value)}
           required
           type="datetime-local"
@@ -683,6 +712,8 @@ function AgendaTimeFields({
       <label>
         Ends
         <input
+          max={max}
+          min={min}
           onChange={(event) => onEnd(event.target.value)}
           required
           type="datetime-local"
@@ -691,6 +722,43 @@ function AgendaTimeFields({
       </label>
     </div>
   );
+}
+
+function AgendaEventContext({
+  eventTimeWindow,
+}: {
+  eventTimeWindow: AgendaTimeWindow;
+}) {
+  return (
+    <p className="agenda-event-context">
+      Event {formatEventDateRange(eventTimeWindow.startsOn, eventTimeWindow.endsOn)} ·{" "}
+      {eventTimeWindow.timezone}
+    </p>
+  );
+}
+
+type AgendaTimeWindow = {
+  startsOn: string;
+  endsOn: string;
+  timezone: string;
+  min: string;
+  max: string;
+  defaultStart: string;
+  defaultEnd: string;
+};
+
+function agendaTimeWindow(event: {
+  startsOn: string;
+  endsOn: string;
+  timezone: string;
+}): AgendaTimeWindow {
+  return {
+    ...event,
+    min: `${event.startsOn}T00:00`,
+    max: `${event.endsOn}T23:59`,
+    defaultStart: `${event.startsOn}T09:00`,
+    defaultEnd: `${event.startsOn}T10:00`,
+  };
 }
 
 function AgendaFilter({

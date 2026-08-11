@@ -77,6 +77,33 @@ export function instantFallsAfterLocalDate(
   return isoToEventLocalDateTime(instant, timezone).slice(0, 10) > localDate;
 }
 
+export function instantFallsBeforeLocalDate(
+  instant: string,
+  localDate: string,
+  timezone: string,
+): boolean {
+  return isoToEventLocalDateTime(instant, timezone).slice(0, 10) < localDate;
+}
+
+export function defaultCfpDeadline(startsOn: string, timezone: string): string {
+  return (
+    eventLocalDateTimeToIso(`${startsOn}T00:00`, timezone) ??
+    `${startsOn}T00:00:00.000Z`
+  );
+}
+
+export function formatEventDateRange(startsOn: string, endsOn: string): string {
+  const formatter = new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+  const start = formatter.format(new Date(`${startsOn}T00:00:00Z`));
+  const end = formatter.format(new Date(`${endsOn}T00:00:00Z`));
+  return start === end ? start : `${start} – ${end}`;
+}
+
 function datePartsAsUtc(date: Date, timezone: string): number {
   const parts = dateTimeParts(date, timezone);
   return Date.UTC(

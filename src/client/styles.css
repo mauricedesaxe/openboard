@@ -269,6 +269,13 @@ a {
   color: rgba(0, 0, 0, 0.62);
   font: 12px "DM Mono";
 }
+.form-warning {
+  display: block;
+  color: #9a6a00;
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 4px;
+}
 
 .page {
   width: min(1180px, 92vw);
@@ -565,6 +572,11 @@ a {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 18px;
+}
+.agenda-event-context {
+  margin: 10px 0 0;
+  font: 12px "DM Mono";
+  color: rgba(27, 39, 36, 0.55);
 }
 .working-agenda-list {
   margin-top: 70px;
