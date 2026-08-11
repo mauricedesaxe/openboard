@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import type { FormEvent } from "react";
+import type { CSSProperties, FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
 import { useTRPC } from "./trpc";
@@ -45,6 +45,7 @@ export function AgendaPage() {
   const [serviceRoomId, setServiceRoomId] = useState("");
   const [serviceStart, setServiceStart] = useState("");
   const [serviceEnd, setServiceEnd] = useState("");
+  const [showGrid, setShowGrid] = useState(false);
 
   if (agenda.isPending) return <AgendaStatus label="Opening working agenda" />;
   if (agenda.isError) {
@@ -243,8 +244,27 @@ export function AgendaPage() {
               {agenda.data.items.length === 1 ? "" : "s"}
             </h2>
           </div>
-          <span>{agenda.data.timezone}</span>
+          <div className="agenda-list-meta">
+            <span>{agenda.data.timezone}</span>
+            <button
+              aria-pressed={showGrid}
+              className="agenda-view-toggle"
+              onClick={() => setShowGrid((current) => !current)}
+              type="button"
+            >
+              {showGrid ? "Hide calendar" : "Show calendar"}
+            </button>
+          </div>
         </div>
+        {showGrid && (
+          <WorkingAgendaGrid
+            items={agenda.data.items}
+            rooms={agenda.data.rooms}
+            startsOn={agenda.data.startsOn}
+            endsOn={agenda.data.endsOn}
+            timezone={agenda.data.timezone}
+          />
+        )}
         {agenda.data.items.length === 0 ? (
           <p className="empty-copy">
             Accepted program items and service blocks appear here.
@@ -432,6 +452,274 @@ export function PublicAgendaPage() {
         )}
       </div>
     </main>
+  );
+}
+
+type WorkingGridItem = {
+  id: string;
+  kind: "program" | "service";
+  title: string | null;
+  serviceTitle: string | null;
+  serviceScope: "event" | "room" | null;
+  roomId: string | null;
+  roomName: string | null;
+  startsAtLocal: string;
+  endsAtLocal: string;
+  canceled: boolean;
+  conflicts: Array<"room" | "speaker">;
+  speakers: Array<{ displayName: string }>;
+};
+
+type WorkingGridRoom = { id: string; name: string };
+
+const GRID_MIN_HOUR = 8;
+const GRID_MAX_HOUR = 20;
+const GRID_PIXELS_PER_MINUTE = 1.1;
+
+function readLocalMinutes(value: string): { date: string; minutes: number } {
+  const [date, time] = value.split("T");
+  const [hour, minute] = (time ?? "").split(":").map(Number);
+  return { date: date ?? "", minutes: (hour ?? 0) * 60 + (minute ?? 0) };
+}
+
+function dayBuckets(startsOn: string, endsOn: string): string[] {
+  const days: string[] = [];
+  const [startYear, startMonth, startDay] = startsOn.split("-").map(Number);
+  const [endYear, endMonth, endDay] = endsOn.split("-").map(Number);
+  if (!startYear || !endYear) return days;
+  const cursor = new Date(
+    Date.UTC(startYear, (startMonth ?? 1) - 1, startDay ?? 1),
+  );
+  const limit = new Date(Date.UTC(endYear, (endMonth ?? 1) - 1, endDay ?? 1));
+  while (cursor.getTime() <= limit.getTime()) {
+    days.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return days;
+}
+
+function gridHourRange(items: WorkingGridItem[]): {
+  startHour: number;
+  endHour: number;
+} {
+  let earliest = GRID_MIN_HOUR * 60;
+  let latest = GRID_MAX_HOUR * 60;
+  for (const item of items) {
+    if (item.canceled) continue;
+    const start = readLocalMinutes(item.startsAtLocal).minutes;
+    const end = readLocalMinutes(item.endsAtLocal).minutes;
+    if (start < earliest) earliest = Math.floor(start / 60) * 60;
+    if (end > latest) latest = Math.ceil(end / 60) * 60;
+  }
+  return {
+    startHour: Math.min(GRID_MIN_HOUR, Math.floor(earliest / 60)),
+    endHour: Math.max(GRID_MAX_HOUR, Math.ceil(latest / 60)),
+  };
+}
+
+function formatHourLabel(hour: number): string {
+  const suffix = hour < 12 ? "AM" : "PM";
+  const display = hour % 12 === 0 ? 12 : hour % 12;
+  return `${display}:00 ${suffix}`;
+}
+
+function formatDayLabel(date: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+  if (!year) return date;
+  return new Intl.DateTimeFormat("en", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year, (month ?? 1) - 1, day ?? 1)));
+}
+
+function WorkingAgendaGrid({
+  items,
+  rooms,
+  startsOn,
+  endsOn,
+  timezone,
+}: {
+  items: WorkingGridItem[];
+  rooms: WorkingGridRoom[];
+  startsOn: string;
+  endsOn: string;
+  timezone: string;
+}) {
+  const days = dayBuckets(startsOn, endsOn);
+  const { startHour, endHour } = gridHourRange(items);
+  const totalMinutes = (endHour - startHour) * 60;
+  const rowHeight = GRID_PIXELS_PER_MINUTE * totalMinutes;
+  const visibleRooms =
+    rooms.length === 0 ? [{ id: "", name: "Unassigned" }] : rooms;
+  const hasItems = items.length > 0;
+
+  return (
+    <div className="agenda-grid-wrap">
+      <div className="agenda-grid-legend">
+        <span className="eyebrow">Calendar · {timezone}</span>
+        <div className="agenda-grid-legend-keys">
+          <span>
+            <i className="swatch swatch-room" /> Room conflict
+          </span>
+          <span>
+            <i className="swatch swatch-speaker" /> Speaker conflict
+          </span>
+          <span>
+            <i className="swatch swatch-canceled" /> Canceled
+          </span>
+        </div>
+      </div>
+      {hasItems ? (
+        days.map((date) => {
+          const dayItems = items.filter(
+            (item) => readLocalMinutes(item.startsAtLocal).date === date,
+          );
+          if (dayItems.length === 0) return null;
+          return (
+            <section className="agenda-grid-day" key={date}>
+              <h3>{formatDayLabel(date)}</h3>
+              <div
+                className="agenda-grid"
+                style={
+                  {
+                    "--grid-columns": visibleRooms.length,
+                    "--grid-row-height": `${rowHeight}px`,
+                    "--grid-hours": endHour - startHour,
+                  } as CSSProperties
+                }
+              >
+                <div className="agenda-grid-time">
+                  {Array.from(
+                    { length: endHour - startHour + 1 },
+                    (_, index) => {
+                      const hour = startHour + index;
+                      const top = index * 60 * GRID_PIXELS_PER_MINUTE;
+                      return (
+                        <span
+                          className="agenda-grid-time-tick"
+                          key={hour}
+                          style={{ top: `${top}px` }}
+                        >
+                          {formatHourLabel(hour)}
+                        </span>
+                      );
+                    },
+                  )}
+                </div>
+                <div
+                  className="agenda-grid-columns"
+                  style={{
+                    gridTemplateColumns: `repeat(${visibleRooms.length}, 1fr)`,
+                  }}
+                >
+                  {visibleRooms.map((room) => (
+                    <div
+                      className="agenda-grid-column"
+                      key={room.id || "unassigned"}
+                    >
+                      <span className="agenda-grid-column-label">
+                        {room.name}
+                      </span>
+                      <div className="agenda-grid-column-body">
+                        {Array.from(
+                          { length: endHour - startHour },
+                          (_, index) => (
+                            <div
+                              className="agenda-grid-hour-line"
+                              key={index}
+                              style={{
+                                top: `${(index + 1) * 60 * GRID_PIXELS_PER_MINUTE}px`,
+                              }}
+                            />
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {visibleRooms.map((room) => {
+                  const roomItems = dayItems.filter(
+                    (item) =>
+                      item.serviceScope === "event" ||
+                      item.roomId === room.id ||
+                      (room.id === "" && !item.roomId),
+                  );
+                  return roomItems.map((item) => {
+                    const start = readLocalMinutes(item.startsAtLocal).minutes;
+                    const end = readLocalMinutes(item.endsAtLocal).minutes;
+                    const top =
+                      (start - startHour * 60) * GRID_PIXELS_PER_MINUTE;
+                    const height =
+                      Math.max(15, end - start) * GRID_PIXELS_PER_MINUTE;
+                    const spansAllRooms = item.serviceScope === "event";
+                    return (
+                      <div
+                        className={`agenda-grid-item${
+                          spansAllRooms ? " spans-all-rooms" : ""
+                        }${item.canceled ? " is-canceled" : ""}`}
+                        data-conflict-room={
+                          item.conflicts.includes("room") || undefined
+                        }
+                        data-conflict-speaker={
+                          item.conflicts.includes("speaker") || undefined
+                        }
+                        key={item.id}
+                        style={
+                          {
+                            "--grid-top": `${top}px`,
+                            "--grid-height": `${height}px`,
+                            "--grid-room":
+                              visibleRooms.findIndex(
+                                (entry) => entry.id === room.id,
+                              ) + 1,
+                            "--grid-room-count": visibleRooms.length,
+                          } as CSSProperties
+                        }
+                        title={
+                          item.kind === "program"
+                            ? (item.title ?? "")
+                            : (item.serviceTitle ?? "")
+                        }
+                      >
+                        <div className="agenda-grid-item-time">
+                          {item.startsAtLocal.slice(11, 16)}–
+                          {item.endsAtLocal.slice(11, 16)}
+                        </div>
+                        <div className="agenda-grid-item-title">
+                          {item.kind === "program"
+                            ? item.title
+                            : item.serviceTitle}
+                        </div>
+                        {item.speakers.length > 0 && (
+                          <div className="agenda-grid-item-speakers">
+                            {item.speakers
+                              .map((speaker) => speaker.displayName)
+                              .join(", ")}
+                          </div>
+                        )}
+                        {item.conflicts.length > 0 && (
+                          <div className="agenda-grid-item-conflicts">
+                            {item.conflicts.map((conflict) => (
+                              <span key={conflict}>{conflict}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  });
+                })}
+              </div>
+            </section>
+          );
+        })
+      ) : (
+        <p className="empty-copy">
+          Placed items will appear here as a time-by-room grid.
+        </p>
+      )}
+    </div>
   );
 }
 
