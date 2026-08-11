@@ -5,13 +5,26 @@ WITH replacement_rank AS (
     id,
     ROW_NUMBER() OVER (
       PARTITION BY replacement_for_invitation_id
-      ORDER BY created_at, id
+      ORDER BY
+        CASE status
+          WHEN 'accepted' THEN 0
+          WHEN 'pending' THEN 1
+          ELSE 2
+        END,
+        created_at,
+        id
     ) AS replacement_number
   FROM invitations
   WHERE replacement_for_invitation_id IS NOT NULL
 )
 UPDATE invitations
-SET replacement_for_invitation_id = NULL
+SET
+  status = CASE WHEN status = 'pending' THEN 'revoked' ELSE status END,
+  resolved_at = CASE
+    WHEN status = 'pending' THEN COALESCE(resolved_at, created_at)
+    ELSE resolved_at
+  END,
+  replacement_for_invitation_id = NULL
 WHERE id IN (
   SELECT id
   FROM replacement_rank
