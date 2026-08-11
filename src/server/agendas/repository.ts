@@ -23,7 +23,6 @@ import {
   agendaDeliveryWork,
   agendaItems,
   agendaPublications,
-  agendas,
   calendarSyncStates,
   decisions,
   events,
@@ -280,26 +279,53 @@ export async function publishAgenda(
   const validation = validateForPublication(working.items, event);
   if (!validation.ok) return { ok: false, error: validation.error };
 
-  const [latestPublication] = await database
-    .select({ revision: agendaPublications.revision })
+  const publicationStateRows = await database
+    .select({
+      revision: agendaPublications.revision,
+      agendaItemId: calendarSyncStates.agendaItemId,
+      uid: calendarSyncStates.uid,
+      sequence: calendarSyncStates.sequence,
+      canceled: calendarSyncStates.canceled,
+      fingerprint: calendarSyncStates.fingerprint,
+    })
     .from(agendaPublications)
-    .where(eq(agendaPublications.agendaId, event.agendaId))
-    .orderBy(desc(agendaPublications.revision))
-    .limit(1);
-  const programAgendaItemIds = working.items
-    .filter((item) => item.kind === "program")
-    .map((item) => item.id);
-  const previousStates =
-    programAgendaItemIds.length === 0
-      ? []
-      : await database
-          .select()
-          .from(calendarSyncStates)
-          .where(
-            inArray(calendarSyncStates.agendaItemId, programAgendaItemIds),
-          );
+    .leftJoin(
+      agendaItems,
+      eq(agendaItems.agendaId, agendaPublications.agendaId),
+    )
+    .leftJoin(
+      calendarSyncStates,
+      eq(calendarSyncStates.agendaItemId, agendaItems.id),
+    )
+    .where(
+      and(
+        eq(agendaPublications.agendaId, event.agendaId),
+        sql`${agendaPublications.revision} = (
+          SELECT MAX(latest.revision)
+          FROM agenda_publications AS latest
+          WHERE latest.agenda_id = ${event.agendaId}
+        )`,
+      ),
+    );
+  const previousStates = publicationStateRows.flatMap((row) =>
+    row.agendaItemId &&
+    row.uid &&
+    row.sequence !== null &&
+    row.canceled !== null &&
+    row.fingerprint
+      ? [
+          {
+            agendaItemId: row.agendaItemId,
+            uid: row.uid,
+            sequence: row.sequence,
+            canceled: row.canceled,
+            fingerprint: row.fingerprint,
+          },
+        ]
+      : [],
+  );
   const publicationId = crypto.randomUUID();
-  const revision = (latestPublication?.revision ?? 0) + 1;
+  const revision = (publicationStateRows[0]?.revision ?? 0) + 1;
   const now = new Date();
   const snapshots = working.items.map((item) =>
     snapshotItem(item, validation.times.get(item.id)),
@@ -537,14 +563,10 @@ async function loadWorkingAgenda(
     startsOn: string;
     endsOn: string;
     timezone: string;
+    agendaRevision: number;
   },
   includeEditorOptions = true,
 ) {
-  const [agenda] = await database
-    .select({ revision: agendas.revision })
-    .from(agendas)
-    .where(eq(agendas.id, event.agendaId))
-    .limit(1);
   const rows = await database
     .select({
       id: agendaItems.id,
@@ -660,7 +682,7 @@ async function loadWorkingAgenda(
         .orderBy(asc(rooms.position))
     : [];
   return {
-    revision: agenda?.revision ?? 0,
+    revision: event.agendaRevision,
     timezone: event.timezone,
     startsOn: event.startsOn,
     endsOn: event.endsOn,
