@@ -79,6 +79,9 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   expect(trpcRequests.some((url) => url.includes("submissions.submit"))).toBe(
     true,
   );
+  expect(
+    trpcRequests.flatMap((url) => url.match(/submissions\.submit/g) ?? []),
+  ).toHaveLength(1);
   await expect(page.getByText("Decision: pending")).toBeVisible();
   await expect(page.getByText("Confirmation: recorded")).toBeVisible();
   await page.reload();
