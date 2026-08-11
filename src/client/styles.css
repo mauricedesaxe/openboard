@@ -1344,6 +1344,9 @@ a {
   color: rgba(27, 39, 36, 0.62);
   font: 11px "DM Mono";
 }
+.speaker-row .speaker-removal-reason {
+  color: var(--ink);
+}
 .speaker-row-actions {
   display: flex;
   align-items: center;
