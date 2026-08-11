@@ -1,12 +1,15 @@
 import { z } from "zod";
 
 import { customFieldsSchema, type CfpId, type TrackId } from "./cfps";
+import type { InvitationId } from "./event-team";
 
 export type SubmissionId = string & { readonly __brand: "SubmissionId" };
 
 export const submissionIdSchema = z
   .uuid()
   .transform((value) => value as SubmissionId);
+
+export const submissionSpeakerIdSchema = z.uuid();
 
 export const proposedSpeakerInputSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -35,6 +38,22 @@ export const submitProposalSchema = proposalContentSchema.extend({
 
 export type ProposalContent = z.infer<typeof proposalContentSchema>;
 export type SubmitProposalInput = z.infer<typeof submitProposalSchema>;
+
+export const addSubmissionSpeakerSchema = proposedSpeakerInputSchema.extend({
+  submissionId: submissionIdSchema,
+});
+
+export const removeSubmissionSpeakerSchema = z.object({
+  submissionId: submissionIdSchema,
+  speakerId: submissionSpeakerIdSchema,
+});
+
+export const replaceSubmissionSpeakerInvitationSchema =
+  removeSubmissionSpeakerSchema.extend({
+    replacesInvitationId: z
+      .string()
+      .transform((value) => value as InvitationId),
+  });
 
 export const proposalDraftSchema = z.object({
   clientDraftId: z.uuid(),
@@ -85,6 +104,15 @@ export const submissionSchema = z.object({
       id: z.string(),
       name: z.string(),
       email: z.email(),
+      claimed: z.boolean(),
+      invitation: z
+        .object({
+          id: z.string(),
+          status: z.enum(["pending", "accepted", "declined", "revoked"]),
+          expiresAt: z.iso.datetime({ offset: true }),
+          usable: z.boolean(),
+        })
+        .nullable(),
     }),
   ),
   customAnswers: proposalAnswersSchema,
@@ -92,7 +120,11 @@ export const submissionSchema = z.object({
     status: z.enum(["pending", "accepted", "declined"]),
   }),
   confirmation: z.object({ status: z.literal("recorded") }),
-  permissions: z.object({ canEdit: z.boolean(), canWithdraw: z.boolean() }),
+  permissions: z.object({
+    canEdit: z.boolean(),
+    canManageSpeakers: z.boolean(),
+    canWithdraw: z.boolean(),
+  }),
 });
 
 export type Submission = z.infer<typeof submissionSchema>;

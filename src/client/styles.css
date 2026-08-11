@@ -1069,6 +1069,50 @@ a {
   align-items: center;
   gap: 24px;
 }
+.speaker-board {
+  margin-top: 34px;
+}
+.speaker-board h2 {
+  margin: 8px 0 0;
+  font:
+    600 32px "Newsreader",
+    serif;
+}
+.speaker-list {
+  margin: 28px 0 34px;
+  border-top: 1px solid var(--line);
+}
+.speaker-row {
+  min-height: 88px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 1px solid var(--line);
+}
+.speaker-row > div:first-child {
+  display: grid;
+  gap: 6px;
+}
+.speaker-row span:not(.submission-state) {
+  color: rgba(27, 39, 36, 0.62);
+  font: 11px "DM Mono";
+}
+.speaker-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+}
+.speaker-invite-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  align-items: end;
+  gap: 24px;
+}
+.speaker-invite-form .field {
+  margin: 0;
+}
 .full-status {
   min-height: 100vh;
   display: grid;
@@ -1110,6 +1154,9 @@ a {
   .team-columns,
   .setup-grid,
   .public-form-shell {
+    grid-template-columns: 1fr;
+  }
+  .speaker-invite-form {
     grid-template-columns: 1fr;
   }
   .signin-intro {
@@ -1209,6 +1256,11 @@ a {
   .core-field-note,
   .builder-actions,
   .submission-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .speaker-row,
+  .speaker-row-actions {
     align-items: flex-start;
     flex-direction: column;
   }
