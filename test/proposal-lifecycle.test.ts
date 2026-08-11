@@ -272,6 +272,7 @@ function updateOwnSubmission(setup: ProposalSetup) {
     "submissions.updateOwn",
     {
       submissionId: setup.submission.id,
+      expectedRevision: setup.submission.revision,
       title: "A changed title that must not persist",
       abstract: setup.proposal.abstract,
       format: setup.proposal.format,
