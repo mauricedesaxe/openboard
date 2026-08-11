@@ -2,6 +2,8 @@
 
 OpenBoard manages an event program from submissions through the published agenda.
 
+Disposable throwaway change to exercise the per-PR preview D1 cleanup path.
+
 ## Local development
 
 Requirements: Node 22 and the pnpm version pinned in `package.json`.
