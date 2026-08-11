@@ -22,8 +22,11 @@ import {
   type CustomField,
 } from "../shared/cfps";
 import {
+  defaultCfpDeadline,
   eventLocalDateTimeToIso,
+  formatEventDateRange,
   instantFallsAfterLocalDate,
+  instantFallsBeforeLocalDate,
   isoToEventLocalDateTime,
 } from "../shared/date-time";
 import type { EventRole, InvitationId } from "../shared/event-team";
@@ -507,7 +510,7 @@ function EventIndex() {
                 {String(index + 1).padStart(2, "0")}
               </span>
               <h2>{event.name}</h2>
-              <p>{formatDateRange(event.startsOn, event.endsOn)}</p>
+              <p>{formatEventDateRange(event.startsOn, event.endsOn)}</p>
               <span className="card-timezone">{event.timezone}</span>
               <span className="card-arrow">↗</span>
             </Link>
@@ -710,7 +713,9 @@ function EventPage() {
         <div className="eyebrow">Working event</div>
         <h1>{event.data.name}</h1>
         <div className="event-meta">
-          <span>{formatDateRange(event.data.startsOn, event.data.endsOn)}</span>
+          <span>
+            {formatEventDateRange(event.data.startsOn, event.data.endsOn)}
+          </span>
           <span>{event.data.timezone}</span>
           <span>Private</span>
         </div>
@@ -3168,6 +3173,7 @@ function CfpSetupPage() {
           key="open-cfp"
           endsOn={event.data.endsOn}
           slug={slug}
+          startsOn={event.data.startsOn}
           timezone={event.data.timezone}
         />
       )}
@@ -3176,6 +3182,7 @@ function CfpSetupPage() {
         key={`draft-${cfp.data.open?.id ?? "none"}`}
         endsOn={event.data.endsOn}
         slug={slug}
+        startsOn={event.data.startsOn}
         timezone={event.data.timezone}
       />
     </div>
@@ -3891,6 +3898,7 @@ function CfpBuilder({
   cfp,
   endsOn,
   slug,
+  startsOn,
   timezone,
 }: {
   cfp:
@@ -3902,6 +3910,7 @@ function CfpBuilder({
     | null;
   endsOn: string;
   slug: string;
+  startsOn: string;
   timezone: string;
 }) {
   const trpc = useTRPC();
@@ -3914,7 +3923,7 @@ function CfpBuilder({
           formats: cfp.formats,
           customFields: cfp.customFields,
         }
-      : emptyCfpDefinition(),
+      : emptyCfpDefinition(startsOn, timezone),
   );
   const [validationError, setValidationError] = useState<{
     message: string;
@@ -4014,6 +4023,9 @@ function CfpBuilder({
     }));
   }
 
+  const deadlineBeforeStart =
+    definition.deadline !== "" &&
+    instantFallsBeforeLocalDate(definition.deadline, startsOn, timezone);
   return (
     <section className="cfp-builder">
       <div className="builder-title">
@@ -4048,7 +4060,11 @@ function CfpBuilder({
                 }
               />
             </Field>
-            <Field label="Deadline" name={`cfp-deadline-${formId}`}>
+            <Field
+              hint={`Event runs ${formatEventDateRange(startsOn, endsOn)} · ${timezone}`}
+              label="Deadline"
+              name={`cfp-deadline-${formId}`}
+            >
               <input
                 id={`cfp-deadline-${formId}`}
                 type="datetime-local"
@@ -4073,6 +4089,12 @@ function CfpBuilder({
                   );
                 }}
               />
+              {deadlineBeforeStart && (
+                <span className="form-warning" role="status">
+                  The deadline is before the event starts. Check the CFP closes
+                  when you intend.
+                </span>
+              )}
             </Field>
           </div>
           <Field
@@ -5473,12 +5495,13 @@ function PublicCustomField({
   );
 }
 
-function emptyCfpDefinition(): CfpDefinitionInput {
-  const deadline = new Date();
-  deadline.setMonth(deadline.getMonth() + 1);
+function emptyCfpDefinition(
+  startsOn: string,
+  timezone: string,
+): CfpDefinitionInput {
   return {
     name: "",
-    deadline: deadline.toISOString(),
+    deadline: defaultCfpDeadline(startsOn, timezone),
     formats: ["Talk", "Workshop"],
     customFields: [],
   };
@@ -5632,18 +5655,6 @@ function BoardStatus({ detail, label }: { detail?: string; label: string }) {
       {detail && <p>{detail}</p>}
     </section>
   );
-}
-
-function formatDateRange(startsOn: string, endsOn: string): string {
-  const formatter = new Intl.DateTimeFormat(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-  const start = formatter.format(new Date(`${startsOn}T00:00:00Z`));
-  const end = formatter.format(new Date(`${endsOn}T00:00:00Z`));
-  return start === end ? start : `${start} – ${end}`;
 }
 
 function formatEventValidationError(

@@ -125,6 +125,13 @@ test("publishes a working placement to every public agenda view", async ({
   const placementForm = page
     .getByRole("heading", { name: "Schedule an accepted item" })
     .locator("..");
+  await expect(placementForm.getByLabel("Starts")).toHaveValue(
+    "2028-08-13T09:00",
+  );
+  await expect(placementForm.getByLabel("Ends")).toHaveValue(
+    "2028-08-13T10:00",
+  );
+  await expect(placementForm.getByText(/Europe\/Berlin/)).toBeVisible();
   await placementForm
     .getByLabel("Program item")
     .selectOption({ label: "A browser-built agenda · Web systems" });

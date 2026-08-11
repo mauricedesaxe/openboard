@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  defaultCfpDeadline,
   eventLocalDateTimeToIso,
   instantFallsAfterLocalDate,
+  instantFallsBeforeLocalDate,
   isoToEventLocalDateTime,
   resolveEventLocalDateTime,
 } from "../src/shared/date-time";
@@ -53,5 +55,31 @@ describe("event deadline timezones", () => {
         "Europe/Berlin",
       ),
     ).toBe(false);
+  });
+
+  test("compares an instant with the event start date", () => {
+    expect(
+      instantFallsBeforeLocalDate(
+        "2027-08-08T22:00:00Z",
+        "2027-08-10",
+        "Europe/Berlin",
+      ),
+    ).toBe(true);
+    expect(
+      instantFallsBeforeLocalDate(
+        "2027-08-09T22:00:00Z",
+        "2027-08-10",
+        "Europe/Berlin",
+      ),
+    ).toBe(false);
+  });
+
+  test("defaults a new CFP deadline to the event start in the event timezone", () => {
+    expect(defaultCfpDeadline("2027-08-10", "Europe/Berlin")).toBe(
+      "2027-08-09T22:00:00.000Z",
+    );
+    expect(defaultCfpDeadline("2027-01-10", "Europe/Berlin")).toBe(
+      "2027-01-09T23:00:00.000Z",
+    );
   });
 });
