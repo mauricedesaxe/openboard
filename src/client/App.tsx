@@ -2670,7 +2670,7 @@ function PublicCfpPage() {
     trpc.submissions.submit.mutationOptions({
       onSuccess: (submission) => {
         if (draftKey) window.localStorage.removeItem(draftKey);
-        void navigate(`/submissions/${submission.id}`);
+        window.location.assign(`/submissions/${submission.id}`);
       },
       onError: () => {
         setDraft((current) => ({ ...current, submitAfterSignIn: false }));
