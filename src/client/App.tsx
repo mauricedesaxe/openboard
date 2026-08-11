@@ -2707,6 +2707,7 @@ function InvitationPage({
   signedIn: boolean;
 }) {
   const { secret = "" } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const trpc = useTRPC();
   const invitation = useQuery(trpc.invitations.get.queryOptions({ secret }));
@@ -2718,6 +2719,22 @@ function InvitationPage({
     }),
   );
   const decline = useMutation(trpc.invitations.decline.mutationOptions());
+  const acceptAfterSignIn = searchParams.get("acceptAfterSignIn") === "true";
+  const finishPendingAcceptance = useEffectEvent(() => {
+    accept.mutate({ secret });
+  });
+
+  useEffect(() => {
+    if (
+      acceptAfterSignIn &&
+      signedIn &&
+      invitation.data &&
+      email === invitation.data.email &&
+      accept.isIdle
+    ) {
+      finishPendingAcceptance();
+    }
+  }, [accept.isIdle, acceptAfterSignIn, email, invitation.data, signedIn]);
 
   if (invitation.isPending) {
     return <FullPageStatus label="Opening invitation" />;
@@ -2748,7 +2765,7 @@ function InvitationPage({
     );
   }
 
-  const returnTo = `/invitations/${secret}`;
+  const returnTo = `/invitations/${secret}?acceptAfterSignIn=true`;
   const signInUrl = `/sign-in?returnTo=${encodeURIComponent(returnTo)}&email=${encodeURIComponent(invitation.data.email)}`;
   const emailMismatch = signedIn && email !== invitation.data.email;
   async function signInWithInvitedEmail() {
