@@ -186,8 +186,8 @@ function AuthenticatedApp({ email }: { email: string }) {
 function SignInPage() {
   const [searchParams] = useSearchParams();
   const returnTo = safeReturnTo(searchParams.get("returnTo"));
-  const pendingEmail = window.sessionStorage.getItem(
-    pendingSignInKey(returnTo),
+  const [pendingEmail] = useState(() =>
+    window.sessionStorage.getItem(pendingSignInKey(returnTo)),
   );
   const invitationSignIn =
     returnTo.startsWith("/invitations/") ||
