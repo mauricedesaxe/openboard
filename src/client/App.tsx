@@ -119,6 +119,8 @@ function SignInRoute({ signedIn }: { signedIn: boolean }) {
 }
 
 function AuthenticatedApp({ email }: { email: string }) {
+  const trpc = useTRPC();
+  const speakerProfile = useQuery(trpc.speakerProfile.getOwn.queryOptions());
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -127,9 +129,11 @@ function AuthenticatedApp({ email }: { email: string }) {
           <span>OpenBoard</span>
         </Link>
         <div className="account-strip">
-          <Link className="text-button" to="/speaker-profile">
-            Speaker profile
-          </Link>
+          {speakerProfile.data?.eligible && (
+            <Link className="text-button" to="/speaker-profile">
+              Speaker profile
+            </Link>
+          )}
           <span>{email}</span>
           <button
             className="text-button"
@@ -1892,6 +1896,10 @@ function InvitationPage({
   const returnTo = `/invitations/${secret}`;
   const signInUrl = `/sign-in?returnTo=${encodeURIComponent(returnTo)}&email=${encodeURIComponent(invitation.data.email)}`;
   const emailMismatch = signedIn && email !== invitation.data.email;
+  async function signInWithInvitedEmail() {
+    await authClient.signOut();
+    window.location.assign(signInUrl);
+  }
   return (
     <main className="invitation-page">
       <section className="invitation-card">
@@ -1902,9 +1910,16 @@ function InvitationPage({
           through <strong>{invitation.data.email}</strong>.
         </p>
         {emailMismatch && (
-          <p className="form-error" role="alert">
-            Sign out and use {invitation.data.email} to accept this invitation.
-          </p>
+          <div className="invite-notice invite-notice-warning" role="alert">
+            <span>Use {invitation.data.email} to accept this invitation.</span>
+            <button
+              className="text-button"
+              onClick={() => void signInWithInvitedEmail()}
+              type="button"
+            >
+              Sign out and continue
+            </button>
+          </div>
         )}
         {(accept.error || decline.error) && (
           <p className="form-error" role="alert">
@@ -1998,6 +2013,10 @@ function SpeakerInvitationPage({
   const returnTo = `/speaker-invitations/${secret}`;
   const signInUrl = `/sign-in?returnTo=${encodeURIComponent(returnTo)}&email=${encodeURIComponent(invitation.data.email)}`;
   const emailMismatch = signedIn && email !== invitation.data.email;
+  async function signInWithInvitedSpeakerEmail() {
+    await authClient.signOut();
+    window.location.assign(signInUrl);
+  }
   return (
     <main className="invitation-page">
       <section className="invitation-card">
@@ -2009,9 +2028,16 @@ function SpeakerInvitationPage({
           <strong>{invitation.data.email}</strong>.
         </p>
         {emailMismatch && (
-          <p className="form-error" role="alert">
-            Sign out and use {invitation.data.email} to accept this invitation.
-          </p>
+          <div className="invite-notice invite-notice-warning" role="alert">
+            <span>Use {invitation.data.email} to accept this invitation.</span>
+            <button
+              className="text-button"
+              onClick={() => void signInWithInvitedSpeakerEmail()}
+              type="button"
+            >
+              Sign out and continue
+            </button>
+          </div>
         )}
         {(accept.error || decline.error) && (
           <p className="form-error" role="alert">
@@ -2050,7 +2076,7 @@ function SpeakerInvitationPage({
 function SpeakerProfilePage() {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
-  const profile = useQuery(trpc.speakerProfile.getOwn.queryOptions());
+  const profileState = useQuery(trpc.speakerProfile.getOwn.queryOptions());
   const [draft, setDraft] = useState<SpeakerProfileInput>();
   const save = useMutation(
     trpc.speakerProfile.saveOwn.mutationOptions({
@@ -2063,21 +2089,31 @@ function SpeakerProfilePage() {
     }),
   );
 
-  if (profile.isPending)
+  if (profileState.isPending)
     return <FullPageStatus label="Opening speaker profile" />;
-  if (profile.isError) {
+  if (profileState.isError) {
     return (
       <div className="page">
         <BoardStatus
           label="Profile unavailable"
-          detail={profile.error.message}
+          detail={profileState.error.message}
+        />
+      </div>
+    );
+  }
+  if (!profileState.data.eligible) {
+    return (
+      <div className="page">
+        <BoardStatus
+          label="Speaker profile unavailable"
+          detail="Claim a proposed-speaker invitation before creating a profile."
         />
       </div>
     );
   }
 
   const current = draft ??
-    profile.data ?? {
+    profileState.data.profile ?? {
       displayName: "",
       bio: "",
       headshotUrl: null,
@@ -2097,7 +2133,11 @@ function SpeakerProfilePage() {
       </Link>
       <section className="page-heading compact-heading">
         <div className="eyebrow">Reusable speaker profile</div>
-        <h1>{profile.data ? "Your public details" : "Create your profile"}</h1>
+        <h1>
+          {profileState.data.profile
+            ? "Your public details"
+            : "Create your profile"}
+        </h1>
         <p>
           Your bio and headshot stay with you across events and accepted
           proposals.
@@ -2141,7 +2181,11 @@ function SpeakerProfilePage() {
             </p>
           )}
           <div className="submission-actions">
-            <button className="primary-button" disabled={save.isPending}>
+            <button
+              className="primary-button"
+              disabled={save.isPending}
+              type="submit"
+            >
               {save.isPending ? "Saving…" : "Save profile"}
             </button>
           </div>
@@ -2926,7 +2970,7 @@ function SubmissionSpeakerManager({
           <div className="speaker-row" key={speaker.id}>
             <div>
               <strong>{speaker.name}</strong>
-              <span>{speaker.email}</span>
+              <span>{speaker.email ?? "Email hidden"}</span>
             </div>
             <div className="speaker-row-actions">
               <span
@@ -3506,7 +3550,7 @@ function submissionContent(submission: Submission): ProposalContent {
     trackId: submission.track.id,
     proposedSpeakers: submission.proposedSpeakers.map(({ name, email }) => ({
       name,
-      email,
+      email: email ?? "",
     })),
     customAnswers: submission.customAnswers,
   };

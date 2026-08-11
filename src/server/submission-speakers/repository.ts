@@ -1,4 +1,4 @@
-import { and, eq, exists, gt, isNull, max, or, sql } from "drizzle-orm";
+import { and, count, eq, exists, gt, isNull, max, or, sql } from "drizzle-orm";
 
 import type { InvitationId } from "../../shared/event-team";
 import type { UserId } from "../../shared/events";
@@ -358,6 +358,22 @@ export async function removeSubmissionSpeaker(
   );
   if (!editable) return { ok: false, error: "not_found" };
   if (!editable.editable) return { ok: false, error: "submission_closed" };
+  const [speakerState] = await database
+    .select({
+      activeCount: count(submissionSpeakers.id),
+      targetCount: sql<number>`count(CASE WHEN ${submissionSpeakers.id} = ${input.speakerId} THEN 1 END)`,
+    })
+    .from(submissionSpeakers)
+    .where(
+      and(
+        eq(submissionSpeakers.submissionId, input.submissionId),
+        isNull(submissionSpeakers.removedAt),
+      ),
+    );
+  if (!speakerState?.targetCount) return { ok: false, error: "not_found" };
+  if (speakerState.activeCount <= 1) {
+    return { ok: false, error: "last_speaker" };
+  }
 
   const now = new Date();
   try {
@@ -365,7 +381,23 @@ export async function removeSubmissionSpeaker(
       database
         .update(submissions)
         .set({ updatedAt: now })
-        .where(eq(submissions.id, input.submissionId)),
+        .where(
+          and(
+            eq(submissions.id, input.submissionId),
+            exists(
+              database
+                .select({ id: submissionSpeakers.id })
+                .from(submissionSpeakers)
+                .where(
+                  and(
+                    eq(submissionSpeakers.id, input.speakerId),
+                    eq(submissionSpeakers.submissionId, input.submissionId),
+                    isNull(submissionSpeakers.removedAt),
+                  ),
+                ),
+            ),
+          ),
+        ),
       database
         .update(submissionSpeakers)
         .set({ removedAt: now, updatedAt: now })
@@ -586,6 +618,22 @@ export async function acceptSubmissionSpeakerInvitation(
         eq(submissionSpeakers.id, invitation.value.submissionSpeakerId),
         isNull(submissionSpeakers.claimedUserId),
         isNull(submissionSpeakers.removedAt),
+        exists(
+          database
+            .select({ id: submissionSpeakerInvitations.id })
+            .from(submissionSpeakerInvitations)
+            .where(
+              and(
+                eq(submissionSpeakerInvitations.id, invitation.value.id),
+                eq(
+                  submissionSpeakerInvitations.submissionSpeakerId,
+                  submissionSpeakers.id,
+                ),
+                eq(submissionSpeakerInvitations.status, "pending"),
+                gt(submissionSpeakerInvitations.expiresAt, now),
+              ),
+            ),
+        ),
       ),
     );
   const accept = database
@@ -619,8 +667,8 @@ export async function acceptSubmissionSpeakerInvitation(
     );
 
   try {
-    const [, accepted] = await database.batch([claim, accept]);
-    if (accepted.meta.changes !== 1) {
+    const [claimed, accepted] = await database.batch([claim, accept]);
+    if (claimed.meta.changes !== 1 || accepted.meta.changes !== 1) {
       return { ok: false, error: "unavailable" };
     }
   } catch {

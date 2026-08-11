@@ -26,12 +26,21 @@ const profileSchema = z.object({
   bio: z.string(),
   headshotUrl: z.string().nullable(),
 });
+const profileStateSchema = z.object({
+  eligible: z.boolean(),
+  profile: profileSchema.nullable(),
+});
 const submissionPermissionsSchema = z.object({
   permissions: z.object({
     canEdit: z.boolean(),
     canManageSpeakers: z.boolean(),
     canWithdraw: z.boolean(),
   }),
+});
+const accessibleSubmissionSchema = submissionPermissionsSchema.extend({
+  proposedSpeakers: z.array(
+    z.object({ name: z.string(), email: z.string().nullable() }),
+  ),
 });
 const invitationSchema = z.object({
   id: z.string(),
@@ -54,15 +63,16 @@ describe("claim a proposed-speaker invitation", () => {
           name: "Riley Recipient",
           email: "speaker-claim-recipient@example.com",
         },
+        { name: "Other Speaker", email: "other-speaker@example.com" },
       ],
     });
 
     const beforeClaim = await testEnvironment.DB.prepare(
       `SELECT id, claimed_user_id
        FROM submission_speakers
-       WHERE submission_id = ?`,
+       WHERE submission_id = ? AND invited_email = ?`,
     )
-      .bind(submission.id)
+      .bind(submission.id, "speaker-claim-recipient@example.com")
       .first<{ id: string; claimed_user_id: string | null }>();
     expect(beforeClaim).toMatchObject({ claimed_user_id: null });
     expect(
@@ -140,31 +150,109 @@ describe("claim a proposed-speaker invitation", () => {
     const afterClaim = await testEnvironment.DB.prepare(
       `SELECT id, claimed_user_id
        FROM submission_speakers
-       WHERE submission_id = ?`,
+       WHERE submission_id = ? AND invited_email = ?`,
     )
-      .bind(submission.id)
+      .bind(submission.id, "speaker-claim-recipient@example.com")
       .first<{ id: string; claimed_user_id: string | null }>();
     expect(afterClaim).toEqual({
       id: beforeClaim?.id,
       claimed_user_id: recipient.userId,
     });
-    expect(
-      getResult(
-        (
-          await callTrpc(
-            "submissions.get",
-            { submissionId: submission.id },
-            recipient.cookie,
-            "query",
-          )
-        ).body,
-        submissionPermissionsSchema,
-      ).permissions,
-    ).toEqual({
+    const accessibleSubmission = getResult(
+      (
+        await callTrpc(
+          "submissions.get",
+          { submissionId: submission.id },
+          recipient.cookie,
+          "query",
+        )
+      ).body,
+      accessibleSubmissionSchema,
+    );
+    expect(accessibleSubmission.permissions).toEqual({
       canEdit: false,
       canManageSpeakers: false,
       canWithdraw: false,
     });
+    expect(accessibleSubmission.proposedSpeakers).toEqual([
+      {
+        name: "Riley Recipient",
+        email: "speaker-claim-recipient@example.com",
+      },
+      { name: "Other Speaker", email: null },
+    ]);
+  });
+
+  test("claims the submission owner's matching proposed-speaker relationship", async () => {
+    const owner = await signIn("self-claim-owner@example.com");
+    const submission = await createSubmission({
+      slug: "self-claim-2027",
+      eventOwner: owner,
+      submissionOwner: owner,
+      proposedSpeakers: [
+        { name: "Owner Speaker", email: "self-claim-owner@example.com" },
+      ],
+    });
+    expect(
+      await testEnvironment.DB.prepare(
+        `SELECT claimed_user_id FROM submission_speakers
+         WHERE submission_id = ?`,
+      )
+        .bind(submission.id)
+        .first<{ claimed_user_id: string }>(),
+    ).toEqual({ claimed_user_id: owner.userId });
+    expect(
+      await testEnvironment.DB.prepare(
+        `SELECT COUNT(*) AS count
+         FROM submission_speaker_invitations
+         INNER JOIN submission_speakers
+           ON submission_speakers.id = submission_speaker_invitations.submission_speaker_id
+         WHERE submission_speakers.submission_id = ?`,
+      )
+        .bind(submission.id)
+        .first<{ count: number }>(),
+    ).toEqual({ count: 0 });
+  });
+
+  test("keeps claim and decline as one atomic outcome", async () => {
+    const owner = await signIn("claim-race-owner@example.com");
+    const recipient = await signIn("claim-race-recipient@example.com");
+    const submission = await createSubmission({
+      slug: "claim-race-2027",
+      eventOwner: owner,
+      submissionOwner: owner,
+      proposedSpeakers: [
+        {
+          name: "Race Recipient",
+          email: "claim-race-recipient@example.com",
+        },
+      ],
+    });
+    const secret = await getInvitationSecret(
+      "claim-race-recipient@example.com",
+    );
+    await Promise.all([
+      callTrpc(
+        "submissionSpeakerInvitations.accept",
+        { secret },
+        recipient.cookie,
+      ),
+      callTrpc("submissionSpeakerInvitations.decline", { secret }),
+    ]);
+
+    const outcome = await testEnvironment.DB.prepare(
+      `SELECT submission_speaker_invitations.status, submission_speakers.claimed_user_id
+       FROM submission_speaker_invitations
+       INNER JOIN submission_speakers
+         ON submission_speakers.id = submission_speaker_invitations.submission_speaker_id
+       WHERE submission_speakers.submission_id = ?`,
+    )
+      .bind(submission.id)
+      .first<{ status: string; claimed_user_id: string | null }>();
+    expect(["accepted", "declined"]).toContain(outcome?.status);
+    expect(outcome?.claimed_user_id).toBe(
+      outcome?.status === "accepted" ? recipient.userId : null,
+    );
   });
 
   test("lets owners and organizers manage speakers without losing history", async () => {
@@ -617,9 +705,9 @@ describe("claim a proposed-speaker invitation", () => {
               "query",
             )
           ).body,
-          profileSchema.nullable(),
+          profileStateSchema,
         ),
-      ).toBeNull();
+      ).toEqual({ eligible: false, profile: null });
       expect(
         (
           await callTrpc(

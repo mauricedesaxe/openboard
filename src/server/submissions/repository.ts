@@ -109,24 +109,30 @@ export async function submitProposal(
     submissionId,
     invitedName: speaker.name,
     invitedEmail: speaker.email,
+    claimedUserId:
+      speaker.email === ownerEmail.trim().toLowerCase()
+        ? ownerUserId
+        : undefined,
     position,
     createdAt: now,
     updatedAt: now,
   }));
   const invitationAttempts = await Promise.all(
-    speakerRows.map((speaker) =>
-      prepareSubmissionSpeakerInvitation(
-        {
-          submissionSpeakerId: speaker.id,
-          email: speaker.invitedEmail,
-          eventName: validated.eventName,
-          speakerName: speaker.invitedName,
-          submissionTitle: input.title,
-          invitedByUserId: ownerUserId,
-        },
-        now,
+    speakerRows
+      .filter((speaker) => speaker.claimedUserId === undefined)
+      .map((speaker) =>
+        prepareSubmissionSpeakerInvitation(
+          {
+            submissionSpeakerId: speaker.id,
+            email: speaker.invitedEmail,
+            eventName: validated.eventName,
+            speakerName: speaker.invitedName,
+            submissionTitle: input.title,
+            invitedByUserId: ownerUserId,
+          },
+          now,
+        ),
       ),
-    ),
   );
   try {
     await database.batch([
@@ -153,9 +159,13 @@ export async function submitProposal(
         updatedAt: now,
       }),
       database.insert(submissionSpeakers).values(speakerRows),
-      database
-        .insert(submissionSpeakerInvitations)
-        .values(invitationAttempts.map((attempt) => attempt.values)),
+      ...(invitationAttempts.length > 0
+        ? [
+            database
+              .insert(submissionSpeakerInvitations)
+              .values(invitationAttempts.map((attempt) => attempt.values)),
+          ]
+        : []),
       database.insert(formResponses).values({
         id: crypto.randomUUID(),
         cfpId: input.cfpId,
@@ -345,6 +355,16 @@ export async function findAccessibleSubmission(
     .orderBy(tracks.position);
   const published = isPublished(row.decisionStatus);
   const active = row.status === "active";
+  const editingOpen =
+    active &&
+    !published &&
+    row.cfpStatus === "open" &&
+    new Date(row.deadline) > new Date();
+  const managesSubmission =
+    row.submissionOwnerUserId === viewerUserId ||
+    row.eventOwnerUserId === viewerUserId ||
+    organizerRole !== undefined;
+  const canManageSpeakers = managesSubmission && editingOpen;
 
   return submissionSchema.parse({
     id: row.id,
@@ -367,41 +387,32 @@ export async function findAccessibleSubmission(
     },
     proposedSpeakers: speakers.map((speaker) => {
       const invitation = latestInvitationBySpeaker.get(speaker.id);
+      const canSeeContact =
+        managesSubmission || speaker.claimedUserId === viewerUserId;
       return {
         id: speaker.id,
         name: speaker.name,
-        email: speaker.email,
+        email: canSeeContact ? speaker.email : null,
         claimed: speaker.claimedUserId !== null,
-        invitation: invitation
-          ? {
-              id: invitation.id,
-              status: invitation.status,
-              expiresAt: invitation.expiresAt.toISOString(),
-              usable:
-                invitation.status === "pending" &&
-                invitation.expiresAt.getTime() > Date.now(),
-            }
-          : null,
+        invitation:
+          invitation && canSeeContact
+            ? {
+                id: invitation.id,
+                status: invitation.status,
+                expiresAt: invitation.expiresAt.toISOString(),
+                usable:
+                  invitation.status === "pending" &&
+                  invitation.expiresAt.getTime() > Date.now(),
+              }
+            : null,
       };
     }),
     customAnswers: JSON.parse(row.answersJson) as unknown,
     decision: { status: publicDecisionStatus(row.decisionStatus) },
     confirmation: { status: row.communicationId ? "recorded" : undefined },
     permissions: {
-      canEdit:
-        row.submissionOwnerUserId === viewerUserId &&
-        active &&
-        !published &&
-        row.cfpStatus === "open" &&
-        new Date(row.deadline) > new Date(),
-      canManageSpeakers:
-        (row.submissionOwnerUserId === viewerUserId ||
-          row.eventOwnerUserId === viewerUserId ||
-          organizerRole !== undefined) &&
-        active &&
-        !published &&
-        row.cfpStatus === "open" &&
-        new Date(row.deadline) > new Date(),
+      canEdit: row.submissionOwnerUserId === viewerUserId && editingOpen,
+      canManageSpeakers,
       canWithdraw:
         row.submissionOwnerUserId === viewerUserId && active && !published,
     },
