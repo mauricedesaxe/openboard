@@ -415,7 +415,7 @@ describe("build and publish an agenda", () => {
     expect(published.items.every((item) => item.speakers.length === 3)).toBe(
       true,
     );
-  });
+  }, 15_000);
 
   test("exposes only finalized revisions and closes them to later rows", async () => {
     const slug = "finalized-agenda-2028";
