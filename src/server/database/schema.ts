@@ -932,6 +932,10 @@ export const agendaDeliveryWork = sqliteTable(
     agendaItemId: text("agenda_item_id")
       .notNull()
       .references(() => agendaItems.id),
+    recipientKey: text("recipient_key"),
+    recipientUserId: text("recipient_user_id").references(() => user.id),
+    destination: text("destination"),
+    recipientName: text("recipient_name"),
     action: text("action", {
       enum: ["publish", "update", "cancel", "restore"],
     }).notNull(),
@@ -951,9 +955,10 @@ export const agendaDeliveryWork = sqliteTable(
     lastError: text("last_error"),
   },
   (table) => [
-    uniqueIndex("agenda_delivery_work_publication_item_idx").on(
+    uniqueIndex("agenda_delivery_work_publication_item_recipient_idx").on(
       table.publicationId,
       table.agendaItemId,
+      table.recipientKey,
     ),
   ],
 );

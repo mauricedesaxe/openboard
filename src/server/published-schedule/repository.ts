@@ -170,9 +170,11 @@ export async function findPublishedSchedule(
   });
 }
 
-function uniqueOptions<T extends { id: string; position: number }>(
-  options: T[],
-): T[] {
+type PublishedScheduleOption = { id: string; name: string; position: number };
+
+function uniqueOptions(
+  options: PublishedScheduleOption[],
+): PublishedScheduleOption[] {
   return [
     ...new Map(options.map((option) => [option.id, option])).values(),
   ].sort(

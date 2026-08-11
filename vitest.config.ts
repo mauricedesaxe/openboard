@@ -17,10 +17,16 @@ export default defineConfig(async () => {
     ({ name }) => name === "0026_submission_revision.sql",
   );
   const agendaBaseMigrations = migrations.filter(
-    ({ name }) => name !== "0028_finalize_agenda_publications.sql",
+    ({ name }) => name < "0028_finalize_agenda_publications.sql",
   );
   const agendaFinalizationMigration = migrations.filter(
     ({ name }) => name === "0028_finalize_agenda_publications.sql",
+  );
+  const agendaDeliveryBaseMigrations = migrations.filter(
+    ({ name }) => name <= "0029_published_schedule_calendar_work.sql",
+  );
+  const agendaDeliveryRecipientMigration = migrations.filter(
+    ({ name }) => name === "0030_agenda_delivery_recipients.sql",
   );
 
   return {
@@ -30,6 +36,9 @@ export default defineConfig(async () => {
         miniflare: {
           bindings: {
             AGENDA_BASE_MIGRATIONS: agendaBaseMigrations,
+            AGENDA_DELIVERY_BASE_MIGRATIONS: agendaDeliveryBaseMigrations,
+            AGENDA_DELIVERY_RECIPIENT_MIGRATION:
+              agendaDeliveryRecipientMigration,
             AGENDA_FINALIZATION_MIGRATION: agendaFinalizationMigration,
             REPLACEMENT_GUARD_MIGRATION: replacementGuardMigration,
             SUBMISSION_REVISION_MIGRATION: submissionRevisionMigration,

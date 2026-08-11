@@ -375,6 +375,7 @@ describe("build and publish an agenda", () => {
     );
     expect(unknownResponse.status).toBe(404);
     expect(await unknownResponse.text()).toBe(await unpublishedResponse.text());
+    expect((await workerFetch("/api/v1/events/%ZZ/schedule")).status).toBe(404);
 
     await testEnvironment.DB.batch([
       testEnvironment.DB.prepare(
@@ -455,6 +456,36 @@ describe("build and publish an agenda", () => {
     expect(
       published.items.some((item) => item.agendaItemId === firstPlacement.id),
     ).toBe(false);
+    const canceledJson = await workerFetch(`/api/v1/events/${slug}/schedule`);
+    const canceledCalendar = await workerFetch(
+      `/api/v1/events/${slug}/schedule.ics`,
+    );
+    expect((await canceledJson.json<{ revision: number }>()).revision).toBe(2);
+    expect(await canceledCalendar.text()).toContain(
+      "X-OPENBOARD-REVISION:2\r\n",
+    );
+
+    const canceledDeliveries: Array<{
+      action: string;
+      method: string;
+      sequence: number;
+    }> = [];
+    const cancellationDelivery = await processAgendaDeliveryWork(
+      createDatabase(testEnvironment.DB),
+      (delivery) => {
+        canceledDeliveries.push(delivery);
+        return Promise.resolve();
+      },
+      { now: new Date("2029-01-01T00:00:00.000Z"), limit: 100 },
+    );
+    expect(cancellationDelivery.superseded).toBeGreaterThan(0);
+    expect(canceledDeliveries).toContainEqual(
+      expect.objectContaining({
+        action: "cancel",
+        method: "CANCEL",
+        sequence: 1,
+      }),
+    );
 
     await expectOk(
       "agendas.restore",
@@ -474,6 +505,17 @@ describe("build and publish an agenda", () => {
     expect(published.items[0]?.speakers[0]?.displayName).toBe(
       "Shared Speaker, revised",
     );
+    const restoredJson = await workerFetch(`/api/v1/events/${slug}/schedule`);
+    const restoredCalendar = await workerFetch(
+      `/api/v1/events/${slug}/schedule.ics`,
+    );
+    expect((await restoredJson.json<{ revision: number }>()).revision).toBe(3);
+    const restoredCalendarBody = await restoredCalendar.text();
+    expect(restoredCalendarBody).toContain("X-OPENBOARD-REVISION:3\r\n");
+    expect(restoredCalendarBody).toContain(
+      `UID:${firstPlacement.id}@openboard\r\n`,
+    );
+    expect(restoredCalendarBody).toContain("SEQUENCE:2\r\n");
 
     const sync = await testEnvironment.DB.prepare(
       "SELECT sequence, canceled FROM calendar_sync_states WHERE agenda_item_id = ?",
@@ -501,7 +543,7 @@ describe("build and publish an agenda", () => {
       },
       { now: new Date("2030-01-01T00:00:00.000Z"), limit: 100 },
     );
-    expect(retriedDelivery.superseded).toBeGreaterThanOrEqual(2);
+    expect(retriedDelivery.superseded).toBe(0);
     expect(retriedDelivery.delivered).toBeGreaterThan(0);
     expect(deliveredSequences).toContain(2);
     const firstPlacementAttempts = await testEnvironment.DB.prepare(
@@ -511,7 +553,7 @@ describe("build and publish an agenda", () => {
       .all<{ result: string }>();
     expect(
       firstPlacementAttempts.results.map((attempt) => attempt.result),
-    ).toEqual(["failed", "superseded", "superseded", "delivered"]);
+    ).toEqual(["failed", "superseded", "delivered", "delivered"]);
 
     const unchangedPublication = await callTrpc(
       "agendas.publish",
@@ -525,6 +567,14 @@ describe("build and publish an agenda", () => {
         z.object({ revision: z.number(), deliveryWork: z.number() }),
       ),
     ).toEqual({ revision: 4, deliveryWork: 0 });
+    const unchangedJson = await workerFetch(`/api/v1/events/${slug}/schedule`);
+    const unchangedCalendar = await workerFetch(
+      `/api/v1/events/${slug}/schedule.ics`,
+    );
+    expect((await unchangedJson.json<{ revision: number }>()).revision).toBe(4);
+    expect(await unchangedCalendar.text()).toContain(
+      "X-OPENBOARD-REVISION:4\r\n",
+    );
   });
 
   test("publishes an agenda above D1 statement binding limits", async () => {
