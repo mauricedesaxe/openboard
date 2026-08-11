@@ -489,7 +489,6 @@ describe("submit a proposal through the local-first flow", () => {
             abstract: proposal.abstract,
             format: proposal.format,
             trackId: proposal.trackId,
-            proposedSpeakers: proposal.proposedSpeakers,
             customAnswers: { audience: "Beginner" },
           },
           submitter.cookie,
