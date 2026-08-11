@@ -2969,7 +2969,7 @@ function SpeakerProfilePage() {
 
   const current = draft ??
     profileState.data.profile ?? {
-      displayName: "",
+      displayName: profileState.data.suggestedDisplayName ?? "",
       bio: "",
       headshotUrl: null,
     };

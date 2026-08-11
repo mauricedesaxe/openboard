@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 
 import type { UserId } from "../../shared/events";
 import {
@@ -29,11 +29,15 @@ export async function getOwnSpeakerProfileState(
   database: Database,
   userId: UserId,
 ) {
-  const [profile, eligible] = await Promise.all([
+  const [profile, suggestedDisplayName] = await Promise.all([
     findOwnSpeakerProfile(database, userId),
-    hasClaimedSpeakerRelationship(database, userId),
+    findClaimedSpeakerName(database, userId),
   ]);
-  return { eligible, profile };
+  return {
+    eligible: suggestedDisplayName !== null,
+    profile,
+    suggestedDisplayName: profile ? null : suggestedDisplayName,
+  };
 }
 
 type SaveSpeakerProfileResult =
@@ -87,10 +91,18 @@ async function hasClaimedSpeakerRelationship(
   database: Database,
   userId: UserId,
 ): Promise<boolean> {
+  return (await findClaimedSpeakerName(database, userId)) !== null;
+}
+
+async function findClaimedSpeakerName(
+  database: Database,
+  userId: UserId,
+): Promise<string | null> {
   const [speaker] = await database
-    .select({ id: submissionSpeakers.id })
+    .select({ name: submissionSpeakers.invitedName })
     .from(submissionSpeakers)
     .where(eq(submissionSpeakers.claimedUserId, userId))
+    .orderBy(desc(submissionSpeakers.updatedAt), desc(submissionSpeakers.id))
     .limit(1);
-  return speaker !== undefined;
+  return speaker?.name ?? null;
 }

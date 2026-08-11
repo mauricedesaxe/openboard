@@ -29,6 +29,7 @@ const profileSchema = z.object({
 const profileStateSchema = z.object({
   eligible: z.boolean(),
   profile: profileSchema.nullable(),
+  suggestedDisplayName: z.string().nullable(),
 });
 const submissionPermissionsSchema = z.object({
   permissions: z.object({
@@ -694,6 +695,24 @@ describe("claim a proposed-speaker invitation", () => {
       "reviewer",
     );
 
+    expect(
+      getResult(
+        (
+          await callTrpc(
+            "speakerProfile.getOwn",
+            undefined,
+            recipient.cookie,
+            "query",
+          )
+        ).body,
+        profileStateSchema,
+      ),
+    ).toEqual({
+      eligible: true,
+      profile: null,
+      suggestedDisplayName: "Profile Recipient",
+    });
+
     for (const user of [owner, organizer, reviewer]) {
       expect(
         getResult(
@@ -707,7 +726,11 @@ describe("claim a proposed-speaker invitation", () => {
           ).body,
           profileStateSchema,
         ),
-      ).toEqual({ eligible: false, profile: null });
+      ).toEqual({
+        eligible: false,
+        profile: null,
+        suggestedDisplayName: null,
+      });
       expect(
         (
           await callTrpc(
