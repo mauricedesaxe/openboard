@@ -15,13 +15,13 @@ import {
   revokeInvitationSchema,
 } from "../shared/event-team";
 import { eventInputSchema, type UserId } from "../shared/events";
-import { speakerProfileInputSchema } from "../shared/speaker-profiles";
 import {
   decisionPublicationSchema,
   decisionQueueStatusSchema,
   reviewerAssignmentIdSchema,
   saveReviewSchema,
 } from "../shared/reviews";
+import { speakerProfileInputSchema } from "../shared/speaker-profiles";
 import {
   addSubmissionSpeakerSchema,
   proposalUpdateSchema,
