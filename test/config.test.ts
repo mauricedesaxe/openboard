@@ -47,5 +47,33 @@ describe("configuration", () => {
         },
       },
     });
+    expect(
+      parseConfig({
+        ...validConfig,
+        EMAIL: undefined,
+        EMAIL_TRANSPORT: "resend",
+        RESEND_API_KEY: "resend-key",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        appEnv: "production",
+        appUrl: "https://openboard.example.com",
+        authSecret: validConfig.BETTER_AUTH_SECRET,
+        email: {
+          type: "resend",
+          from: validConfig.EMAIL_FROM,
+          apiKey: "resend-key",
+        },
+      },
+    });
+    expect(
+      parseConfig({
+        ...validConfig,
+        EMAIL: undefined,
+        EMAIL_TRANSPORT: "resend",
+        RESEND_API_KEY: undefined,
+      }),
+    ).toMatchObject({ ok: false });
   });
 });

@@ -8,4 +8,5 @@ export type Environment = {
   EMAIL_FROM?: string;
   EMAIL_TRANSPORT: string;
   FILES: R2Bucket;
+  RESEND_API_KEY?: string;
 };

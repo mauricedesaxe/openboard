@@ -168,6 +168,10 @@ function AuthenticatedApp({ email }: { email: string }) {
           <Route path="events/:slug/review" element={<ReviewPage />} />
           <Route path="events/:slug/agenda" element={<AgendaPage />} />
           <Route
+            path="events/:slug/communications"
+            element={<CommunicationSettingsPage />}
+          />
+          <Route
             path="events/:slug/onboarding"
             element={<OrganizerOnboardingPage />}
           />
@@ -752,7 +756,176 @@ function EventPage() {
           </Link>
         </section>
       )}
+      {event.data.access !== "reviewer" && (
+        <section className="setup-callout">
+          <div>
+            <div className="eyebrow">Communications</div>
+            <h2>Control what each workflow sends.</h2>
+            <p>
+              Edit message templates and retry failed delivery without changing
+              domain state.
+            </p>
+          </div>
+          <Link
+            className="primary-button link-button"
+            to={`/events/${slug}/communications`}
+          >
+            Open communications
+          </Link>
+        </section>
+      )}
     </div>
+  );
+}
+
+function CommunicationSettingsPage() {
+  const { slug = "" } = useParams();
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const templates = useQuery(
+    trpc.communications.templates.queryOptions({ slug }),
+  );
+  const failures = useQuery(
+    trpc.communications.failures.queryOptions({ slug }),
+  );
+  const refreshTemplates = () =>
+    queryClient.invalidateQueries(
+      trpc.communications.templates.queryFilter({ slug }),
+    );
+  const update = useMutation(
+    trpc.communications.updateTemplate.mutationOptions({
+      onSuccess: refreshTemplates,
+    }),
+  );
+  const retry = useMutation(
+    trpc.communications.retry.mutationOptions({
+      onSuccess: () =>
+        queryClient.invalidateQueries(
+          trpc.communications.failures.queryFilter({ slug }),
+        ),
+    }),
+  );
+  if (templates.isPending || failures.isPending) {
+    return <FullPageStatus label="Opening communications" />;
+  }
+  if (templates.isError || failures.isError) {
+    return (
+      <div className="page">
+        <BoardStatus
+          label="Communications unavailable"
+          detail={(templates.error ?? failures.error)?.message ?? "Try again."}
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="page">
+      <Link className="arrow-link" to={`/events/${slug}`}>
+        ← Back to event
+      </Link>
+      <section className="review-heading">
+        <div>
+          <div className="eyebrow">Communications</div>
+          <h1>Message templates and delivery</h1>
+          <p>
+            Template changes apply only to communications created afterward.
+          </p>
+        </div>
+      </section>
+      <div className="review-list">
+        {templates.data.map((template) => (
+          <CommunicationTemplateForm
+            key={template.purpose}
+            onSave={(subject, body) =>
+              update.mutate({
+                slug,
+                purpose: template.purpose,
+                subject,
+                body,
+                expectedRevision: template.revision,
+              })
+            }
+            template={template}
+          />
+        ))}
+      </div>
+      <section className="assignment-cards">
+        <h2>Failed delivery</h2>
+        {failures.data.length === 0 ? (
+          <p>No retryable failures.</p>
+        ) : (
+          failures.data.map((failure) => (
+            <article className="task-card" key={failure.communicationId}>
+              <div>
+                <div className="eyebrow">{failure.purpose}</div>
+                <h3>{failure.subject}</h3>
+                <p>{failure.error}</p>
+              </div>
+              {failure.status === "failed" ? (
+                <button
+                  className="text-button"
+                  onClick={() =>
+                    retry.mutate({
+                      slug,
+                      communicationId: failure.communicationId,
+                    })
+                  }
+                  type="button"
+                >
+                  Retry delivery
+                </button>
+              ) : (
+                <span className="eyebrow">Not retryable</span>
+              )}
+            </article>
+          ))
+        )}
+      </section>
+    </div>
+  );
+}
+
+function CommunicationTemplateForm({
+  onSave,
+  template,
+}: {
+  onSave: (subject: string, body: string) => void;
+  template: {
+    purpose: string;
+    subject: string;
+    body: string;
+    revision: number;
+  };
+}) {
+  const [subject, setSubject] = useState(template.subject);
+  const [body, setBody] = useState(template.body);
+  return (
+    <form
+      className="form-board"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave(subject, body);
+      }}
+    >
+      <div className="eyebrow">{template.purpose.replaceAll("_", " ")}</div>
+      <Field label="Subject" name={`subject-${template.purpose}`}>
+        <input
+          id={`subject-${template.purpose}`}
+          onChange={(event) => setSubject(event.target.value)}
+          value={subject}
+        />
+      </Field>
+      <Field label="Body" name={`body-${template.purpose}`}>
+        <textarea
+          id={`body-${template.purpose}`}
+          onChange={(event) => setBody(event.target.value)}
+          value={body}
+        />
+      </Field>
+      <button className="primary-button" type="submit">
+        Save revision {template.revision + 1}
+      </button>
+    </form>
   );
 }
 
@@ -765,6 +938,9 @@ function OrganizerOnboardingPage() {
       { slug },
       { refetchInterval: ONBOARDING_REFETCH_INTERVAL_MS },
     ),
+  );
+  const communicationFailures = useQuery(
+    trpc.communications.failures.queryOptions({ slug }),
   );
   const refresh = () =>
     queryClient.invalidateQueries(
@@ -906,6 +1082,19 @@ function OrganizerOnboardingPage() {
       {mutationError && (
         <p className="form-error" role="alert">
           {mutationError.message}
+        </p>
+      )}
+      {communicationFailures.data?.some(
+        (failure) => failure.purpose === "task_reminder",
+      ) && (
+        <p className="form-error" role="alert">
+          A task reminder failed. Open communications to retry delivery.
+        </p>
+      )}
+      {communicationFailures.isError && (
+        <p className="form-error" role="alert">
+          Reminder delivery status is unavailable. Try again before you leave
+          onboarding.
         </p>
       )}
       <div className="onboarding-builders">
@@ -1155,7 +1344,7 @@ function OrganizerOnboardingPage() {
               </p>
               {item.lastReminderAt && (
                 <p>
-                  Last reminder recorded{" "}
+                  Last reminder queued{" "}
                   {new Date(item.lastReminderAt).toLocaleString()}
                 </p>
               )}
@@ -1171,7 +1360,7 @@ function OrganizerOnboardingPage() {
                 onClick={() => recordReminder.mutate({ assignmentId: item.id })}
                 type="button"
               >
-                Record reminder
+                Send reminder
               </button>
               <button
                 className="text-button"
@@ -1562,6 +1751,9 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const board = useQuery(trpc.reviews.organizerBoard.queryOptions({ slug }));
+  const communicationFailures = useQuery(
+    trpc.communications.failures.queryOptions({ slug }),
+  );
   const refresh = () =>
     queryClient.invalidateQueries(
       trpc.reviews.organizerBoard.queryFilter({ slug }),
@@ -1697,6 +1889,19 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
       {mutationError && (
         <p className="form-error" role="alert">
           {mutationError.message}
+        </p>
+      )}
+      {communicationFailures.data?.some((failure) =>
+        failure.purpose.startsWith("decision_"),
+      ) && (
+        <p className="form-error" role="alert">
+          A decision message failed. Open communications to retry delivery.
+        </p>
+      )}
+      {communicationFailures.isError && (
+        <p className="form-error" role="alert">
+          Decision delivery status is unavailable. Try again before you leave
+          review.
         </p>
       )}
       {board.data.submissions.length === 0 && (

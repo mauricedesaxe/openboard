@@ -68,6 +68,17 @@ describe("build and publish an agenda", () => {
       },
       owner.cookie,
     );
+    await expectOk(
+      "communications.updateTemplate",
+      {
+        slug,
+        purpose: "agenda_invitation",
+        subject: "Calendar: {{sessionTitle}}",
+        body: "Hello {{recipientName}}, {{sessionTitle}} is at {{eventName}}.",
+        expectedRevision: 1,
+      },
+      owner.cookie,
+    );
     const engineering = getResult(
       (
         await callTrpc(
@@ -296,6 +307,16 @@ describe("build and publish an agenda", () => {
       "Independent systems",
     ]);
     expect(published.items[0]?.speakers[0]?.displayName).toBe("Shared Speaker");
+    expect(
+      await testEnvironment.DB.prepare(
+        "SELECT subject, body FROM agenda_delivery_work WHERE agenda_item_id = ? AND calendar_sequence = 0",
+      )
+        .bind(firstPlacement.id)
+        .first(),
+    ).toEqual({
+      subject: "Calendar: Opening systems",
+      body: "Hello Shared Speaker, Opening systems is at OpenBoard Live.",
+    });
 
     const failedDelivery = await processAgendaDeliveryWork(
       createDatabase(testEnvironment.DB),

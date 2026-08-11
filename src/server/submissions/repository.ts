@@ -26,6 +26,10 @@ import {
   type SubmissionSpeakerId,
   type SubmitProposalInput,
 } from "../../shared/submissions";
+import {
+  communicationInsertStatements,
+  prepareCommunication,
+} from "../communications/repository";
 import type { Database } from "../database/client";
 import {
   cfps,
@@ -142,6 +146,30 @@ export async function submitProposal(
         ),
       ),
   );
+  let confirmation: Awaited<ReturnType<typeof prepareCommunication>>;
+  try {
+    confirmation = await prepareCommunication(database, {
+      eventId: validated.eventId,
+      submissionId,
+      purpose: "submission_confirmation",
+      recipient: {
+        key: `user:${ownerUserId}`,
+        userId: ownerUserId,
+        invitationId: null,
+        destination: ownerEmail,
+        name: ownerEmail,
+      },
+      variables: {
+        eventName: validated.eventName,
+        submissionTitle: input.title,
+        recipientName: ownerEmail,
+      },
+      context: { submissionId, cfpId: input.cfpId },
+      now,
+    });
+  } catch {
+    return { ok: false, error: "persistence_failed" };
+  }
   try {
     await database.batch([
       database.insert(submissions).values({
@@ -184,14 +212,7 @@ export async function submitProposal(
         createdAt: now,
         updatedAt: now,
       }),
-      database.insert(communications).values({
-        id: crypto.randomUUID(),
-        submissionId,
-        recipientUserId: ownerUserId,
-        destination: ownerEmail.trim().toLowerCase(),
-        purpose: "submission_confirmation",
-        createdAt: now,
-      }),
+      ...communicationInsertStatements(database, confirmation),
       database
         .update(cfps)
         .set({ structureLockedAt: now, updatedAt: now })

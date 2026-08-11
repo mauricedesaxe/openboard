@@ -9,6 +9,7 @@ import {
   publishedAgendaItems,
   publishedAgendaSpeakers,
 } from "../database/schema";
+import { emailFailureIsRetryable } from "../email/transport";
 
 import { renderAgendaCalendarMessage } from "./ical";
 
@@ -16,10 +17,10 @@ const deliveryClaimTimeoutMs = 5 * 60_000;
 const defaultDeliveryBatchSize = 25;
 const deliveryRetryBaseDelayMs = 30_000;
 const deliveryRetryMaximumDelayMs = 60 * 60_000;
-const deliveryTransportTimeoutMs = 60_000;
 
 type AgendaDeliveryOptions = {
   organizerEmail: string;
+  retryStaleClaims?: boolean;
   now?: Date;
   limit?: number;
 };
@@ -57,6 +58,7 @@ export async function processAgendaDeliveryWork(
           isNull(agendaDeliveryWork.nextAttemptAt),
           lte(agendaDeliveryWork.nextAttemptAt, now),
         ),
+        eq(agendaDeliveryWork.retryEligible, true),
         or(
           isNull(agendaDeliveryWork.claimedAt),
           lte(agendaDeliveryWork.claimedAt, staleClaim),
@@ -68,6 +70,29 @@ export async function processAgendaDeliveryWork(
 
   const result = { delivered: 0, failed: 0, superseded: 0 };
   for (const candidate of work) {
+    if (
+      options.retryStaleClaims === false &&
+      candidate.claimToken &&
+      candidate.claimedAt &&
+      candidate.claimedAt <= staleClaim
+    ) {
+      const finished = await finishAttempt(
+        database,
+        candidate.id,
+        candidate.claimToken,
+        candidate.attemptCount,
+        candidate.claimedAt,
+        now,
+        {
+          status: "failed",
+          error: "Previous Cloudflare delivery outcome is unknown",
+          retryEligible: false,
+          nextAttemptAt: null,
+        },
+      );
+      if (finished) result.failed += 1;
+      continue;
+    }
     const claimToken = crypto.randomUUID();
     const attemptNumber = candidate.attemptCount + 1;
     const claimed = await database
@@ -134,7 +159,7 @@ export async function processAgendaDeliveryWork(
       );
       if (!delivery)
         throw new Error("Calendar publication snapshot is missing");
-      await deliverBeforeTimeout(deliver(delivery));
+      await deliver(delivery);
       const finishedAt = currentTime(options);
       const finished = await finishAttempt(
         database,
@@ -149,6 +174,7 @@ export async function processAgendaDeliveryWork(
       );
       if (finished) result.delivered += 1;
     } catch (error: unknown) {
+      const retryable = emailFailureIsRetryable(error);
       const message =
         error instanceof Error ? error.message : "Unknown delivery failure";
       const finishedAt = currentTime(options);
@@ -162,7 +188,10 @@ export async function processAgendaDeliveryWork(
         {
           status: "failed",
           error: message,
-          nextAttemptAt: nextDeliveryAttemptAt(finishedAt, attemptNumber),
+          retryEligible: retryable,
+          nextAttemptAt: retryable
+            ? nextDeliveryAttemptAt(finishedAt, attemptNumber)
+            : null,
         },
       );
       if (finished) result.failed += 1;
@@ -253,24 +282,9 @@ async function createAgendaCalendarDelivery(
     uid: candidate.calendarUid,
     sequence: candidate.calendarSequence,
     ...message,
+    subject: candidate.subject ?? message.subject,
+    text: candidate.body ?? message.text,
   };
-}
-
-async function deliverBeforeTimeout(delivery: Promise<void>): Promise<void> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      delivery,
-      new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(
-          () => reject(new Error("Calendar transport timed out")),
-          deliveryTransportTimeoutMs,
-        );
-      }),
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
 }
 
 function currentTime(options: { now?: Date }): Date {
@@ -294,7 +308,12 @@ async function finishAttempt(
   finishedAt: Date,
   outcome:
     | { status: "completed" | "superseded" }
-    | { status: "failed"; error: string; nextAttemptAt: Date },
+    | {
+        status: "failed";
+        error: string;
+        retryEligible: boolean;
+        nextAttemptAt: Date | null;
+      },
 ): Promise<boolean> {
   const result =
     outcome.status === "completed"
@@ -323,14 +342,17 @@ async function finishAttempt(
       ),
     database.$client
       .prepare(
-        "UPDATE agenda_delivery_work SET status = ?, claimed_at = NULL, claim_token = NULL, completed_at = ?, superseded_at = ?, next_attempt_at = ?, last_error = ? WHERE id = ? AND claim_token = ? AND attempt_count = ?",
+        "UPDATE agenda_delivery_work SET status = ?, claimed_at = NULL, claim_token = NULL, completed_at = ?, superseded_at = ?, next_attempt_at = ?, last_error = ?, retry_eligible = ? WHERE id = ? AND claim_token = ? AND attempt_count = ?",
       )
       .bind(
         outcome.status,
         outcome.status === "completed" ? finishedAt.getTime() : null,
         outcome.status === "superseded" ? finishedAt.getTime() : null,
-        outcome.status === "failed" ? outcome.nextAttemptAt.getTime() : null,
+        outcome.status === "failed"
+          ? (outcome.nextAttemptAt?.getTime() ?? null)
+          : null,
         error,
+        outcome.status === "failed" ? outcome.retryEligible : false,
         workId,
         claimToken,
         attemptNumber,

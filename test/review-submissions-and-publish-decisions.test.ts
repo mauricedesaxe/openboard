@@ -169,6 +169,11 @@ describe("review submissions and publish decisions", () => {
       "A calm review system",
       "Visible abstract for the first proposal.",
     );
+    await testEnvironment.DB.prepare(
+      "UPDATE submission_speakers SET claimed_user_id = ? WHERE submission_id = ?",
+    )
+      .bind(firstSubmissionOwner.userId, first.id)
+      .run();
     const second = await submitProposal(
       secondSubmissionOwner.cookie,
       slug,
@@ -609,6 +614,48 @@ describe("review submissions and publish decisions", () => {
       expectedStatus: submission.decision.status,
       expectedRevision: submission.decision.revision,
     }));
+    await testEnvironment.DB.prepare(
+      `CREATE TRIGGER reject_decision_communication
+       BEFORE INSERT ON communications
+       WHEN NEW.purpose IN ('decision_acceptance', 'decision_decline')
+       BEGIN SELECT RAISE(ABORT, 'communication_insert_failed'); END`,
+    ).run();
+    expect(
+      (
+        await callTrpc(
+          "decisions.publish",
+          { slug, selections: publishSelections },
+          organizer.cookie,
+        )
+      ).status,
+    ).toBe(500);
+    await testEnvironment.DB.prepare(
+      "DROP TRIGGER reject_decision_communication",
+    ).run();
+    expect(
+      await testEnvironment.DB.prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM decision_publications) AS publications,
+           (SELECT COUNT(*) FROM communications WHERE purpose IN ('decision_acceptance', 'decision_decline')) AS communications,
+           (SELECT COUNT(*) FROM review_audit_events) AS audits`,
+      ).first(),
+    ).toEqual({ publications: 0, communications: 0, audits: 0 });
+    expect(
+      new Map(
+        (
+          await testEnvironment.DB.prepare(
+            "SELECT submission_id AS submissionId, status FROM decisions WHERE submission_id IN (?, ?)",
+          )
+            .bind(first.id, second.id)
+            .all<{ submissionId: string; status: string }>()
+        ).results.map((decision) => [decision.submissionId, decision.status]),
+      ),
+    ).toEqual(
+      new Map([
+        [first.id, "accept_queued"],
+        [second.id, "decline_queued"],
+      ]),
+    );
     const published = await callTrpc(
       "decisions.publish",
       {
@@ -656,9 +703,6 @@ describe("review submissions and publish decisions", () => {
         ).first<{ count: number }>()
       )?.count,
     ).toBe(2);
-    await testEnvironment.DB.prepare(
-      "DELETE FROM communications WHERE purpose IN ('decision_acceptance', 'decision_decline')",
-    ).run();
     await testEnvironment.DB.prepare("DELETE FROM review_audit_events").run();
     expect(
       (
@@ -684,38 +728,40 @@ describe("review submissions and publish decisions", () => {
              (SELECT COUNT(*) FROM communications WHERE purpose IN ('decision_acceptance', 'decision_decline')) AS communications,
              (SELECT COUNT(*) FROM review_audit_events) AS audits`,
       ).first<{ communications: number; audits: number }>(),
-    ).toEqual({ communications: 2, audits: 2 });
+    ).toEqual({ communications: 3, audits: 2 });
     const decisionMessages = await testEnvironment.DB.prepare(
-      "SELECT submission_id AS submissionId, recipient_user_id AS recipientUserId, purpose FROM communications WHERE purpose IN ('decision_acceptance', 'decision_decline') ORDER BY submission_id",
-    ).all<{ submissionId: string; recipientUserId: string; purpose: string }>();
-    expect(
-      new Map(
-        decisionMessages.results.map((message) => [
-          message.submissionId,
-          {
-            recipientUserId: message.recipientUserId,
-            purpose: message.purpose,
-          },
-        ]),
-      ),
-    ).toEqual(
-      new Map([
-        [
-          first.id,
-          {
-            recipientUserId: firstSubmissionOwner.userId,
-            purpose: "decision_acceptance",
-          },
-        ],
-        [
-          second.id,
-          {
-            recipientUserId: secondSubmissionOwner.userId,
-            purpose: "decision_decline",
-          },
-        ],
+      "SELECT submission_id AS submissionId, recipient_user_id AS recipientUserId, recipient_invitation_id AS recipientInvitationId, purpose FROM communications WHERE purpose IN ('decision_acceptance', 'decision_decline') ORDER BY submission_id",
+    ).all<{
+      submissionId: string;
+      recipientUserId: string | null;
+      recipientInvitationId: string | null;
+      purpose: string;
+    }>();
+    expect(decisionMessages.results).toHaveLength(3);
+    expect(decisionMessages.results).toEqual(
+      expect.arrayContaining([
+        {
+          submissionId: first.id,
+          recipientUserId: firstSubmissionOwner.userId,
+          recipientInvitationId: null,
+          purpose: "decision_acceptance",
+        },
+        {
+          submissionId: second.id,
+          recipientUserId: secondSubmissionOwner.userId,
+          recipientInvitationId: null,
+          purpose: "decision_decline",
+        },
       ]),
     );
+    const invitedDecisionMessage = decisionMessages.results.find(
+      (message) => message.recipientUserId === null,
+    );
+    expect(invitedDecisionMessage).toMatchObject({
+      submissionId: second.id,
+      purpose: "decision_decline",
+    });
+    expect(typeof invitedDecisionMessage?.recipientInvitationId).toBe("string");
     expect(
       getResult(
         (

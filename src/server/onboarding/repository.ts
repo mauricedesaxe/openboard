@@ -20,6 +20,11 @@ import {
   type TaskDefinitionId,
   type TaskEvidenceId,
 } from "../../shared/onboarding";
+import {
+  communicationInsertStatements,
+  prepareCommunication,
+  type CommunicationRecipient,
+} from "../communications/repository";
 import type { Database } from "../database/client";
 import {
   onboardingFormResponses,
@@ -28,6 +33,7 @@ import {
   speakerProfiles,
   storedFiles,
   submissions,
+  submissionSpeakerInvitations,
   submissionSpeakers,
   taskAssignmentAttachments,
   taskAssignmentRevisions,
@@ -653,17 +659,145 @@ export async function recordTaskReminder(
     return { ok: false, error: "not_found" };
   }
   const reminderId = crypto.randomUUID();
+  const now = new Date();
+  const [event] = await database
+    .select({ name: events.name })
+    .from(events)
+    .where(eq(events.id, assignment.eventId))
+    .limit(1);
+  if (!event) return { ok: false, error: "not_found" };
+  const recipients = await taskReminderRecipients(database, assignment);
+  if (recipients.length === 0) {
+    return { ok: false, error: "invalid_assignment" };
+  }
+  let prepared: Array<Awaited<ReturnType<typeof prepareCommunication>>>;
   try {
-    await database.insert(taskReminders).values({
-      id: reminderId,
-      assignmentId,
-      sentByUserId: actorUserId,
-      createdAt: new Date(),
-    });
+    prepared = await Promise.all(
+      recipients.map((recipient) =>
+        prepareCommunication(database, {
+          eventId: assignment.eventId,
+          purpose: "task_reminder",
+          recipient,
+          variables: {
+            eventName: event.name,
+            taskName: assignment.name,
+            recipientName: recipient.name,
+            dueAt: assignment.dueAt ?? "No due date",
+          },
+          context: {
+            assignmentId,
+            completionRevision: assignment.completionRevision,
+          },
+          now,
+        }),
+      ),
+    );
+  } catch {
+    return { ok: false, error: "persistence_failed" };
+  }
+  try {
+    await database.batch([
+      database.insert(taskReminders).values({
+        id: reminderId,
+        assignmentId,
+        sentByUserId: actorUserId,
+        createdAt: now,
+      }),
+      ...prepared.flatMap((communication) =>
+        communicationInsertStatements(database, communication),
+      ),
+    ]);
   } catch {
     return { ok: false, error: "persistence_failed" };
   }
   return { ok: true, value: { reminderId } };
+}
+
+async function taskReminderRecipients(
+  database: Database,
+  assignment: NonNullable<AssignmentRow>,
+): Promise<CommunicationRecipient[]> {
+  if (assignment.targetUserId) {
+    const [recipient] = await database
+      .select({ id: user.id, email: user.email, name: user.name })
+      .from(user)
+      .where(eq(user.id, assignment.targetUserId))
+      .limit(1);
+    return recipient
+      ? [
+          {
+            key: `user:${recipient.id}`,
+            userId: recipient.id,
+            invitationId: null,
+            destination: recipient.email,
+            name: recipient.name,
+          },
+        ]
+      : [];
+  }
+  const speakerRows = await database
+    .select({
+      id: submissionSpeakers.id,
+      invitationId: submissionSpeakerInvitations.id,
+      claimedUserId: submissionSpeakers.claimedUserId,
+      invitedEmail: submissionSpeakers.invitedEmail,
+      invitedName: submissionSpeakers.invitedName,
+      userEmail: user.email,
+      userName: user.name,
+    })
+    .from(submissionSpeakers)
+    .leftJoin(
+      submissionSpeakerInvitations,
+      and(
+        eq(
+          submissionSpeakerInvitations.submissionSpeakerId,
+          submissionSpeakers.id,
+        ),
+        eq(submissionSpeakerInvitations.status, "pending"),
+      ),
+    )
+    .leftJoin(user, eq(user.id, submissionSpeakers.claimedUserId))
+    .leftJoin(
+      programItems,
+      eq(programItems.submissionId, submissionSpeakers.submissionId),
+    )
+    .where(
+      and(
+        isNull(submissionSpeakers.removedAt),
+        assignment.targetSubmissionSpeakerId
+          ? eq(submissionSpeakers.id, assignment.targetSubmissionSpeakerId)
+          : eq(programItems.id, assignment.targetProgramItemId ?? ""),
+      ),
+    );
+  const recipients = new Map<string, CommunicationRecipient>();
+  for (const speaker of speakerRows) {
+    const recipient =
+      speaker.claimedUserId && speaker.userEmail
+        ? {
+            key: `user:${speaker.claimedUserId}`,
+            userId: speaker.claimedUserId,
+            invitationId: null,
+            destination: speaker.userEmail,
+            name: speaker.userName ?? speaker.invitedName,
+          }
+        : speaker.invitationId
+          ? {
+              key: `invitation:${speaker.invitationId}`,
+              userId: null,
+              invitationId: speaker.invitationId,
+              destination: speaker.invitedEmail,
+              name: speaker.invitedName,
+            }
+          : {
+              key: `speaker:${speaker.id}`,
+              userId: null,
+              invitationId: null,
+              destination: speaker.invitedEmail,
+              name: speaker.invitedName,
+            };
+    recipients.set(recipient.key, recipient);
+  }
+  return [...recipients.values()];
 }
 
 export async function findAccessibleTaskFile(

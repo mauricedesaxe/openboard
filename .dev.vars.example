@@ -2,3 +2,5 @@ APP_ENV="local"
 APP_URL="http://localhost:5173"
 BETTER_AUTH_SECRET="replace-with-at-least-32-random-characters"
 EMAIL_TRANSPORT="capture"
+# Production fallback: EMAIL_TRANSPORT="resend", EMAIL_FROM="auth@alexlazar.dev",
+# and RESEND_API_KEY="re_...".

@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import type { AppConfig } from "../config";
 import type { Database } from "../database/client";
 import { schema, verification } from "../database/schema";
+import { sendConfiguredEmail } from "../email/transport";
 
 const capturedCodes = new Map<string, string>();
 
@@ -114,8 +115,8 @@ async function sendAuthenticationCode(
     return;
   }
 
-  await config.email.sender.send({
-    from: { email: config.email.from, name: "OpenBoard" },
+  await sendConfiguredEmail(config, {
+    idempotencyKey: `authentication:${message.email}:${message.otp}`,
     to: message.email,
     subject: "Your OpenBoard sign-in code",
     text: `Your OpenBoard sign-in code is ${message.otp}. It expires in five minutes.`,

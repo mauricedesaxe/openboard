@@ -1,5 +1,6 @@
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 
+import { processCommunicationDeliveryWork } from "./server/communications/delivery";
 import { parseConfig } from "./server/config";
 import { createDatabase } from "./server/database/client";
 import type { Environment } from "./server/environment";
@@ -12,6 +13,7 @@ import { findAccessibleTaskFile } from "./server/onboarding/repository";
 import { processAgendaDeliveryWork } from "./server/published-schedule/delivery";
 import { routePublishedSchedule } from "./server/published-schedule/routes";
 import { sendAgendaCalendarDelivery } from "./server/published-schedule/transport";
+import { repairDecisionCommunicationRecords } from "./server/reviews/repository";
 import { appRouter, createTrpcContext } from "./server/trpc";
 import type { UserId } from "./shared/events";
 
@@ -126,17 +128,29 @@ async function deliverPendingAgendaCalendars(
     );
     return;
   }
-  const result = await processAgendaDeliveryWork(
-    createDatabase(environment.DB),
-    (delivery) => sendAgendaCalendarDelivery(configResult.value, delivery),
-    {
-      organizerEmail:
-        configResult.value.email.type === "cloudflare"
-          ? configResult.value.email.from
-          : `calendar@${new URL(configResult.value.appUrl).hostname}`,
-    },
-  );
+  const database = createDatabase(environment.DB);
+  const repairedDecisionRecords =
+    await repairDecisionCommunicationRecords(database);
+  const [agenda, communications] = await Promise.all([
+    processAgendaDeliveryWork(
+      database,
+      (delivery) => sendAgendaCalendarDelivery(configResult.value, delivery),
+      {
+        organizerEmail:
+          configResult.value.email.type === "capture"
+            ? `calendar@${new URL(configResult.value.appUrl).hostname}`
+            : configResult.value.email.from,
+        retryStaleClaims: configResult.value.email.type !== "cloudflare",
+      },
+    ),
+    processCommunicationDeliveryWork(database, configResult.value),
+  ]);
   console.log(
-    JSON.stringify({ event: "agenda_calendar_worker_completed", ...result }),
+    JSON.stringify({
+      event: "communication_worker_completed",
+      agenda,
+      communications,
+      repairedDecisionRecords,
+    }),
   );
 }

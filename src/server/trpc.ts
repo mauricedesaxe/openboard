@@ -15,6 +15,10 @@ import {
   type TrackId,
 } from "../shared/cfps";
 import {
+  retryCommunicationSchema,
+  updateCommunicationTemplateSchema,
+} from "../shared/communications";
+import {
   invitationSecretInputSchema,
   inviteEventTeamSchema,
   revokeEventRoleSchema,
@@ -65,6 +69,12 @@ import {
   saveAndOpenCfp,
   updateDraftCfp,
 } from "./cfps/repository";
+import {
+  listCommunicationFailures,
+  listCommunicationTemplates,
+  retryCommunication,
+  updateCommunicationTemplate,
+} from "./communications/repository";
 import type { AppConfig } from "./config";
 import type { Database } from "./database/client";
 import { sendEventInvitation } from "./event-team/delivery";
@@ -198,6 +208,61 @@ const userIdSchema = z
   .transform((value) => value as UserId);
 
 export const appRouter = trpc.router({
+  communications: trpc.router({
+    templates: authenticatedProcedure
+      .input(slugInput)
+      .query(async ({ ctx, input }) => {
+        const templates = await listCommunicationTemplates(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+        );
+        if (!templates) throwEventNotFound();
+        return templates;
+      }),
+    updateTemplate: authenticatedProcedure
+      .input(updateCommunicationTemplateSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await updateCommunicationTemplate(
+          ctx.database,
+          ctx.userId,
+          input,
+        );
+        if (!result.ok) {
+          throw new TRPCError({
+            code: result.error === "not_found" ? "NOT_FOUND" : "CONFLICT",
+            message:
+              result.error === "invalid_template"
+                ? "The template contains an unsupported placeholder."
+                : "The communication template changed. Refresh and try again.",
+          });
+        }
+        return result.value;
+      }),
+    failures: authenticatedProcedure
+      .input(slugInput)
+      .query(async ({ ctx, input }) => {
+        const failures = await listCommunicationFailures(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+        );
+        if (!failures) throwEventNotFound();
+        return failures;
+      }),
+    retry: authenticatedProcedure
+      .input(retryCommunicationSchema)
+      .mutation(async ({ ctx, input }) => {
+        const retried = await retryCommunication(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.communicationId,
+        );
+        if (!retried) throwEventNotFound();
+        return { retried: true };
+      }),
+  }),
   agendas: trpc.router({
     working: authenticatedProcedure
       .input(slugInput)
