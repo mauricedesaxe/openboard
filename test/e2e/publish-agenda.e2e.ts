@@ -1,9 +1,6 @@
-import {
-  expect,
-  test,
-  type APIRequestContext,
-  type Page,
-} from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
+
+import { signIn } from "./support";
 
 test.setTimeout(60_000);
 
@@ -292,25 +289,6 @@ test("publishes a working placement to every public agenda view", async ({
     page.getByRole("heading", { name: "A browser-built agenda" }),
   ).toBeVisible();
 });
-
-async function signIn(page: Page, email: string, buttonName: string) {
-  const addressSuffix = [...email]
-    .reduce((hash, character) => (hash * 31 + character.charCodeAt(0)) >>> 0, 0)
-    .toString(16)
-    .padStart(8, "0");
-  await page.setExtraHTTPHeaders({
-    "CF-Connecting-IP": `2001:db8:${addressSuffix.slice(0, 4)}:${addressSuffix.slice(4)}::1`,
-  });
-  await page.getByRole("textbox", { name: "Work email" }).fill(email);
-  await page.getByRole("button", { name: "Send sign-in code" }).click();
-  const code = await page.locator(".dev-code strong").textContent();
-  await page.getByRole("textbox", { name: "Sign-in code" }).fill(code ?? "");
-  await Promise.all([
-    page.waitForURL((url) => !url.pathname.startsWith("/sign-in")),
-    page.getByRole("button", { name: buttonName }).click(),
-  ]);
-  await page.waitForLoadState("networkidle");
-}
 
 async function mutate(
   request: APIRequestContext,
