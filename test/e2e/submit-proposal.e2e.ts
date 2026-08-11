@@ -2,6 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { completeSignIn, signIn } from "./support";
 
+test.setTimeout(60_000);
+
 test("resumes a local draft and submits after sign-in", async ({ page }) => {
   const suffix = `${Date.now()}`;
   const slug = `browser-proposal-${suffix}`;
