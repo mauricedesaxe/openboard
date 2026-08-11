@@ -4079,6 +4079,7 @@ function PublicCfpPage() {
   );
   const [proposalError, setProposalError] = useState<string>();
   const [signInPending, setSignInPending] = useState(false);
+  const pendingSubmissionStarted = useRef(false);
   const draftKey = proposalDraftKey(slug);
   const submit = useMutation(
     trpc.submissions.submit.mutationOptions({
@@ -4146,8 +4147,10 @@ function PublicCfpPage() {
       draft.submitAfterSignIn &&
       session.data &&
       cfp.data &&
-      !submit.isPending
+      !submit.isPending &&
+      !pendingSubmissionStarted.current
     ) {
+      pendingSubmissionStarted.current = true;
       finishPendingSubmission();
     }
   }, [cfp.data, draft.submitAfterSignIn, session.data, submit.isPending]);
