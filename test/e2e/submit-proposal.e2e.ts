@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { readSignInCode, signIn } from "./support";
+import { signIn } from "./support";
 
 test("resumes a local draft and submits after sign-in", async ({ page }) => {
   const suffix = `${Date.now()}`;
@@ -68,7 +68,7 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   await expect(
     page.getByText(`Enter the six-digit code sent to ${proposedSpeakerEmail}.`),
   ).toBeVisible();
-  await completeSignIn(page, proposedSpeakerEmail, "Return to proposal");
+  await completeSignIn(page, "Return to proposal");
 
   await expect(page).toHaveURL(/\/submissions\/[0-9a-f-]+$/, {
     timeout: 15_000,
@@ -165,15 +165,17 @@ async function measureLocalTransition(
   return page.evaluate(() => Number(document.body.dataset.transitionDuration));
 }
 
-async function completeSignIn(page: Page, email: string, buttonName: string) {
-  const code = await readSignInCode(page, email);
-  await page.getByRole("textbox", { name: "Sign-in code" }).fill(code);
+async function completeSignIn(page: Page, buttonName: string) {
+  const code = await page.locator(".dev-code strong").textContent();
+  expect(code).toMatch(/^\d{6}$/);
+  await page.getByRole("textbox", { name: "Sign-in code" }).fill(code ?? "");
   await Promise.all([
     page.waitForURL((url) => !url.pathname.startsWith("/sign-in")),
     page.getByRole("button", { name: buttonName }).click(),
   ]);
   await page.waitForLoadState("networkidle");
 }
+
 async function createOpenCfp(page: Page, slug: string) {
   async function mutate(path: string, input: unknown) {
     const response = await page.request.post(`/api/trpc/${path}`, {

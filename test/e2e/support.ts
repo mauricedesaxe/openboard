@@ -17,7 +17,6 @@ export async function requestSignInCode(
   expect(code).toMatch(/^\d{6}$/);
   return code ?? "";
 }
-
 export async function signIn(
   page: Page,
   email: string,
@@ -30,25 +29,4 @@ export async function signIn(
     page.getByRole("button", { name: buttonName }).click(),
   ]);
   await page.waitForLoadState("networkidle");
-}
-
-export async function readSignInCode(
-  page: Page,
-  email: string,
-): Promise<string> {
-  async function fetchCode(): Promise<string | undefined> {
-    const response = await page.request.get(
-      `/api/dev/auth-code?email=${encodeURIComponent(email)}`,
-    );
-    const body: unknown = await response.json();
-    return typeof body === "object" &&
-      body !== null &&
-      "code" in body &&
-      typeof body.code === "string"
-      ? body.code
-      : undefined;
-  }
-
-  await expect.poll(fetchCode).toMatch(/^\d{6}$/);
-  return (await fetchCode()) ?? "";
 }

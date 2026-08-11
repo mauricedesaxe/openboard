@@ -204,6 +204,11 @@ function SignInPage() {
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    if (!pendingEmail || !import.meta.env.DEV) return;
+    void fetchCapturedAuthCode(pendingEmail).then(setDevCode);
+  }, [pendingEmail]);
+
   async function requestCode(event: FormEvent) {
     event.preventDefault();
     await sendCode();
@@ -228,20 +233,7 @@ function SignInPage() {
     setStep("code");
     window.sessionStorage.setItem(pendingSignInKey(returnTo), email);
     if (import.meta.env.DEV) {
-      const response = await fetch(
-        `/api/dev/auth-code?email=${encodeURIComponent(email)}`,
-      );
-      if (response.ok) {
-        const captured: unknown = await response.json();
-        if (
-          typeof captured === "object" &&
-          captured !== null &&
-          "code" in captured &&
-          typeof captured.code === "string"
-        ) {
-          setDevCode(captured.code);
-        }
-      }
+      setDevCode(await fetchCapturedAuthCode(email));
     }
   }
 
@@ -393,6 +385,22 @@ function SignInPage() {
 
 function pendingSignInKey(returnTo: string): string {
   return `openboard:pending-sign-in:${returnTo}`;
+}
+
+async function fetchCapturedAuthCode(
+  email: string,
+): Promise<string | undefined> {
+  const response = await fetch(
+    `/api/dev/auth-code?email=${encodeURIComponent(email)}`,
+  );
+  if (!response.ok) return;
+  const captured: unknown = await response.json();
+  return typeof captured === "object" &&
+    captured !== null &&
+    "code" in captured &&
+    typeof captured.code === "string"
+    ? captured.code
+    : undefined;
 }
 
 function EventIndex() {
@@ -4190,8 +4198,7 @@ function PublicCfpPage() {
     if (!session.data) {
       const returnTo = `/events/${slug}/cfp`;
       const pendingDraft = { ...draft, submitAfterSignIn: true };
-      const speakerEmail = parsed.value.proposedSpeakers[0]?.email;
-      if (!speakerEmail) return;
+      const speakerEmail = parsed.value.proposedSpeakers[0]!.email;
       setSignInPending(true);
       const result = await authClient.emailOtp.sendVerificationOtp({
         email: speakerEmail,
