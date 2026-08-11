@@ -42,18 +42,36 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - name: Create or reuse the per-PR preview D1
+        id: preview-d1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DB_NAME: openboard-pr-${{ github.event.pull_request.number }}
+        run: |
+          db_id=$(pnpm exec wrangler d1 list --json | jq -r --arg name "$DB_NAME" '.[] | select(.name == $name) | .uuid' | head -n1)
+          if [ -z "$db_id" ]; then
+            pnpm exec wrangler d1 create "$DB_NAME" || true
+            db_id=$(pnpm exec wrangler d1 list --json | jq -r --arg name "$DB_NAME" '.[] | select(.name == $name) | .uuid' | head -n1)
+          fi
+          if [ -z "$db_id" ]; then
+            echo "Could not create or find the preview D1 $DB_NAME"
+            exit 1
+          fi
+          echo "id=$db_id" >> "$GITHUB_OUTPUT"
       - name: Generate the preview config
         env:
           PREVIEW_NUMBER: ${{ github.event.pull_request.number }}
+          PREVIEW_D1_ID: ${{ steps.preview-d1.outputs.id }}
         run: node scripts/write-preview-config.mjs
       - name: Generate the auth secret
         id: auth-secret
         run: echo "value=$(openssl rand -base64 48)" >> "$GITHUB_OUTPUT"
-      - name: Apply migrations to the shared preview D1
+      - name: Apply migrations to the per-PR preview D1
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: pnpm exec wrangler d1 migrations apply openboard-preview --remote --config wrangler.preview.jsonc
+        run: pnpm exec wrangler d1 migrations apply openboard-pr-${{ github.event.pull_request.number }} --remote --config wrangler.preview.jsonc
       - name: Set the preview auth secret
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
