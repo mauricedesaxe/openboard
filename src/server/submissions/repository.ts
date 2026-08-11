@@ -19,6 +19,7 @@ import type { UserId } from "../../shared/events";
 import {
   proposalAnswersSchema,
   submissionSchema,
+  type ProposalContent,
   type ProposalUpdate,
   type Submission,
   type SubmissionId,
@@ -53,10 +54,16 @@ type ProposalWriteError =
   | "invalid_track"
   | "not_found"
   | "persistence_failed"
+  | "submission_changed"
   | "submission_closed";
 
 type ProposalWriteResult =
   { ok: true; value: Submission } | { ok: false; error: ProposalWriteError };
+
+type ValidatedProposalInput = Pick<
+  ProposalContent,
+  "abstract" | "customAnswers" | "format" | "title" | "trackId"
+>;
 
 type SubmitProposalResult =
   | {
@@ -103,6 +110,7 @@ export async function submitProposal(
   if (!validated.ok) return validated;
 
   const submissionId = crypto.randomUUID() as SubmissionId;
+  const writeToken = crypto.randomUUID();
   const now = new Date();
   const speakerRows = input.proposedSpeakers.map((speaker, position) => ({
     id: crypto.randomUUID() as SubmissionSpeakerId,
@@ -148,6 +156,7 @@ export async function submitProposal(
         abstract: input.abstract,
         format: input.format,
         status: "active",
+        writeToken,
         createdAt: now,
         updatedAt: now,
       }),
@@ -171,6 +180,7 @@ export async function submitProposal(
         cfpId: input.cfpId,
         submissionId,
         answersJson: JSON.stringify(validated.answers),
+        writeToken,
         createdAt: now,
         updatedAt: now,
       }),
@@ -242,6 +252,7 @@ export async function findAccessibleSubmission(
     .select({
       id: submissions.id,
       status: submissions.status,
+      revision: submissions.revision,
       title: submissions.title,
       abstract: submissions.abstract,
       format: submissions.format,
@@ -369,6 +380,7 @@ export async function findAccessibleSubmission(
   return submissionSchema.parse({
     id: row.id,
     status: row.status,
+    revision: row.revision,
     event: { name: row.eventName, slug: row.eventSlug },
     cfp: { id: row.cfpId, name: row.cfpName },
     title: row.title,
@@ -505,6 +517,7 @@ export async function updateOwnSubmission(
   if (!validated.ok) return validated;
 
   const now = new Date();
+  const writeToken = crypto.randomUUID();
   try {
     const [submissionUpdateResult] = await database.batch([
       database
@@ -514,6 +527,8 @@ export async function updateOwnSubmission(
           title: input.title,
           abstract: input.abstract,
           format: input.format,
+          revision: sql`${submissions.revision} + 1`,
+          writeToken,
           updatedAt: now,
         })
         .where(
@@ -521,6 +536,7 @@ export async function updateOwnSubmission(
             eq(submissions.id, submissionId),
             eq(submissions.ownerUserId, ownerUserId),
             eq(submissions.status, "active"),
+            eq(submissions.revision, input.expectedRevision),
             exists(
               database
                 .select({ id: decisions.id })
@@ -559,6 +575,7 @@ export async function updateOwnSubmission(
         .update(formResponses)
         .set({
           answersJson: JSON.stringify(validated.answers),
+          writeToken,
           updatedAt: now,
         })
         .where(eq(formResponses.submissionId, submissionId)),
@@ -568,6 +585,18 @@ export async function updateOwnSubmission(
     }
   } catch (error: unknown) {
     if (String(error).includes("submission_closed")) {
+      const latest = await findSubmissionWriteState(
+        database,
+        ownerUserId,
+        submissionId,
+      );
+      if (
+        latest?.status === "active" &&
+        !isPublished(latest.decisionStatus) &&
+        latest.revision !== input.expectedRevision
+      ) {
+        return { ok: false, error: "submission_changed" };
+      }
       return { ok: false, error: "submission_closed" };
     }
     return { ok: false, error: "persistence_failed" };
@@ -581,6 +610,29 @@ export async function updateOwnSubmission(
   return submission
     ? { ok: true, value: submission }
     : { ok: false, error: "persistence_failed" };
+}
+
+async function findSubmissionWriteState(
+  database: Database,
+  ownerUserId: UserId,
+  submissionId: SubmissionId,
+) {
+  const [state] = await database
+    .select({
+      status: submissions.status,
+      revision: submissions.revision,
+      decisionStatus: decisions.status,
+    })
+    .from(submissions)
+    .innerJoin(decisions, eq(decisions.submissionId, submissions.id))
+    .where(
+      and(
+        eq(submissions.id, submissionId),
+        eq(submissions.ownerUserId, ownerUserId),
+      ),
+    )
+    .limit(1);
+  return state;
 }
 
 export async function withdrawOwnSubmission(
@@ -682,7 +734,7 @@ async function validateProposal(
   database: Database,
   slug: string,
   cfpId: string,
-  input: ProposalUpdate,
+  input: ValidatedProposalInput,
 ): Promise<
   | {
       ok: true;

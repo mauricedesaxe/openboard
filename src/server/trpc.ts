@@ -1208,6 +1208,7 @@ function throwProposalWriteError(
     | "invalid_track"
     | "not_found"
     | "persistence_failed"
+    | "submission_changed"
     | "submission_closed",
 ): never {
   if (error === "not_found") throwSubmissionNotFound();
@@ -1215,6 +1216,12 @@ function throwProposalWriteError(
     throw new TRPCError({
       code: "CONFLICT",
       message: "This proposal can no longer be edited.",
+    });
+  }
+  if (error === "submission_changed") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "This proposal changed elsewhere. The latest version is shown.",
     });
   }
   if (error === "cfp_unavailable" || error === "deadline_passed") {
