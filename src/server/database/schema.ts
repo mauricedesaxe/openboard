@@ -458,8 +458,11 @@ export const reviewAuditEvents = sqliteTable(
     actorUserId: text("actor_user_id")
       .notNull()
       .references(() => user.id),
+    publicationItemId: text("publication_item_id")
+      .notNull()
+      .unique()
+      .references(() => decisionPublicationItems.id, { onDelete: "cascade" }),
     action: text("action").notNull(),
-    subjectId: text("subject_id").notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [index("review_audit_events_event_id_idx").on(table.eventId)],

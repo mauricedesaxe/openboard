@@ -2,14 +2,10 @@ import { z } from "zod";
 
 import { submissionIdSchema } from "./submissions";
 
-export type ReviewRoundId = string & { readonly __brand: "ReviewRoundId" };
 export type ReviewerAssignmentId = string & {
   readonly __brand: "ReviewerAssignmentId";
 };
 
-export const reviewRoundIdSchema = z
-  .uuid()
-  .transform((value) => value as ReviewRoundId);
 export const reviewerAssignmentIdSchema = z
   .uuid()
   .transform((value) => value as ReviewerAssignmentId);
