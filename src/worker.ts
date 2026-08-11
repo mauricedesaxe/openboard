@@ -63,7 +63,13 @@ export default {
         req: request,
         router: appRouter,
         createContext: () =>
-          createTrpcContext({ auth, config, database, request }),
+          createTrpcContext({
+            auth,
+            config,
+            database,
+            files: environment.FILES,
+            request,
+          }),
       });
     }
 

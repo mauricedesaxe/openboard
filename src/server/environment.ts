@@ -7,4 +7,5 @@ export type Environment = {
   EMAIL?: SendEmail;
   EMAIL_FROM?: string;
   EMAIL_TRANSPORT: string;
+  FILES: R2Bucket;
 };

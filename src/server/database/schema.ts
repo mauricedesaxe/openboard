@@ -541,6 +541,264 @@ export const communications = sqliteTable(
   (table) => [index("communications_submission_id_idx").on(table.submissionId)],
 );
 
+export const taskDefinitions = sqliteTable(
+  "task_definitions",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    scope: text("scope", {
+      enum: ["event_speaker", "program_item", "program_item_speaker"],
+    }).notNull(),
+    completionMechanism: text("completion_mechanism", {
+      enum: ["manual", "profile", "form", "file"],
+    }).notNull(),
+    profileRequirement: text("profile_requirement", {
+      enum: ["complete", "bio", "headshot"],
+    }),
+    formSchemaJson: text("form_schema_json"),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("task_definitions_event_id_idx").on(table.eventId)],
+);
+
+export const taskAssignments = sqliteTable(
+  "task_assignments",
+  {
+    id: text("id").primaryKey(),
+    taskDefinitionId: text("task_definition_id")
+      .notNull()
+      .references(() => taskDefinitions.id),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    targetUserId: text("target_user_id").references(() => user.id),
+    targetProgramItemId: text("target_program_item_id").references(
+      () => programItems.id,
+    ),
+    targetSubmissionSpeakerId: text("target_submission_speaker_id").references(
+      () => submissionSpeakers.id,
+    ),
+    required: integer("required", { mode: "boolean" }).notNull(),
+    dueAt: text("due_at"),
+    completionRevision: integer("completion_revision").notNull().default(1),
+    assignedByUserId: text("assigned_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    canceledAt: integer("canceled_at", { mode: "timestamp_ms" }),
+    canceledByUserId: text("canceled_by_user_id").references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("task_assignments_event_id_idx").on(table.eventId),
+    index("task_assignments_target_user_idx").on(
+      table.eventId,
+      table.targetUserId,
+    ),
+    index("task_assignments_target_program_item_idx").on(
+      table.targetProgramItemId,
+    ),
+    index("task_assignments_target_speaker_idx").on(
+      table.targetSubmissionSpeakerId,
+    ),
+  ],
+);
+
+export const taskAssignmentRevisions = sqliteTable(
+  "task_assignment_revisions",
+  {
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => taskAssignments.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    openedByUserId: text("opened_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    reason: text("reason"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("task_assignment_revisions_pk").on(
+      table.assignmentId,
+      table.revision,
+    ),
+  ],
+);
+
+export const onboardingFormResponses = sqliteTable(
+  "onboarding_form_responses",
+  {
+    id: text("id").primaryKey(),
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => taskAssignments.id, { onDelete: "cascade" }),
+    completionRevision: integer("completion_revision").notNull(),
+    answersJson: text("answers_json").notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    submittedAt: integer("submitted_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("onboarding_form_responses_one_draft_idx")
+      .on(table.assignmentId, table.completionRevision)
+      .where(sql`${table.submittedAt} IS NULL`),
+  ],
+);
+
+export const storedFiles = sqliteTable("stored_files", {
+  id: text("id").primaryKey(),
+  objectKey: text("object_key").notNull().unique(),
+  fileName: text("file_name").notNull(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  uploadedByUserId: text("uploaded_by_user_id")
+    .notNull()
+    .references(() => user.id),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const taskAssignmentAttachments = sqliteTable(
+  "task_assignment_attachments",
+  {
+    id: text("id").primaryKey(),
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => taskAssignments.id, { onDelete: "cascade" }),
+    completionRevision: integer("completion_revision").notNull(),
+    storedFileId: text("stored_file_id")
+      .notNull()
+      .unique()
+      .references(() => storedFiles.id),
+    attachedByUserId: text("attached_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("task_assignment_attachments_assignment_idx").on(
+      table.assignmentId,
+      table.completionRevision,
+    ),
+  ],
+);
+
+export const taskEvidence = sqliteTable(
+  "task_evidence",
+  {
+    id: text("id").primaryKey(),
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => taskAssignments.id, { onDelete: "cascade" }),
+    completionRevision: integer("completion_revision").notNull(),
+    kind: text("kind", {
+      enum: [
+        "manual",
+        "profile",
+        "form",
+        "file",
+        "waiver",
+        "organizer_override",
+      ],
+    }).notNull(),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => user.id),
+    speakerProfileId: text("speaker_profile_id").references(
+      () => speakerProfiles.id,
+    ),
+    formResponseId: text("form_response_id").references(
+      () => onboardingFormResponses.id,
+    ),
+    attachmentId: text("attachment_id").references(
+      () => taskAssignmentAttachments.id,
+    ),
+    reason: text("reason"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("task_evidence_assignment_idx").on(
+      table.assignmentId,
+      table.completionRevision,
+    ),
+    uniqueIndex("task_evidence_profile_once_idx")
+      .on(table.assignmentId, table.completionRevision, table.speakerProfileId)
+      .where(sql`${table.kind} = 'profile'`),
+  ],
+);
+
+export const taskEvidenceRejections = sqliteTable("task_evidence_rejections", {
+  evidenceId: text("evidence_id")
+    .primaryKey()
+    .references(() => taskEvidence.id, { onDelete: "cascade" }),
+  rejectedByUserId: text("rejected_by_user_id")
+    .notNull()
+    .references(() => user.id),
+  reason: text("reason").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const taskEvidenceSupersessions = sqliteTable(
+  "task_evidence_supersessions",
+  {
+    previousEvidenceId: text("previous_evidence_id")
+      .primaryKey()
+      .references(() => taskEvidence.id, { onDelete: "cascade" }),
+    replacementEvidenceId: text("replacement_evidence_id")
+      .notNull()
+      .unique()
+      .references(() => taskEvidence.id, { onDelete: "cascade" }),
+    supersededByUserId: text("superseded_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+);
+
+export const taskAttachmentSupersessions = sqliteTable(
+  "task_attachment_supersessions",
+  {
+    previousAttachmentId: text("previous_attachment_id")
+      .primaryKey()
+      .references(() => taskAssignmentAttachments.id, { onDelete: "cascade" }),
+    replacementAttachmentId: text("replacement_attachment_id")
+      .notNull()
+      .unique()
+      .references(() => taskAssignmentAttachments.id, { onDelete: "cascade" }),
+    supersededByUserId: text("superseded_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+);
+
+export const taskReminders = sqliteTable(
+  "task_reminders",
+  {
+    id: text("id").primaryKey(),
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => taskAssignments.id, { onDelete: "cascade" }),
+    sentByUserId: text("sent_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("task_reminders_assignment_idx").on(
+      table.assignmentId,
+      table.createdAt,
+    ),
+  ],
+);
+
 export const schema = {
   account,
   agendas,
@@ -553,6 +811,7 @@ export const schema = {
   events,
   formResponses,
   invitations,
+  onboardingFormResponses,
   programItems,
   rateLimit,
   reviewAuditEvents,
@@ -562,10 +821,20 @@ export const schema = {
   rooms,
   session,
   speakerProfiles,
+  storedFiles,
   submissions,
   submissionSpeakerInvitations,
   submissionSpeakers,
   tracks,
+  taskAssignmentAttachments,
+  taskAssignmentRevisions,
+  taskAssignments,
+  taskAttachmentSupersessions,
+  taskDefinitions,
+  taskEvidence,
+  taskEvidenceRejections,
+  taskEvidenceSupersessions,
+  taskReminders,
   user,
   verification,
 };
