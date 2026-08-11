@@ -13,19 +13,22 @@ export function parseJsonc(text) {
 export function buildPreviewConfig({
   baseConfigText,
   reviewNumber,
-  previewD1Id = defaultPreviewD1Id,
+  previewD1Id,
   workersDevSubdomain = defaultWorkersDevSubdomain,
 }) {
   const appUrl = `https://openboard-pr-${reviewNumber}.${workersDevSubdomain}.workers.dev`;
   const base = parseJsonc(baseConfigText);
   delete base.$schema;
 
+  const databaseName =
+    previewD1Id == null ? "openboard-preview" : `openboard-pr-${reviewNumber}`;
+
   base.name = `openboard-pr-${reviewNumber}`;
   base.d1_databases = [
     {
       ...base.d1_databases[0],
-      database_name: "openboard-preview",
-      database_id: previewD1Id,
+      database_name: databaseName,
+      database_id: previewD1Id ?? defaultPreviewD1Id,
     },
   ];
   base.vars = {
