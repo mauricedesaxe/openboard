@@ -841,6 +841,9 @@ export const agendaPublications = sqliteTable(
     finalized: integer("finalized", { mode: "boolean" })
       .notNull()
       .default(false),
+    requiresFinalization: integer("requires_finalization", { mode: "boolean" })
+      .notNull()
+      .default(false),
   },
   (table) => [
     uniqueIndex("agenda_publications_agenda_revision_idx").on(

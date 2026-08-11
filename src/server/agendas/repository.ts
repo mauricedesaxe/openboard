@@ -273,7 +273,7 @@ export async function publishAgenda(
 ): Promise<AgendaWriteResult<{ revision: number; deliveryWork: number }>> {
   const event = await findEventForOrganizer(database, actorUserId, input.slug);
   if (!event) return { ok: false, error: "not_found" };
-  const working = await loadWorkingAgenda(database, event);
+  const working = await loadWorkingAgenda(database, event, false);
   if (working.revision !== input.expectedRevision) {
     return { ok: false, error: "agenda_changed" };
   }
@@ -346,6 +346,7 @@ export async function publishAgenda(
     endsOn: event.endsOn,
     publishedByUserId: actorUserId,
     createdAt: now,
+    requiresFinalization: true,
   });
   const snapshotValues = snapshots.map((snapshot) => ({
     id: snapshot.id,
@@ -455,6 +456,15 @@ export async function publishAgenda(
 }
 
 export async function getPublishedAgenda(database: Database, slug: string) {
+  await database
+    .update(agendaPublications)
+    .set({ finalized: true })
+    .where(
+      and(
+        eq(agendaPublications.requiresFinalization, false),
+        eq(agendaPublications.finalized, false),
+      ),
+    );
   const [publication] = await database
     .select()
     .from(agendaPublications)
@@ -528,6 +538,7 @@ async function loadWorkingAgenda(
     endsOn: string;
     timezone: string;
   },
+  includeEditorOptions = true,
 ) {
   const [agenda] = await database
     .select({ revision: agendas.revision })
@@ -618,32 +629,36 @@ async function loadWorkingAgenda(
   }));
   deriveConflicts(items);
 
-  const unplaced = await database
-    .select({
-      id: programItems.id,
-      title: submissions.title,
-      format: submissions.format,
-      track: tracks.name,
-    })
-    .from(programItems)
-    .innerJoin(submissions, eq(submissions.id, programItems.submissionId))
-    .innerJoin(decisions, eq(decisions.submissionId, submissions.id))
-    .innerJoin(tracks, eq(tracks.id, submissions.trackId))
-    .leftJoin(agendaItems, eq(agendaItems.programItemId, programItems.id))
-    .where(
-      and(
-        eq(programItems.eventId, event.id),
-        eq(submissions.status, "active"),
-        eq(decisions.status, "accepted"),
-        isNull(agendaItems.id),
-      ),
-    )
-    .orderBy(asc(submissions.title));
-  const activeRooms = await database
-    .select({ id: rooms.id, name: rooms.name, position: rooms.position })
-    .from(rooms)
-    .where(and(eq(rooms.eventId, event.id), isNull(rooms.archivedAt)))
-    .orderBy(asc(rooms.position));
+  const unplaced = includeEditorOptions
+    ? await database
+        .select({
+          id: programItems.id,
+          title: submissions.title,
+          format: submissions.format,
+          track: tracks.name,
+        })
+        .from(programItems)
+        .innerJoin(submissions, eq(submissions.id, programItems.submissionId))
+        .innerJoin(decisions, eq(decisions.submissionId, submissions.id))
+        .innerJoin(tracks, eq(tracks.id, submissions.trackId))
+        .leftJoin(agendaItems, eq(agendaItems.programItemId, programItems.id))
+        .where(
+          and(
+            eq(programItems.eventId, event.id),
+            eq(submissions.status, "active"),
+            eq(decisions.status, "accepted"),
+            isNull(agendaItems.id),
+          ),
+        )
+        .orderBy(asc(submissions.title))
+    : [];
+  const activeRooms = includeEditorOptions
+    ? await database
+        .select({ id: rooms.id, name: rooms.name, position: rooms.position })
+        .from(rooms)
+        .where(and(eq(rooms.eventId, event.id), isNull(rooms.archivedAt)))
+        .orderBy(asc(rooms.position))
+    : [];
   return {
     revision: agenda?.revision ?? 0,
     timezone: event.timezone,
