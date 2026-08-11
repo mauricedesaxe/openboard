@@ -103,12 +103,23 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   const ownSpeakerRow = page
     .locator(".speaker-row")
     .filter({ hasText: "Browser Submitter" });
-  await page.route("**/api/trpc/submissions.removeSpeaker", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-    await route.continue();
+  let removalRequestStarted = false;
+  let releaseRemovalRequest = () => {};
+  const holdRemovalRequest = new Promise<void>((resolve) => {
+    releaseRemovalRequest = resolve;
   });
+  await page.route(
+    /\/api\/trpc\/submissions\.removeSpeaker(?:\?|$)/,
+    async (route) => {
+      removalRequestStarted = true;
+      await holdRemovalRequest;
+      await route.continue();
+    },
+  );
   await ownSpeakerRow.getByRole("button", { name: "Remove" }).click();
   await expect(ownSpeakerRow).toBeHidden({ timeout: 500 });
+  await expect.poll(() => removalRequestStarted).toBe(true);
+  releaseRemovalRequest();
   await expect(
     page.getByText("At least one proposed speaker must remain."),
   ).toBeVisible();
