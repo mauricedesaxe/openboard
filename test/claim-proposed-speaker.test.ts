@@ -35,7 +35,6 @@ const submissionPermissionsSchema = z.object({
 });
 const invitationSchema = z.object({
   id: z.string(),
-  kind: z.literal("submission_speaker"),
   email: z.string(),
   submissionTitle: z.string(),
   speakerName: z.string(),
@@ -431,6 +430,32 @@ describe("claim a proposed-speaker invitation", () => {
         )
       ).status,
     ).toBe(409);
+    expect(
+      (
+        await callTrpc(
+          "submissions.resendSpeakerInvitation",
+          {
+            submissionId: submission.id,
+            speakerId: submission.proposedSpeakers[0]?.id,
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(200);
+    const resentSecret = await getInvitationSecret(
+      "speaker-attempt-first@example.com",
+    );
+    expect(resentSecret).not.toBe(replacementSecret);
+    expect(
+      (
+        await callTrpc(
+          "submissionSpeakerInvitations.get",
+          { secret: resentSecret },
+          undefined,
+          "query",
+        )
+      ).status,
+    ).toBe(200);
 
     const secondSpeaker = getResult(
       (
@@ -524,6 +549,7 @@ describe("claim a proposed-speaker invitation", () => {
         status: "declined",
         replacement_for_invitation_id: firstInvitation.id,
       },
+      { status: "pending", replacement_for_invitation_id: null },
     ]);
     const agenda = await testEnvironment.DB.prepare(
       "SELECT updated_at FROM agendas WHERE id = ?",

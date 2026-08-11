@@ -4,12 +4,17 @@ import { customFieldsSchema, type CfpId, type TrackId } from "./cfps";
 import type { InvitationId } from "./event-team";
 
 export type SubmissionId = string & { readonly __brand: "SubmissionId" };
+export type SubmissionSpeakerId = string & {
+  readonly __brand: "SubmissionSpeakerId";
+};
 
 export const submissionIdSchema = z
   .uuid()
   .transform((value) => value as SubmissionId);
 
-export const submissionSpeakerIdSchema = z.uuid();
+export const submissionSpeakerIdSchema = z
+  .uuid()
+  .transform((value) => value as SubmissionSpeakerId);
 
 export const proposedSpeakerInputSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -48,11 +53,12 @@ export const removeSubmissionSpeakerSchema = z.object({
   speakerId: submissionSpeakerIdSchema,
 });
 
+export const resendSubmissionSpeakerInvitationSchema =
+  removeSubmissionSpeakerSchema;
+
 export const replaceSubmissionSpeakerInvitationSchema =
   removeSubmissionSpeakerSchema.extend({
-    replacesInvitationId: z
-      .string()
-      .transform((value) => value as InvitationId),
+    replacesInvitationId: z.uuid().transform((value) => value as InvitationId),
   });
 
 export const proposalDraftSchema = z.object({
@@ -101,7 +107,7 @@ export const submissionSchema = z.object({
   }),
   proposedSpeakers: z.array(
     z.object({
-      id: z.string(),
+      id: submissionSpeakerIdSchema,
       name: z.string(),
       email: z.email(),
       claimed: z.boolean(),

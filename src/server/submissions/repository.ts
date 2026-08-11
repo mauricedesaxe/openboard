@@ -22,6 +22,7 @@ import {
   type ProposalContent,
   type Submission,
   type SubmissionId,
+  type SubmissionSpeakerId,
   type SubmitProposalInput,
 } from "../../shared/submissions";
 import type { Database } from "../database/client";
@@ -84,7 +85,7 @@ export async function submitProposal(
     )
     .limit(1);
   if (existing) {
-    const submission = await findOwnSubmission(
+    const submission = await findAccessibleSubmission(
       database,
       ownerUserId,
       existing.id as SubmissionId,
@@ -105,7 +106,7 @@ export async function submitProposal(
   const submissionId = crypto.randomUUID() as SubmissionId;
   const now = new Date();
   const speakerRows = input.proposedSpeakers.map((speaker, position) => ({
-    id: crypto.randomUUID(),
+    id: crypto.randomUUID() as SubmissionSpeakerId,
     submissionId,
     invitedName: speaker.name,
     invitedEmail: speaker.email,
@@ -194,7 +195,7 @@ export async function submitProposal(
         )
         .limit(1);
       const submission = raced
-        ? await findOwnSubmission(
+        ? await findAccessibleSubmission(
             database,
             ownerUserId,
             raced.id as SubmissionId,
@@ -207,7 +208,7 @@ export async function submitProposal(
     return { ok: false, error: "persistence_failed" };
   }
 
-  const submission = await findOwnSubmission(
+  const submission = await findAccessibleSubmission(
     database,
     ownerUserId,
     submissionId,
@@ -223,9 +224,9 @@ export async function submitProposal(
     : { ok: false, error: "persistence_failed" };
 }
 
-export async function findOwnSubmission(
+export async function findAccessibleSubmission(
   database: Database,
-  ownerUserId: UserId,
+  viewerUserId: UserId,
   submissionId: SubmissionId,
 ): Promise<Submission | undefined> {
   const [row] = await database
@@ -239,6 +240,7 @@ export async function findOwnSubmission(
       eventSlug: events.slug,
       cfpId: cfps.id,
       cfpName: cfps.name,
+      cfpStatus: cfps.status,
       deadline: cfps.deadline,
       formatsJson: cfps.formatsJson,
       customFieldsJson: cfps.customFieldsJson,
@@ -267,35 +269,7 @@ export async function findOwnSubmission(
     .where(
       and(
         eq(submissions.id, submissionId),
-        or(
-          eq(submissions.ownerUserId, ownerUserId),
-          eq(events.ownerUserId, ownerUserId),
-          exists(
-            database
-              .select({ id: submissionSpeakers.id })
-              .from(submissionSpeakers)
-              .where(
-                and(
-                  eq(submissionSpeakers.submissionId, submissions.id),
-                  eq(submissionSpeakers.claimedUserId, ownerUserId),
-                  isNull(submissionSpeakers.removedAt),
-                ),
-              ),
-          ),
-          exists(
-            database
-              .select({ id: eventRoles.id })
-              .from(eventRoles)
-              .where(
-                and(
-                  eq(eventRoles.eventId, submissions.eventId),
-                  eq(eventRoles.userId, ownerUserId),
-                  eq(eventRoles.role, "organizer"),
-                  isNull(eventRoles.revokedAt),
-                ),
-              ),
-          ),
-        ),
+        accessibleSubmissionWhere(database, viewerUserId),
       ),
     )
     .limit(1);
@@ -307,7 +281,7 @@ export async function findOwnSubmission(
     .where(
       and(
         eq(eventRoles.eventId, row.eventId),
-        eq(eventRoles.userId, ownerUserId),
+        eq(eventRoles.userId, viewerUserId),
         eq(eventRoles.role, "organizer"),
         isNull(eventRoles.revokedAt),
       ),
@@ -416,38 +390,23 @@ export async function findOwnSubmission(
     confirmation: { status: row.communicationId ? "recorded" : undefined },
     permissions: {
       canEdit:
-        row.submissionOwnerUserId === ownerUserId &&
+        row.submissionOwnerUserId === viewerUserId &&
         active &&
         !published &&
+        row.cfpStatus === "open" &&
         new Date(row.deadline) > new Date(),
       canManageSpeakers:
-        (row.submissionOwnerUserId === ownerUserId ||
-          row.eventOwnerUserId === ownerUserId ||
+        (row.submissionOwnerUserId === viewerUserId ||
+          row.eventOwnerUserId === viewerUserId ||
           organizerRole !== undefined) &&
         active &&
         !published &&
+        row.cfpStatus === "open" &&
         new Date(row.deadline) > new Date(),
       canWithdraw:
-        row.submissionOwnerUserId === ownerUserId && active && !published,
+        row.submissionOwnerUserId === viewerUserId && active && !published,
     },
   });
-}
-
-export async function listOwnSubmissions(
-  database: Database,
-  ownerUserId: UserId,
-): Promise<Submission[]> {
-  const rows = await database
-    .select({ id: submissions.id })
-    .from(submissions)
-    .where(eq(submissions.ownerUserId, ownerUserId))
-    .orderBy(desc(submissions.updatedAt));
-  const owned = await Promise.all(
-    rows.map(({ id }) =>
-      findOwnSubmission(database, ownerUserId, id as SubmissionId),
-    ),
-  );
-  return owned.filter((submission) => submission !== undefined);
 }
 
 export async function listAccessibleSubmissions(
@@ -458,44 +417,46 @@ export async function listAccessibleSubmissions(
     .selectDistinct({ id: submissions.id })
     .from(submissions)
     .innerJoin(events, eq(events.id, submissions.eventId))
-    .where(
-      or(
-        eq(submissions.ownerUserId, userId),
-        eq(events.ownerUserId, userId),
-        exists(
-          database
-            .select({ id: submissionSpeakers.id })
-            .from(submissionSpeakers)
-            .where(
-              and(
-                eq(submissionSpeakers.submissionId, submissions.id),
-                eq(submissionSpeakers.claimedUserId, userId),
-                isNull(submissionSpeakers.removedAt),
-              ),
-            ),
-        ),
-        exists(
-          database
-            .select({ id: eventRoles.id })
-            .from(eventRoles)
-            .where(
-              and(
-                eq(eventRoles.eventId, submissions.eventId),
-                eq(eventRoles.userId, userId),
-                eq(eventRoles.role, "organizer"),
-                isNull(eventRoles.revokedAt),
-              ),
-            ),
-        ),
-      ),
-    )
+    .where(accessibleSubmissionWhere(database, userId))
     .orderBy(desc(submissions.updatedAt));
   const accessible = await Promise.all(
     rows.map(({ id }) =>
-      findOwnSubmission(database, userId, id as SubmissionId),
+      findAccessibleSubmission(database, userId, id as SubmissionId),
     ),
   );
   return accessible.filter((submission) => submission !== undefined);
+}
+
+function accessibleSubmissionWhere(database: Database, userId: UserId) {
+  return or(
+    eq(submissions.ownerUserId, userId),
+    eq(events.ownerUserId, userId),
+    exists(
+      database
+        .select({ id: submissionSpeakers.id })
+        .from(submissionSpeakers)
+        .where(
+          and(
+            eq(submissionSpeakers.submissionId, submissions.id),
+            eq(submissionSpeakers.claimedUserId, userId),
+            isNull(submissionSpeakers.removedAt),
+          ),
+        ),
+    ),
+    exists(
+      database
+        .select({ id: eventRoles.id })
+        .from(eventRoles)
+        .where(
+          and(
+            eq(eventRoles.eventId, submissions.eventId),
+            eq(eventRoles.userId, userId),
+            eq(eventRoles.role, "organizer"),
+            isNull(eventRoles.revokedAt),
+          ),
+        ),
+    ),
+  );
 }
 
 export async function updateOwnSubmission(
@@ -626,7 +587,7 @@ export async function updateOwnSubmission(
     return { ok: false, error: "persistence_failed" };
   }
 
-  const submission = await findOwnSubmission(
+  const submission = await findAccessibleSubmission(
     database,
     ownerUserId,
     submissionId,
@@ -721,7 +682,7 @@ export async function withdrawOwnSubmission(
     return { ok: false, error: "submission_closed" };
   }
 
-  const submission = await findOwnSubmission(
+  const submission = await findAccessibleSubmission(
     database,
     ownerUserId,
     submissionId,

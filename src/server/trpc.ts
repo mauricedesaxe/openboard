@@ -26,6 +26,7 @@ import {
   addSubmissionSpeakerSchema,
   proposalContentSchema,
   removeSubmissionSpeakerSchema,
+  resendSubmissionSpeakerInvitationSchema,
   replaceSubmissionSpeakerInvitationSchema,
   submissionIdSchema,
   submitProposalSchema,
@@ -94,13 +95,13 @@ import {
   declineSubmissionSpeakerInvitation,
   findUsableSubmissionSpeakerInvitation,
   removeSubmissionSpeaker,
+  resendSubmissionSpeakerInvitation,
   replaceSubmissionSpeakerInvitation,
   type SubmissionSpeakerInvitationDelivery,
 } from "./submission-speakers/repository";
 import {
-  findOwnSubmission,
+  findAccessibleSubmission,
   listAccessibleSubmissions,
-  listOwnSubmissions,
   submitProposal,
   updateOwnSubmission,
   withdrawOwnSubmission,
@@ -538,9 +539,6 @@ export const appRouter = trpc.router({
     list: authenticatedProcedure.query(({ ctx }) =>
       listAccessibleSubmissions(ctx.database, ctx.userId),
     ),
-    listOwn: authenticatedProcedure.query(({ ctx }) =>
-      listOwnSubmissions(ctx.database, ctx.userId),
-    ),
     submit: authenticatedProcedure
       .input(submitProposalSchema)
       .mutation(async ({ ctx, input }) => {
@@ -564,21 +562,10 @@ export const appRouter = trpc.router({
         );
         return result.value;
       }),
-    getOwn: authenticatedProcedure
-      .input(z.object({ submissionId: submissionIdSchema }))
-      .query(async ({ ctx, input }) => {
-        const submission = await findOwnSubmission(
-          ctx.database,
-          ctx.userId,
-          input.submissionId,
-        );
-        if (!submission) throwSubmissionNotFound();
-        return submission;
-      }),
     get: authenticatedProcedure
       .input(z.object({ submissionId: submissionIdSchema }))
       .query(async ({ ctx, input }) => {
-        const submission = await findOwnSubmission(
+        const submission = await findAccessibleSubmission(
           ctx.database,
           ctx.userId,
           input.submissionId,
@@ -595,13 +582,14 @@ export const appRouter = trpc.router({
           input,
         );
         if (!result.ok) throwSubmissionSpeakerWriteError(result.error);
-        await deliverSubmissionSpeakerInvitation(
+        const delivery = await deliverSubmissionSpeakerInvitation(
           ctx.config,
           result.value.delivery,
         );
         return {
           speakerId: result.value.speakerId,
           invitationId: result.value.invitationId,
+          delivery,
         };
       }),
     replaceSpeakerInvitation: authenticatedProcedure
@@ -613,11 +601,26 @@ export const appRouter = trpc.router({
           input,
         );
         if (!result.ok) throwSubmissionSpeakerWriteError(result.error);
-        await deliverSubmissionSpeakerInvitation(
+        const delivery = await deliverSubmissionSpeakerInvitation(
           ctx.config,
           result.value.delivery,
         );
-        return { invitationId: result.value.invitationId };
+        return { invitationId: result.value.invitationId, delivery };
+      }),
+    resendSpeakerInvitation: authenticatedProcedure
+      .input(resendSubmissionSpeakerInvitationSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await resendSubmissionSpeakerInvitation(
+          ctx.database,
+          ctx.userId,
+          input,
+        );
+        if (!result.ok) throwSubmissionSpeakerWriteError(result.error);
+        const delivery = await deliverSubmissionSpeakerInvitation(
+          ctx.config,
+          result.value.delivery,
+        );
+        return { invitationId: result.value.invitationId, delivery };
       }),
     removeSpeaker: authenticatedProcedure
       .input(removeSubmissionSpeakerSchema)
@@ -791,7 +794,6 @@ export const appRouter = trpc.router({
         );
         if (!result.ok) throwInvitationLookupError(result.error);
         return {
-          kind: "submission_speaker" as const,
           ...result.value,
           expiresAt: result.value.expiresAt.toISOString(),
         };
@@ -868,9 +870,10 @@ export const appRouter = trpc.router({
 async function deliverSubmissionSpeakerInvitation(
   config: AppConfig,
   invitation: SubmissionSpeakerInvitationDelivery,
-): Promise<void> {
+): Promise<"sent" | "failed"> {
   try {
     await sendSubmissionSpeakerInvitation(config, invitation);
+    return "sent";
   } catch (error: unknown) {
     console.error(
       JSON.stringify({
@@ -879,6 +882,7 @@ async function deliverSubmissionSpeakerInvitation(
         error: error instanceof Error ? error.message : "Unknown email failure",
       }),
     );
+    return "failed";
   }
 }
 

@@ -254,7 +254,7 @@ describe("submit a proposal through the local-first flow", () => {
     expect(
       (
         await callTrpc(
-          "submissions.getOwn",
+          "submissions.get",
           { submissionId: submitted.id },
           unrelated.cookie,
           "query",
@@ -264,7 +264,7 @@ describe("submit a proposal through the local-first flow", () => {
     const reloaded = getResult(
       (
         await callTrpc(
-          "submissions.getOwn",
+          "submissions.get",
           { submissionId: submitted.id },
           submitter.cookie,
           "query",
@@ -277,7 +277,7 @@ describe("submit a proposal through the local-first flow", () => {
       getResult(
         (
           await callTrpc(
-            "submissions.listOwn",
+            "submissions.list",
             undefined,
             submitter.cookie,
             "query",
@@ -290,7 +290,7 @@ describe("submit a proposal through the local-first flow", () => {
       getResult(
         (
           await callTrpc(
-            "submissions.listOwn",
+            "submissions.list",
             undefined,
             unrelated.cookie,
             "query",
@@ -370,7 +370,7 @@ describe("submit a proposal through the local-first flow", () => {
     const queued = getResult(
       (
         await callTrpc(
-          "submissions.getOwn",
+          "submissions.get",
           { submissionId: submitted.id },
           submitter.cookie,
           "query",

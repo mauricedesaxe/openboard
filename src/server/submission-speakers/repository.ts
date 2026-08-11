@@ -1,7 +1,8 @@
-import { and, eq, exists, gt, isNull, max, or } from "drizzle-orm";
+import { and, eq, exists, gt, isNull, max, or, sql } from "drizzle-orm";
 
 import type { InvitationId } from "../../shared/event-team";
 import type { UserId } from "../../shared/events";
+import type { SubmissionSpeakerId } from "../../shared/submissions";
 import type { Database } from "../database/client";
 import {
   cfps,
@@ -31,7 +32,7 @@ export type SubmissionSpeakerInvitationDelivery = {
 
 export async function prepareSubmissionSpeakerInvitation(
   input: {
-    submissionSpeakerId: string;
+    submissionSpeakerId: SubmissionSpeakerId;
     email: string;
     eventName: string;
     speakerName: string;
@@ -81,7 +82,7 @@ export async function addSubmissionSpeaker(
   },
 ): Promise<
   SpeakerWriteResult<{
-    speakerId: string;
+    speakerId: SubmissionSpeakerId;
     invitationId: InvitationId;
     delivery: SubmissionSpeakerInvitationDelivery;
   }>
@@ -99,7 +100,7 @@ export async function addSubmissionSpeaker(
     .from(submissionSpeakers)
     .where(eq(submissionSpeakers.submissionId, input.submissionId));
   const now = new Date();
-  const speakerId = crypto.randomUUID();
+  const speakerId = crypto.randomUUID() as SubmissionSpeakerId;
   const attempt = await prepareSubmissionSpeakerInvitation(
     {
       submissionSpeakerId: speakerId,
@@ -148,7 +149,7 @@ export async function replaceSubmissionSpeakerInvitation(
   actorUserId: UserId,
   input: {
     submissionId: string;
-    speakerId: string;
+    speakerId: SubmissionSpeakerId;
     replacesInvitationId: InvitationId;
   },
 ): Promise<
@@ -198,7 +199,7 @@ export async function replaceSubmissionSpeakerInvitation(
   const now = new Date();
   const attempt = await prepareSubmissionSpeakerInvitation(
     {
-      submissionSpeakerId: speaker.id,
+      submissionSpeakerId: speaker.id as SubmissionSpeakerId,
       email: speaker.email,
       eventName: editable.eventName,
       speakerName: speaker.name,
@@ -207,20 +208,122 @@ export async function replaceSubmissionSpeakerInvitation(
     },
     now,
   );
-  attempt.values.replacementForInvitationId = input.replacesInvitationId;
-  try {
-    await database.batch([
+  const revokeReplaced = database
+    .update(submissionSpeakerInvitations)
+    .set({ status: "revoked", resolvedAt: now })
+    .where(
+      and(
+        eq(submissionSpeakerInvitations.id, input.replacesInvitationId),
+        eq(submissionSpeakerInvitations.status, "pending"),
+      ),
+    );
+  const insertReplacement = database
+    .insert(submissionSpeakerInvitations)
+    .select(
       database
-        .update(submissionSpeakerInvitations)
-        .set({ status: "revoked", resolvedAt: now })
+        .select({
+          id: sql<string>`${attempt.delivery.id}`.as("id"),
+          submissionSpeakerId: submissionSpeakerInvitations.submissionSpeakerId,
+          email: sql<string>`${speaker.email}`.as("email"),
+          secretHash: sql<string>`${attempt.values.secretHash}`.as(
+            "secret_hash",
+          ),
+          status: sql<"pending">`'pending'`.as("status"),
+          invitedByUserId: sql<string>`${actorUserId}`.as("invited_by_user_id"),
+          replacementForInvitationId: submissionSpeakerInvitations.id,
+          acceptedByUserId: sql<null>`NULL`.as("accepted_by_user_id"),
+          expiresAt: sql<number>`${attempt.delivery.expiresAt.getTime()}`.as(
+            "expires_at",
+          ),
+          resolvedAt: sql<null>`NULL`.as("resolved_at"),
+          createdAt: sql<number>`${now.getTime()}`.as("created_at"),
+        })
+        .from(submissionSpeakerInvitations)
         .where(
           and(
             eq(submissionSpeakerInvitations.id, input.replacesInvitationId),
-            eq(submissionSpeakerInvitations.status, "pending"),
+            eq(submissionSpeakerInvitations.status, "revoked"),
+            eq(submissionSpeakerInvitations.resolvedAt, now),
           ),
         ),
-      database.insert(submissionSpeakerInvitations).values(attempt.values),
+    );
+  try {
+    const [revoked, inserted] = await database.batch([
+      revokeReplaced,
+      insertReplacement,
     ]);
+    if (revoked.meta.changes !== 1 || inserted.meta.changes !== 1) {
+      return { ok: false, error: "invitation_not_replaceable" };
+    }
+  } catch {
+    return { ok: false, error: "invitation_not_replaceable" };
+  }
+  return {
+    ok: true,
+    value: { invitationId: attempt.delivery.id, delivery: attempt.delivery },
+  };
+}
+
+export async function resendSubmissionSpeakerInvitation(
+  database: Database,
+  actorUserId: UserId,
+  input: { submissionId: string; speakerId: SubmissionSpeakerId },
+): Promise<
+  SpeakerWriteResult<{
+    invitationId: InvitationId;
+    delivery: SubmissionSpeakerInvitationDelivery;
+  }>
+> {
+  const editable = await findEditableSubmission(
+    database,
+    actorUserId,
+    input.submissionId,
+  );
+  if (!editable) return { ok: false, error: "not_found" };
+  if (!editable.editable) return { ok: false, error: "submission_closed" };
+  const [speaker] = await database
+    .select({
+      id: submissionSpeakers.id,
+      email: submissionSpeakers.invitedEmail,
+      name: submissionSpeakers.invitedName,
+    })
+    .from(submissionSpeakers)
+    .where(
+      and(
+        eq(submissionSpeakers.id, input.speakerId),
+        eq(submissionSpeakers.submissionId, input.submissionId),
+        isNull(submissionSpeakers.removedAt),
+        isNull(submissionSpeakers.claimedUserId),
+      ),
+    )
+    .limit(1);
+  if (!speaker) return { ok: false, error: "not_found" };
+  const [pending] = await database
+    .select({ id: submissionSpeakerInvitations.id })
+    .from(submissionSpeakerInvitations)
+    .where(
+      and(
+        eq(submissionSpeakerInvitations.submissionSpeakerId, speaker.id),
+        eq(submissionSpeakerInvitations.status, "pending"),
+      ),
+    )
+    .limit(1);
+  if (pending) return { ok: false, error: "invitation_not_replaceable" };
+
+  const now = new Date();
+  const attempt = await prepareSubmissionSpeakerInvitation(
+    {
+      submissionSpeakerId: speaker.id as SubmissionSpeakerId,
+      email: speaker.email,
+      eventName: editable.eventName,
+      speakerName: speaker.name,
+      submissionTitle: editable.submissionTitle,
+      invitedByUserId: actorUserId,
+    },
+    now,
+  );
+  try {
+    await database.insert(submissionSpeakerInvitations).values(attempt.values);
   } catch {
     return { ok: false, error: "invitation_not_replaceable" };
   }
@@ -233,7 +336,7 @@ export async function replaceSubmissionSpeakerInvitation(
 export async function removeSubmissionSpeaker(
   database: Database,
   actorUserId: UserId,
-  input: { submissionId: string; speakerId: string },
+  input: { submissionId: string; speakerId: SubmissionSpeakerId },
 ): Promise<SpeakerWriteResult<{ removed: true }>> {
   const editable = await findEditableSubmission(
     database,
@@ -337,11 +440,10 @@ async function findEditableSubmission(
 
 type InvitationLookupValue = {
   id: InvitationId;
-  submissionSpeakerId: string;
+  submissionSpeakerId: SubmissionSpeakerId;
   submissionId: string;
   email: string;
   eventName: string;
-  eventSlug: string;
   speakerName: string;
   submissionTitle: string;
   expiresAt: Date;
@@ -363,7 +465,6 @@ export async function findUsableSubmissionSpeakerInvitation(
       submissionId: submissions.id,
       email: submissionSpeakerInvitations.email,
       eventName: events.name,
-      eventSlug: events.slug,
       speakerName: submissionSpeakers.invitedName,
       submissionTitle: submissions.title,
       status: submissionSpeakerInvitations.status,
@@ -392,7 +493,12 @@ export async function findUsableSubmissionSpeakerInvitation(
   }
   return {
     ok: true,
-    value: { ...invitation, id: invitation.id as InvitationId },
+    value: {
+      ...invitation,
+      id: invitation.id as InvitationId,
+      submissionSpeakerId:
+        invitation.submissionSpeakerId as SubmissionSpeakerId,
+    },
   };
 }
 
@@ -421,7 +527,7 @@ export async function declineSubmissionSpeakerInvitation(
 }
 
 type AcceptInvitationResult =
-  | { ok: true; value: { eventSlug: string; submissionId: string } }
+  | { ok: true; value: { submissionId: string } }
   | {
       ok: false;
       error:
@@ -446,7 +552,7 @@ export async function acceptSubmissionSpeakerInvitation(
   const now = new Date();
   const claim = database
     .update(submissionSpeakers)
-    .set({ claimedUserId: recipient.id, claimedAt: now, updatedAt: now })
+    .set({ claimedUserId: recipient.id, updatedAt: now })
     .where(
       and(
         eq(submissionSpeakers.id, invitation.value.submissionSpeakerId),
@@ -495,9 +601,6 @@ export async function acceptSubmissionSpeakerInvitation(
 
   return {
     ok: true,
-    value: {
-      eventSlug: invitation.value.eventSlug,
-      submissionId: invitation.value.submissionId,
-    },
+    value: { submissionId: invitation.value.submissionId },
   };
 }

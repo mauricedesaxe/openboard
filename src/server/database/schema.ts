@@ -358,7 +358,6 @@ export const submissionSpeakers = sqliteTable(
     invitedName: text("invited_name").notNull(),
     invitedEmail: text("invited_email").notNull(),
     claimedUserId: text("claimed_user_id").references(() => user.id),
-    claimedAt: integer("claimed_at", { mode: "timestamp_ms" }),
     position: integer("position").notNull(),
     removedAt: integer("removed_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
