@@ -1,10 +1,7 @@
 import { z } from "zod";
 
 export type CfpId = string & { readonly __brand: "CfpId" };
-export type RoomId = string & { readonly __brand: "RoomId" };
 export type TrackId = string & { readonly __brand: "TrackId" };
-
-export const roomIdSchema = z.uuid().transform((value) => value as RoomId);
 
 const nameSchema = z
   .string()

@@ -1,8 +1,11 @@
 import { z } from "zod";
 
 export type EventId = string & { readonly __brand: "EventId" };
+export type RoomId = string & { readonly __brand: "RoomId" };
 export type UserId = string & { readonly __brand: "UserId" };
 export type EventAccess = "owner" | "organizer" | "reviewer";
+
+export const roomIdSchema = z.uuid().transform((value) => value as RoomId);
 
 const supportedTimezones = new Set([
   "UTC",

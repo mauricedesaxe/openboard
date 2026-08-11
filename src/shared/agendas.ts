@@ -1,7 +1,6 @@
 import { z } from "zod";
 
-import { roomIdSchema } from "./cfps";
-import { eventInputSchema } from "./events";
+import { eventInputSchema, roomIdSchema } from "./events";
 
 export type AgendaItemId = string & { readonly __brand: "AgendaItemId" };
 export type ProgramItemId = string & { readonly __brand: "ProgramItemId" };
