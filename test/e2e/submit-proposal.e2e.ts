@@ -137,59 +137,55 @@ async function signIn(page: Page, email: string, buttonName: string) {
 }
 
 async function createOpenCfp(page: Page, slug: string) {
-  await page.evaluate(async (eventSlug) => {
-    async function mutate(path: string, input: unknown) {
-      const response = await fetch(`/api/trpc/${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(input),
-      });
-      const body: {
-        result?: { data: Record<string, unknown> };
-      } = await response.json();
-      if (!response.ok || !body.result) {
-        throw new Error(`${path} failed with ${response.status}`);
-      }
-      return body.result.data;
+  async function mutate(path: string, input: unknown) {
+    const response = await page.request.post(`/api/trpc/${path}`, {
+      data: input,
+    });
+    const body = (await response.json()) as {
+      result?: { data: Record<string, unknown> };
+    };
+    if (!response.ok() || !body.result) {
+      throw new Error(`${path} failed with ${response.status()}`);
     }
+    return body.result.data;
+  }
 
-    await mutate("events.create", {
-      name: "Browser Proposal Conference",
-      slug: eventSlug,
-      startsOn: "2027-08-10",
-      endsOn: "2027-08-12",
-      timezone: "Europe/Berlin",
-    });
-    await mutate("tracks.create", { slug: eventSlug, name: "Web systems" });
-    const draft = await mutate("cfps.createDraft", {
-      slug: eventSlug,
-      name: "Share your browser story",
-      deadline: "2027-04-30T21:59:00Z",
-      formats: ["Talk", "Workshop"],
-      customFields: [
-        {
-          key: "audience",
-          label: "Audience",
-          type: "single_select",
-          required: true,
-          options: ["Beginner", "Experienced"],
-        },
-        {
-          key: "requirements",
-          label: "Workshop requirements",
-          type: "long_text",
-          required: true,
-          condition: { fieldKey: "audience", equals: "Experienced" },
-        },
-      ],
-    });
-    await mutate("cfps.open", {
-      slug: eventSlug,
-      cfpId: draft.id,
-      name: draft.name,
-      deadline: draft.deadline,
-      formats: draft.formats,
-      customFields: draft.customFields,
-    });
-  }, slug);
+  await mutate("events.create", {
+    name: "Browser Proposal Conference",
+    slug,
+    startsOn: "2027-08-10",
+    endsOn: "2027-08-12",
+    timezone: "Europe/Berlin",
+  });
+  await mutate("tracks.create", { slug, name: "Web systems" });
+  const draft = await mutate("cfps.createDraft", {
+    slug,
+    name: "Share your browser story",
+    deadline: "2027-04-30T21:59:00Z",
+    formats: ["Talk", "Workshop"],
+    customFields: [
+      {
+        key: "audience",
+        label: "Audience",
+        type: "single_select",
+        required: true,
+        options: ["Beginner", "Experienced"],
+      },
+      {
+        key: "requirements",
+        label: "Workshop requirements",
+        type: "long_text",
+        required: true,
+        condition: { fieldKey: "audience", equals: "Experienced" },
+      },
+    ],
+  });
+  await mutate("cfps.open", {
+    slug,
+    cfpId: draft.id,
+    name: draft.name,
+    deadline: draft.deadline,
+    formats: draft.formats,
+    customFields: draft.customFields,
+  });
 }
