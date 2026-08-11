@@ -31,7 +31,15 @@ export const proposalContentSchema = z.object({
   abstract: z.string().trim().min(10).max(10_000),
   format: z.string().trim().min(1).max(80),
   trackId: z.uuid().transform((value) => value as TrackId),
-  proposedSpeakers: z.array(proposedSpeakerInputSchema).min(1).max(20),
+  proposedSpeakers: z
+    .array(proposedSpeakerInputSchema)
+    .min(1)
+    .max(20)
+    .refine(
+      (speakers) =>
+        new Set(speakers.map(({ email }) => email)).size === speakers.length,
+      "Use each proposed-speaker email once.",
+    ),
   customAnswers: proposalAnswersSchema,
 });
 
@@ -42,6 +50,10 @@ export const submitProposalSchema = proposalContentSchema.extend({
 });
 
 export type ProposalContent = z.infer<typeof proposalContentSchema>;
+export const proposalUpdateSchema = proposalContentSchema.omit({
+  proposedSpeakers: true,
+});
+export type ProposalUpdate = z.infer<typeof proposalUpdateSchema>;
 export type SubmitProposalInput = z.infer<typeof submitProposalSchema>;
 
 export const addSubmissionSpeakerSchema = proposedSpeakerInputSchema.extend({

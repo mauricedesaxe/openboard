@@ -63,6 +63,7 @@ export async function prepareSubmissionSpeakerInvitation(
 }
 
 type SpeakerWriteError =
+  | "duplicate_speaker"
   | "invitation_not_replaceable"
   | "last_speaker"
   | "not_found"
@@ -94,6 +95,18 @@ export async function addSubmissionSpeaker(
   );
   if (!editable) return { ok: false, error: "not_found" };
   if (!editable.editable) return { ok: false, error: "submission_closed" };
+  const [duplicate] = await database
+    .select({ id: submissionSpeakers.id })
+    .from(submissionSpeakers)
+    .where(
+      and(
+        eq(submissionSpeakers.submissionId, input.submissionId),
+        eq(submissionSpeakers.invitedEmail, input.email),
+        isNull(submissionSpeakers.removedAt),
+      ),
+    )
+    .limit(1);
+  if (duplicate) return { ok: false, error: "duplicate_speaker" };
 
   const [lastPosition] = await database
     .select({ position: max(submissionSpeakers.position) })
@@ -373,6 +386,21 @@ export async function removeSubmissionSpeaker(
               input.speakerId,
             ),
             eq(submissionSpeakerInvitations.status, "pending"),
+            exists(
+              database
+                .select({ id: submissionSpeakers.id })
+                .from(submissionSpeakers)
+                .where(
+                  and(
+                    eq(
+                      submissionSpeakers.id,
+                      submissionSpeakerInvitations.submissionSpeakerId,
+                    ),
+                    eq(submissionSpeakers.submissionId, input.submissionId),
+                    eq(submissionSpeakers.removedAt, now),
+                  ),
+                ),
+            ),
           ),
         ),
     ]);

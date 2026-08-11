@@ -3,6 +3,9 @@ ALTER TABLE submission_speakers ADD COLUMN claimed_user_id TEXT REFERENCES user(
 CREATE UNIQUE INDEX submission_speakers_active_claim_idx
   ON submission_speakers(submission_id, claimed_user_id)
   WHERE claimed_user_id IS NOT NULL AND removed_at IS NULL;
+CREATE UNIQUE INDEX submission_speakers_active_email_idx
+  ON submission_speakers(submission_id, invited_email)
+  WHERE removed_at IS NULL;
 
 CREATE TABLE submission_speaker_invitations (
   id TEXT PRIMARY KEY NOT NULL,
