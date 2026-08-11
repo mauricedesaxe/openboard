@@ -4070,6 +4070,7 @@ function PublicCfpPage() {
     loadProposalDraft(slug),
   );
   const [proposalError, setProposalError] = useState<string>();
+  const [signInPending, setSignInPending] = useState(false);
   const draftKey = proposalDraftKey(slug);
   const submit = useMutation(
     trpc.submissions.submit.mutationOptions({
@@ -4172,7 +4173,7 @@ function PublicCfpPage() {
     }));
   }
 
-  function advance(event: FormEvent) {
+  async function advance(event: FormEvent) {
     event.preventDefault();
     if (step < publicCfpSteps.length - 1) {
       setStep((current) => current + 1);
@@ -4189,8 +4190,21 @@ function PublicCfpPage() {
     if (!session.data) {
       const returnTo = `/events/${slug}/cfp`;
       const pendingDraft = { ...draft, submitAfterSignIn: true };
+      const speakerEmail = parsed.value.proposedSpeakers[0]?.email;
+      if (!speakerEmail) return;
+      setSignInPending(true);
+      const result = await authClient.emailOtp.sendVerificationOtp({
+        email: speakerEmail,
+        type: "sign-in",
+      });
+      setSignInPending(false);
+      if (result.error) {
+        setProposalError("The sign-in code could not be sent. Try again.");
+        return;
+      }
       setDraft(pendingDraft);
       window.localStorage.setItem(draftKey, JSON.stringify(pendingDraft));
+      window.sessionStorage.setItem(pendingSignInKey(returnTo), speakerEmail);
       void navigate(`/sign-in?returnTo=${encodeURIComponent(returnTo)}`);
       return;
     }
@@ -4235,7 +4249,7 @@ function PublicCfpPage() {
           </ol>
         </aside>
         <section className="public-form-card">
-          <form onSubmit={advance}>
+          <form onSubmit={(event) => void advance(event)}>
             {step === 0 && (
               <>
                 <div className="eyebrow">01 · The idea</div>
@@ -4410,14 +4424,18 @@ function PublicCfpPage() {
               ) : (
                 <button
                   className="primary-button"
-                  disabled={submit.isPending || session.isPending}
+                  disabled={
+                    submit.isPending || session.isPending || signInPending
+                  }
                   type="submit"
                 >
-                  {submit.isPending
-                    ? "Submitting…"
-                    : session.data
-                      ? "Submit proposal"
-                      : "Sign in and submit"}
+                  {signInPending
+                    ? "Sending code…"
+                    : submit.isPending
+                      ? "Submitting…"
+                      : session.data
+                        ? "Submit proposal"
+                        : "Sign in and submit"}
                 </button>
               )}
             </div>
