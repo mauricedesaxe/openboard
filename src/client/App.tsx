@@ -3467,6 +3467,8 @@ function CustomFieldEditor({
   );
 }
 
+type ProposalEditContent = Omit<ProposalContent, "proposedSpeakers">;
+
 function SubmissionPage() {
   const { submissionId = "" } = useParams();
   const [searchParams] = useSearchParams();
@@ -3478,7 +3480,7 @@ function SubmissionPage() {
   );
   const [editState, setEditState] = useState<{
     submissionId: string;
-    content: ProposalContent;
+    content: ProposalEditContent;
     revision: number;
   }>();
   const update = useMutation(
@@ -3493,11 +3495,12 @@ function SubmissionPage() {
           trpc.submissions.get.queryFilter(submissionInput),
         );
       },
-      onError: async (error) => {
+      onError: async (error, attempted) => {
         if (error.data?.code !== "CONFLICT") return;
         const latest = await queryClient.fetchQuery(
           trpc.submissions.get.queryOptions(submissionInput),
         );
+        if (latest.revision === attempted.expectedRevision) return;
         setEditState({
           submissionId: latest.id,
           content: submissionContent(latest),
@@ -3538,7 +3541,7 @@ function SubmissionPage() {
   const editable = submission.data.permissions.canEdit;
 
   function changeContent(
-    update: (current: ProposalContent) => ProposalContent,
+    update: (current: ProposalEditContent) => ProposalEditContent,
   ) {
     setEditState((current) => ({
       submissionId: loadedSubmission.id,
@@ -3630,7 +3633,7 @@ function SubmissionPage() {
                       changeContent((current) => ({
                         ...current,
                         trackId: event.target
-                          .value as ProposalContent["trackId"],
+                          .value as ProposalEditContent["trackId"],
                       }))
                     }
                   >
@@ -4388,16 +4391,12 @@ function proposalDraftKey(slug: string): string {
   return `openboard:proposal-draft:${slug}`;
 }
 
-function submissionContent(submission: Submission): ProposalContent {
+function submissionContent(submission: Submission): ProposalEditContent {
   return {
     title: submission.title,
     abstract: submission.abstract,
     format: submission.format,
     trackId: submission.track.id,
-    proposedSpeakers: submission.proposedSpeakers.map(({ name, email }) => ({
-      name,
-      email: email ?? "",
-    })),
     customAnswers: submission.customAnswers,
   };
 }
