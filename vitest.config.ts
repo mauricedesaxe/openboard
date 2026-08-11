@@ -13,8 +13,8 @@ export default defineConfig(async () => {
   const replacementGuardMigration = migrations.filter(
     ({ name }) => name === "0025_invitation_replacement_guard.sql",
   );
-  const submissionRevisionMigration = migrations.filter(({ name }) =>
-    name.startsWith("0026_"),
+  const submissionRevisionMigration = migrations.filter(
+    ({ name }) => name === "0026_submission_revision.sql",
   );
 
   return {
