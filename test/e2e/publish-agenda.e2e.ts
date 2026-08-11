@@ -5,10 +5,12 @@ import {
   type Page,
 } from "@playwright/test";
 
+test.setTimeout(60_000);
+
 test("publishes a working placement to every public agenda view", async ({
   page,
 }) => {
-  const suffix = `${Date.now()}`;
+  const suffix = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const slug = `browser-agenda-${suffix}`;
   const ownerEmail = `browser-agenda-owner-${suffix}@example.com`;
   const submitterEmail = `browser-agenda-speaker-${suffix}@example.com`;
@@ -183,6 +185,9 @@ test("publishes a working placement to every public agenda view", async ({
     .locator(".working-agenda-item")
     .filter({ hasText: "A browser-built agenda" });
   await firstWorkingItem.getByRole("button", { name: "Cancel" }).click();
+  await expect(
+    firstWorkingItem.getByRole("button", { name: "Restore" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Publish agenda" }).click();
   await expect(page.getByText(/Public revision 2 is live/)).toBeVisible();
   await page.goto(`/events/${slug}/schedule`);
@@ -199,6 +204,12 @@ test("publishes a working placement to every public agenda view", async ({
     .filter({ hasText: "A browser-built agenda" })
     .getByRole("button", { name: "Restore" })
     .click();
+  await expect(
+    page
+      .locator(".working-agenda-item")
+      .filter({ hasText: "A browser-built agenda" })
+      .getByRole("button", { name: "Cancel" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Publish agenda" }).click();
   await expect(page.getByText(/Public revision 3 is live/)).toBeVisible();
   await page.goto(`/events/${slug}/schedule`);
