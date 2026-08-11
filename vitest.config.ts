@@ -10,8 +10,8 @@ export default defineConfig(async () => {
   const migrations = await readD1Migrations(
     path.join(import.meta.dirname, "migrations"),
   );
-  const replacementGuardMigration = migrations.filter(({ name }) =>
-    name.includes("invitation_replacement_guard"),
+  const replacementGuardMigration = migrations.filter(
+    ({ name }) => name === "0025_invitation_replacement_guard.sql",
   );
   const submissionRevisionMigration = migrations.filter(({ name }) =>
     name.startsWith("0026_"),

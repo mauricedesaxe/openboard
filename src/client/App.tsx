@@ -30,6 +30,7 @@ import type { EventRole, InvitationId } from "../shared/event-team";
 import {
   eventInputSchema,
   listTimezones,
+  slugifyEventName,
   type EventInput,
 } from "../shared/events";
 import type { SpeakerProfileInput } from "../shared/speaker-profiles";
@@ -48,6 +49,10 @@ import { useTRPC } from "./trpc";
 
 const ONBOARDING_REFETCH_INTERVAL_MS = 15_000;
 const FILE_ENCODING_CHUNK_BYTES = 32_768;
+
+function pluralize(count: number, singular: string) {
+  return count === 1 ? singular : `${singular}s`;
+}
 
 export function App() {
   const location = useLocation();
@@ -504,9 +509,23 @@ function CreateEventPage() {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
   });
   const [validationError, setValidationError] = useState<string>();
+  const [slugEdited, setSlugEdited] = useState(false);
 
   function update<K extends keyof EventInput>(field: K, value: EventInput[K]) {
     setInput((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateName(name: string) {
+    setInput((current) => ({
+      ...current,
+      name,
+      slug: slugEdited ? current.slug : slugifyEventName(name),
+    }));
+  }
+
+  function updateSlug(slug: string) {
+    setSlugEdited(true);
+    update("slug", slug.toLowerCase());
   }
 
   function submit(event: FormEvent) {
@@ -542,7 +561,7 @@ function CreateEventPage() {
           <Field label="Event name" name="name">
             <input
               id="name"
-              onChange={(event) => update("name", event.target.value)}
+              onChange={(event) => updateName(event.target.value)}
               placeholder="Northstar Conference"
               required
               value={input.name}
@@ -553,9 +572,7 @@ function CreateEventPage() {
               <span>/events/</span>
               <input
                 id="slug"
-                onChange={(event) =>
-                  update("slug", event.target.value.toLowerCase())
-                }
+                onChange={(event) => updateSlug(event.target.value)}
                 placeholder="northstar-2027"
                 required
                 value={input.slug}
@@ -1621,8 +1638,9 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
           <div className="eyebrow">Review round</div>
           <h1>{board.data.round.name}</h1>
           <p>
-            {board.data.submissions.length} proposals · {queued.length} queued
-            outcomes
+            {board.data.submissions.length}{" "}
+            {pluralize(board.data.submissions.length, "proposal")} ·{" "}
+            {queued.length} queued {pluralize(queued.length, "outcome")}
           </p>
         </div>
         <div className="round-control">
@@ -1822,7 +1840,9 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
           <div>
             <div className="eyebrow">Atomic publication</div>
             <strong>
-              Publish {selectedQueued.length} selected outcomes together
+              Publish {selectedQueued.length} selected{" "}
+              {pluralize(selectedQueued.length, "outcome")}
+              {selectedQueued.length > 1 ? " together" : ""}
             </strong>
           </div>
           <button
@@ -2058,7 +2078,7 @@ function EventTeamPanel({ slug }: { slug: string }) {
           setReplacement(undefined);
           setNotice({
             tone: "warning",
-            message: `A ${result.role} invitation is already pending for ${result.email}. Nothing changed.`,
+            message: `${/^[aeiou]/i.test(result.role) ? "An" : "A"} ${result.role} invitation is already pending for ${result.email}. Nothing changed.`,
             invitation: {
               id: result.id,
               email: result.email,
@@ -3523,6 +3543,7 @@ function SubmissionPage() {
   const withdraw = useMutation(
     trpc.submissions.withdrawOwn.mutationOptions({
       onSuccess: async () => {
+        setEditState(undefined);
         await queryClient.invalidateQueries(
           trpc.submissions.get.queryFilter(submissionInput),
         );
@@ -4117,7 +4138,11 @@ function PublicCfpPage() {
               <>
                 <div className="eyebrow">01 · The idea</div>
                 <h2>What do you want to share?</h2>
-                <Field label="Title" name="public-title">
+                <Field
+                  label="Title"
+                  name="public-title"
+                  required={cfp.data.coreFields.title.required}
+                >
                   <input
                     id="public-title"
                     required={cfp.data.coreFields.title.required}
@@ -4130,7 +4155,11 @@ function PublicCfpPage() {
                     }
                   />
                 </Field>
-                <Field label="Abstract" name="public-abstract">
+                <Field
+                  label="Abstract"
+                  name="public-abstract"
+                  required={cfp.data.coreFields.abstract.required}
+                >
                   <textarea
                     id="public-abstract"
                     required={cfp.data.coreFields.abstract.required}
@@ -4144,7 +4173,11 @@ function PublicCfpPage() {
                   />
                 </Field>
                 <div className="field-pair">
-                  <Field label="Format" name="public-format">
+                  <Field
+                    label="Format"
+                    name="public-format"
+                    required={cfp.data.coreFields.format.required}
+                  >
                     <select
                       id="public-format"
                       required={cfp.data.coreFields.format.required}
@@ -4162,7 +4195,11 @@ function PublicCfpPage() {
                       ))}
                     </select>
                   </Field>
-                  <Field label="Track" name="public-track">
+                  <Field
+                    label="Track"
+                    name="public-track"
+                    required={cfp.data.coreFields.track.required}
+                  >
                     <select
                       id="public-track"
                       required={cfp.data.coreFields.track.required}
@@ -4189,7 +4226,11 @@ function PublicCfpPage() {
               <>
                 <div className="eyebrow">02 · The people</div>
                 <h2>Who will present?</h2>
-                <Field label="Proposed speaker name" name="speaker-name">
+                <Field
+                  label="Proposed speaker name"
+                  name="speaker-name"
+                  required={cfp.data.coreFields.proposedSpeakers.required}
+                >
                   <input
                     id="speaker-name"
                     required={cfp.data.coreFields.proposedSpeakers.required}
@@ -4202,7 +4243,11 @@ function PublicCfpPage() {
                     }
                   />
                 </Field>
-                <Field label="Proposed speaker email" name="speaker-email">
+                <Field
+                  label="Proposed speaker email"
+                  name="speaker-email"
+                  required={cfp.data.coreFields.proposedSpeakers.required}
+                >
                   <input
                     id="speaker-email"
                     required={cfp.data.coreFields.proposedSpeakers.required}
@@ -4299,7 +4344,7 @@ function PublicCustomField({
 }) {
   if (field.type === "long_text")
     return (
-      <Field label={field.label} name={field.key}>
+      <Field label={field.label} name={field.key} required={field.required}>
         <textarea
           disabled={disabled}
           id={field.key}
@@ -4311,7 +4356,7 @@ function PublicCustomField({
     );
   if (field.type === "single_select")
     return (
-      <Field label={field.label} name={field.key}>
+      <Field label={field.label} name={field.key} required={field.required}>
         <select
           disabled={disabled}
           id={field.key}
@@ -4332,6 +4377,7 @@ function PublicCustomField({
         hint={`Up to ${field.maxSizeMb} MB`}
         label={field.label}
         name={field.key}
+        required={field.required}
       >
         <input
           accept={field.acceptedTypes.join(",")}
@@ -4343,7 +4389,7 @@ function PublicCustomField({
       </Field>
     );
   return (
-    <Field label={field.label} name={field.key}>
+    <Field label={field.label} name={field.key} required={field.required}>
       <input
         disabled={disabled}
         id={field.key}
@@ -4459,15 +4505,24 @@ function Field({
   hint,
   label,
   name,
+  required,
 }: {
   children: ReactNode;
   hint?: string;
   label: string;
   name: string;
+  required?: boolean;
 }) {
   return (
     <div className="field">
-      <label htmlFor={name}>{label}</label>
+      <label htmlFor={name}>
+        {label}
+        {required && (
+          <span aria-hidden="true" className="field-required">
+            *
+          </span>
+        )}
+      </label>
       {children}
       {hint && <span className="field-hint">{hint}</span>}
     </div>

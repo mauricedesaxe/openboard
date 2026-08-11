@@ -58,6 +58,17 @@ export const eventInputSchema = z
     }
   });
 
+export function slugifyEventName(name: string) {
+  return name
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 48)
+    .replace(/-+$/, "");
+}
+
 export type EventInput = z.infer<typeof eventInputSchema>;
 
 export const eventSchema = eventInputSchema.extend({
