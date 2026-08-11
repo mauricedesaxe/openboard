@@ -18,7 +18,7 @@ INSERT INTO review_rounds (
 SELECT id, event_id, id, name || ' review', 'draft', NULL, created_at, updated_at
 FROM cfps;
 
-DROP TABLE reviewer_assignments;
+ALTER TABLE reviewer_assignments RENAME TO reviewer_assignments_legacy;
 
 CREATE TABLE reviewer_assignments (
   id TEXT PRIMARY KEY NOT NULL,
@@ -31,6 +31,24 @@ CREATE TABLE reviewer_assignments (
   revoked_by_user_id TEXT REFERENCES user(id),
   created_at INTEGER NOT NULL
 );
+
+INSERT OR IGNORE INTO reviewer_assignments (
+  id, event_id, review_round_id, submission_id, reviewer_user_id,
+  assigned_by_user_id, revoked_at, revoked_by_user_id, created_at
+)
+SELECT
+  legacy.id, legacy.event_id, review_rounds.id, legacy.submission_id,
+  legacy.reviewer_user_id, legacy.assigned_by_user_id, legacy.revoked_at,
+  legacy.revoked_by_user_id, legacy.created_at
+FROM reviewer_assignments_legacy AS legacy
+INNER JOIN submissions
+  ON submissions.id = legacy.submission_id
+  AND submissions.event_id = legacy.event_id
+INNER JOIN review_rounds
+  ON review_rounds.cfp_id = submissions.cfp_id
+  AND review_rounds.event_id = legacy.event_id;
+
+DROP TABLE reviewer_assignments_legacy;
 
 CREATE INDEX reviewer_assignments_event_reviewer_idx
   ON reviewer_assignments(event_id, reviewer_user_id);

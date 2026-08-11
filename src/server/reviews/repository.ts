@@ -5,6 +5,7 @@ import {
   eq,
   inArray,
   isNull,
+  notExists,
   notInArray,
   sql,
 } from "drizzle-orm";
@@ -97,6 +98,7 @@ export async function getOrganizerReviewBoard(
       submissionId: reviewerAssignments.submissionId,
       reviewerUserId: reviewerAssignments.reviewerUserId,
       reviewerName: user.name,
+      reviewerEmail: user.email,
       score: reviews.score,
       comment: reviews.comment,
     })
@@ -143,6 +145,7 @@ export async function getOrganizerReviewBoard(
             id: assignment.id,
             reviewerUserId: assignment.reviewerUserId,
             reviewerName: assignment.reviewerName,
+            reviewerEmail: assignment.reviewerEmail,
             score: assignment.score,
             comment: assignment.comment,
           })),
@@ -474,34 +477,41 @@ export async function closeReviewRound(
   if (!round || round.status !== "open") {
     return { ok: false, error: "round_not_open" };
   }
-  if (!allowMissingReviews) {
-    const [incomplete] = await database
-      .select({ id: reviewerAssignments.id })
-      .from(reviewerAssignments)
-      .leftJoin(reviews, eq(reviews.assignmentId, reviewerAssignments.id))
-      .innerJoin(
-        submissions,
-        eq(submissions.id, reviewerAssignments.submissionId),
-      )
-      .where(
-        and(
-          eq(reviewerAssignments.reviewRoundId, round.id),
-          isNull(reviewerAssignments.revokedAt),
-          isNull(reviews.id),
-          eq(submissions.status, "active"),
-        ),
-      )
-      .limit(1);
-    if (incomplete) return { ok: false, error: "round_incomplete" };
-  }
+  const incompleteAssignments = database
+    .select({ id: reviewerAssignments.id })
+    .from(reviewerAssignments)
+    .leftJoin(reviews, eq(reviews.assignmentId, reviewerAssignments.id))
+    .innerJoin(
+      submissions,
+      eq(submissions.id, reviewerAssignments.submissionId),
+    )
+    .where(
+      and(
+        eq(reviewerAssignments.reviewRoundId, round.id),
+        isNull(reviewerAssignments.revokedAt),
+        isNull(reviews.id),
+        eq(submissions.status, "active"),
+      ),
+    );
   const now = new Date();
   const result = await database
     .update(reviewRounds)
     .set({ status: "closed", closedAt: now, updatedAt: now })
-    .where(and(eq(reviewRounds.id, round.id), eq(reviewRounds.status, "open")));
-  return result.meta.changes > 0
-    ? { ok: true, value: { closed: true } }
-    : { ok: false, error: "round_not_open" };
+    .where(
+      and(
+        eq(reviewRounds.id, round.id),
+        eq(reviewRounds.status, "open"),
+        allowMissingReviews ? undefined : notExists(incompleteAssignments),
+      ),
+    );
+  if (result.meta.changes > 0) {
+    return { ok: true, value: { closed: true } };
+  }
+  if (!allowMissingReviews) {
+    const [incomplete] = await incompleteAssignments.limit(1);
+    if (incomplete) return { ok: false, error: "round_incomplete" };
+  }
+  return { ok: false, error: "round_not_open" };
 }
 
 export async function reopenReviewRound(

@@ -43,6 +43,7 @@ const boardSchema = z.object({
             id: z.string(),
             reviewerUserId: z.string(),
             reviewerName: z.string(),
+            reviewerEmail: z.string(),
             score: z.number().nullable(),
             comment: z.string().nullable(),
           }),

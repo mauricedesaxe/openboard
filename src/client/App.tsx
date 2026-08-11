@@ -734,6 +734,11 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
   const selectedQueued = queued.filter(
     (submission) => selectedForPublication[submission.id],
   );
+  const hasMissingReviews = board.data.submissions.some(
+    (submission) =>
+      submission.status === "active" &&
+      submission.review.completed < submission.review.assigned,
+  );
   const mutationError =
     openRound.error ??
     closeRound.error ??
@@ -744,13 +749,13 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
     publish.error;
 
   function closeWithConfirmation() {
-    if (
-      window.confirm(
-        "Close this round? Incomplete assignments will remain as history and reviewers can no longer edit.",
-      )
-    ) {
-      closeRound.mutate({ slug, allowMissingReviews: true });
+    if (!hasMissingReviews) {
+      closeRound.mutate({ slug, allowMissingReviews: false });
+      return;
     }
+    if (!window.confirm("Some assignments have no review. Close anyway?"))
+      return;
+    closeRound.mutate({ slug, allowMissingReviews: true });
   }
 
   return (
@@ -901,7 +906,9 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
                         <option value="">Choose reviewer</option>
                         {board.data.reviewers.map((reviewer) => (
                           <option key={reviewer.id} value={reviewer.id}>
-                            {reviewer.name} · {reviewer.email}
+                            {reviewer.name
+                              ? `${reviewer.name} · ${reviewer.email}`
+                              : reviewer.email}
                           </option>
                         ))}
                       </select>
@@ -931,7 +938,7 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
                   {submission.review.assignments.map((assignment) => (
                     <div className="assignment-row" key={assignment.id}>
                       <span>
-                        {assignment.reviewerName} ·{" "}
+                        {assignment.reviewerName || assignment.reviewerEmail} ·{" "}
                         {assignment.score ?? "not scored"}
                       </span>
                       {board.data.round.status !== "closed" && (
