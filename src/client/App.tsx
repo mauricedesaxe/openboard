@@ -2601,6 +2601,7 @@ function CustomFieldEditor({
 
 function SubmissionPage() {
   const { submissionId = "" } = useParams();
+  const [searchParams] = useSearchParams();
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const submissionInput = { submissionId: submissionId as SubmissionId };
@@ -2702,6 +2703,12 @@ function SubmissionPage() {
           </span>
         </div>
       </section>
+      {searchParams.get("invitationDelivery") === "failed" && (
+        <p className="invite-notice invite-notice-warning" role="status">
+          The proposal was saved, but at least one invitation email could not be
+          sent. Send a new invitation from the proposed-speaker list.
+        </p>
+      )}
       {currentContent && (
         <section className="form-board submission-form">
           <form onSubmit={save}>
@@ -2986,7 +2993,7 @@ function SubmissionSpeakerManager({
       </div>
       {submission.permissions.canManageSpeakers && (
         <form className="speaker-invite-form" onSubmit={invite}>
-          <Field label="Speaker name" name="new-speaker-name">
+          <Field label="Proposed speaker name" name="new-speaker-name">
             <input
               id="new-speaker-name"
               required
@@ -2994,7 +3001,7 @@ function SubmissionSpeakerManager({
               onChange={(event) => setName(event.target.value)}
             />
           </Field>
-          <Field label="Speaker email" name="new-speaker-email">
+          <Field label="Proposed speaker email" name="new-speaker-email">
             <input
               id="new-speaker-email"
               required
@@ -3004,7 +3011,7 @@ function SubmissionSpeakerManager({
             />
           </Field>
           <button className="primary-button" disabled={add.isPending}>
-            {add.isPending ? "Inviting…" : "Invite speaker"}
+            {add.isPending ? "Inviting…" : "Invite proposed speaker"}
           </button>
         </form>
       )}
@@ -3042,7 +3049,10 @@ function PublicCfpPage() {
     trpc.submissions.submit.mutationOptions({
       onSuccess: (submission) => {
         if (draftKey) window.localStorage.removeItem(draftKey);
-        void navigate(`/submissions/${submission.id}`);
+        const deliveryQuery = submission.invitationDeliveryFailed
+          ? "?invitationDelivery=failed"
+          : "";
+        void navigate(`/submissions/${submission.id}${deliveryQuery}`);
       },
       onError: () => {
         setDraft((current) => ({ ...current, submitAfterSignIn: false }));

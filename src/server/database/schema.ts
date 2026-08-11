@@ -365,6 +365,9 @@ export const submissionSpeakers = sqliteTable(
   },
   (table) => [
     index("submission_speakers_submission_id_idx").on(table.submissionId),
+    uniqueIndex("submission_speakers_active_email_idx")
+      .on(table.submissionId, table.invitedEmail)
+      .where(sql`${table.removedAt} IS NULL`),
   ],
 );
 

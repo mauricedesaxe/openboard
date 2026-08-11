@@ -24,7 +24,7 @@ import {
 } from "../shared/reviews";
 import {
   addSubmissionSpeakerSchema,
-  proposalContentSchema,
+  proposalUpdateSchema,
   removeSubmissionSpeakerSchema,
   resendSubmissionSpeakerInvitationSchema,
   replaceSubmissionSpeakerInvitationSchema,
@@ -555,12 +555,15 @@ export const appRouter = trpc.router({
           input,
         );
         if (!result.ok) throwProposalWriteError(result.error);
-        await Promise.all(
+        const deliveries = await Promise.all(
           result.invitationDeliveries.map((invitation) =>
             deliverSubmissionSpeakerInvitation(ctx.config, invitation),
           ),
         );
-        return result.value;
+        return {
+          ...result.value,
+          invitationDeliveryFailed: deliveries.includes("failed"),
+        };
       }),
     get: authenticatedProcedure
       .input(z.object({ submissionId: submissionIdSchema }))
@@ -634,7 +637,7 @@ export const appRouter = trpc.router({
         return result.value;
       }),
     updateOwn: authenticatedProcedure
-      .input(proposalContentSchema.extend({ submissionId: submissionIdSchema }))
+      .input(proposalUpdateSchema.extend({ submissionId: submissionIdSchema }))
       .mutation(async ({ ctx, input }) => {
         const result = await updateOwnSubmission(
           ctx.database,
@@ -1024,7 +1027,6 @@ function throwProposalWriteError(
     | "invalid_track"
     | "not_found"
     | "persistence_failed"
-    | "speaker_list_changed"
     | "submission_closed",
 ): never {
   if (error === "not_found") throwSubmissionNotFound();
@@ -1044,12 +1046,6 @@ function throwProposalWriteError(
     throw new TRPCError({
       code: "CONFLICT",
       message: "The proposal form changed. Reload it before submitting.",
-    });
-  }
-  if (error === "speaker_list_changed") {
-    throw new TRPCError({
-      code: "CONFLICT",
-      message: "Add or remove proposed speakers through the speaker controls.",
     });
   }
   if (error === "invalid_track") {
@@ -1082,6 +1078,7 @@ function throwSubmissionNotFound(): never {
 
 function throwSubmissionSpeakerWriteError(
   error:
+    | "duplicate_speaker"
     | "invitation_not_replaceable"
     | "last_speaker"
     | "not_found"
@@ -1089,6 +1086,12 @@ function throwSubmissionSpeakerWriteError(
     | "submission_closed",
 ): never {
   if (error === "not_found") throwSubmissionNotFound();
+  if (error === "duplicate_speaker") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "That proposed-speaker email is already active.",
+    });
+  }
   if (error === "submission_closed") {
     throw new TRPCError({
       code: "CONFLICT",

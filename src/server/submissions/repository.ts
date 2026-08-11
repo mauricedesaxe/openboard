@@ -19,7 +19,7 @@ import type { UserId } from "../../shared/events";
 import {
   proposalAnswersSchema,
   submissionSchema,
-  type ProposalContent,
+  type ProposalUpdate,
   type Submission,
   type SubmissionId,
   type SubmissionSpeakerId,
@@ -53,7 +53,6 @@ type ProposalWriteError =
   | "invalid_track"
   | "not_found"
   | "persistence_failed"
-  | "speaker_list_changed"
   | "submission_closed";
 
 type ProposalWriteResult =
@@ -463,7 +462,7 @@ export async function updateOwnSubmission(
   database: Database,
   ownerUserId: UserId,
   submissionId: SubmissionId,
-  input: ProposalContent,
+  input: ProposalUpdate,
 ): Promise<ProposalWriteResult> {
   const [current] = await database
     .select({
@@ -486,30 +485,6 @@ export async function updateOwnSubmission(
   if (current.status !== "active" || isPublished(current.decisionStatus)) {
     return { ok: false, error: "submission_closed" };
   }
-  const activeSpeakers = await database
-    .select({
-      name: submissionSpeakers.invitedName,
-      email: submissionSpeakers.invitedEmail,
-    })
-    .from(submissionSpeakers)
-    .where(
-      and(
-        eq(submissionSpeakers.submissionId, submissionId),
-        isNull(submissionSpeakers.removedAt),
-      ),
-    )
-    .orderBy(submissionSpeakers.position);
-  if (
-    activeSpeakers.length !== input.proposedSpeakers.length ||
-    activeSpeakers.some(
-      (speaker, index) =>
-        speaker.name !== input.proposedSpeakers[index]?.name ||
-        speaker.email !== input.proposedSpeakers[index]?.email,
-    )
-  ) {
-    return { ok: false, error: "speaker_list_changed" };
-  }
-
   const validated = await validateProposal(
     database,
     current.slug,
@@ -696,7 +671,7 @@ async function validateProposal(
   database: Database,
   slug: string,
   cfpId: string,
-  input: ProposalContent,
+  input: ProposalUpdate,
 ): Promise<
   | {
       ok: true;
