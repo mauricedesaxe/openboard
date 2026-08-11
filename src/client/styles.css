@@ -159,6 +159,10 @@ a {
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
+.field-required {
+  margin-left: 4px;
+  color: var(--orange);
+}
 .field input,
 .field select,
 .field textarea {
@@ -1054,6 +1058,9 @@ a {
 }
 .submission-form {
   max-width: none;
+}
+.submission-form form > .eyebrow {
+  margin-bottom: 24px;
 }
 .submission-fields {
   margin: 0;
