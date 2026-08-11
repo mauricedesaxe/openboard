@@ -89,13 +89,7 @@ export const submissionSchema = z.object({
   ),
   customAnswers: proposalAnswersSchema,
   decision: z.object({
-    status: z.enum([
-      "pending",
-      "accept_queued",
-      "decline_queued",
-      "accepted",
-      "declined",
-    ]),
+    status: z.enum(["pending", "accepted", "declined"]),
   }),
   confirmation: z.object({ status: z.literal("recorded") }),
   permissions: z.object({ canEdit: z.boolean(), canWithdraw: z.boolean() }),

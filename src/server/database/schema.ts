@@ -173,6 +173,27 @@ export const eventRoles = sqliteTable(
   ],
 );
 
+export const reviewRounds = sqliteTable(
+  "review_rounds",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    cfpId: text("cfp_id")
+      .notNull()
+      .unique()
+      .references(() => cfps.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    status: text("status", { enum: ["draft", "open", "closed"] }).notNull(),
+    openedAt: integer("opened_at", { mode: "timestamp_ms" }),
+    closedAt: integer("closed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("review_rounds_event_id_idx").on(table.eventId)],
+);
+
 export const reviewerAssignments = sqliteTable(
   "reviewer_assignments",
   {
@@ -180,8 +201,12 @@ export const reviewerAssignments = sqliteTable(
     eventId: text("event_id")
       .notNull()
       .references(() => events.id, { onDelete: "cascade" }),
-    reviewRoundId: text("review_round_id").notNull(),
-    submissionId: text("submission_id").notNull(),
+    reviewRoundId: text("review_round_id")
+      .notNull()
+      .references(() => reviewRounds.id, { onDelete: "cascade" }),
+    submissionId: text("submission_id")
+      .notNull()
+      .references(() => submissions.id, { onDelete: "cascade" }),
     reviewerUserId: text("reviewer_user_id")
       .notNull()
       .references(() => user.id),
@@ -202,6 +227,18 @@ export const reviewerAssignments = sqliteTable(
       .where(sql`${table.revokedAt} IS NULL`),
   ],
 );
+
+export const reviews = sqliteTable("reviews", {
+  id: text("id").primaryKey(),
+  assignmentId: text("assignment_id")
+    .notNull()
+    .unique()
+    .references(() => reviewerAssignments.id, { onDelete: "cascade" }),
+  score: integer("score").notNull(),
+  comment: text("comment"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
 
 export const tracks = sqliteTable(
   "tracks",
@@ -359,9 +396,74 @@ export const decisions = sqliteTable("decisions", {
       "declined",
     ],
   }).notNull(),
+  revision: integer("revision").notNull().default(0),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
+
+export const programItems = sqliteTable(
+  "program_items",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    submissionId: text("submission_id")
+      .notNull()
+      .unique()
+      .references(() => submissions.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("program_items_event_id_idx").on(table.eventId)],
+);
+
+export const decisionPublications = sqliteTable("decision_publications", {
+  id: text("id").primaryKey(),
+  eventId: text("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  reviewRoundId: text("review_round_id")
+    .notNull()
+    .references(() => reviewRounds.id),
+  publishedByUserId: text("published_by_user_id")
+    .notNull()
+    .references(() => user.id),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const decisionPublicationItems = sqliteTable(
+  "decision_publication_items",
+  {
+    id: text("id").primaryKey(),
+    publicationId: text("publication_id")
+      .notNull()
+      .references(() => decisionPublications.id, { onDelete: "cascade" }),
+    decisionId: text("decision_id")
+      .notNull()
+      .unique()
+      .references(() => decisions.id),
+    outcome: text("outcome", { enum: ["accepted", "declined"] }).notNull(),
+    expectedRevision: integer("expected_revision").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+);
+
+export const reviewAuditEvents = sqliteTable(
+  "review_audit_events",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => user.id),
+    action: text("action").notNull(),
+    subjectId: text("subject_id").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("review_audit_events_event_id_idx").on(table.eventId)],
+);
 
 export const communications = sqliteTable(
   "communications",
@@ -382,14 +484,20 @@ export const schema = {
   account,
   agendas,
   communications,
+  decisionPublicationItems,
+  decisionPublications,
   decisions,
   eventRoles,
   cfps,
   events,
   formResponses,
   invitations,
+  programItems,
   rateLimit,
+  reviewAuditEvents,
   reviewerAssignments,
+  reviewRounds,
+  reviews,
   rooms,
   session,
   submissions,

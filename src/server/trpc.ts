@@ -16,6 +16,12 @@ import {
 } from "../shared/event-team";
 import { eventInputSchema, type UserId } from "../shared/events";
 import {
+  decisionPublicationSchema,
+  decisionQueueStatusSchema,
+  reviewerAssignmentIdSchema,
+  saveReviewSchema,
+} from "../shared/reviews";
+import {
   proposalContentSchema,
   submissionIdSchema,
   submitProposalSchema,
@@ -59,6 +65,18 @@ import {
   updateRoom,
   updateTrack,
 } from "./program-setup/repository";
+import {
+  assignReviewer,
+  closeReviewRound,
+  getOrganizerReviewBoard,
+  listOwnReviewAssignments,
+  openReviewRound,
+  publishDecisions,
+  queueDecision,
+  reopenReviewRound,
+  revokeReviewerAssignment,
+  saveReview,
+} from "./reviews/repository";
 import {
   findOwnSubmission,
   listOwnSubmissions,
@@ -109,6 +127,10 @@ const optionNameInput = slugInput.extend({
 const trackIdSchema = z.uuid().transform((value) => value as TrackId);
 const roomIdSchema = z.uuid().transform((value) => value as RoomId);
 const cfpIdSchema = z.uuid().transform((value) => value as CfpId);
+const userIdSchema = z
+  .string()
+  .min(1)
+  .transform((value) => value as UserId);
 
 export const appRouter = trpc.router({
   events: trpc.router({
@@ -548,6 +570,122 @@ export const appRouter = trpc.router({
         return result.value;
       }),
   }),
+  reviews: trpc.router({
+    organizerBoard: authenticatedProcedure
+      .input(slugInput)
+      .query(async ({ ctx, input }) => {
+        const board = await getOrganizerReviewBoard(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+        );
+        if (!board) throwEventNotFound();
+        return board;
+      }),
+    mine: authenticatedProcedure
+      .input(slugInput)
+      .query(({ ctx, input }) =>
+        listOwnReviewAssignments(ctx.database, ctx.userId, input.slug),
+      ),
+    assign: authenticatedProcedure
+      .input(
+        slugInput.extend({
+          submissionId: submissionIdSchema,
+          reviewerUserId: userIdSchema,
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const result = await assignReviewer(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.submissionId,
+          input.reviewerUserId,
+        );
+        if (!result.ok) throwReviewWriteError(result.error);
+        return result.value;
+      }),
+    revokeAssignment: authenticatedProcedure
+      .input(slugInput.extend({ assignmentId: reviewerAssignmentIdSchema }))
+      .mutation(async ({ ctx, input }) => {
+        const result = await revokeReviewerAssignment(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.assignmentId,
+        );
+        if (!result.ok) throwReviewWriteError(result.error);
+        return result.value;
+      }),
+    save: authenticatedProcedure
+      .input(saveReviewSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await saveReview(ctx.database, ctx.userId, input);
+        if (!result.ok) throwReviewWriteError(result.error);
+        return result.value;
+      }),
+    openRound: authenticatedProcedure
+      .input(slugInput)
+      .mutation(async ({ ctx, input }) => {
+        const result = await openReviewRound(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+        );
+        if (!result.ok) throwReviewWriteError(result.error);
+        return result.value;
+      }),
+    closeRound: authenticatedProcedure
+      .input(slugInput.extend({ confirmIncomplete: z.boolean() }))
+      .mutation(async ({ ctx, input }) => {
+        const result = await closeReviewRound(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.confirmIncomplete,
+        );
+        if (!result.ok) throwReviewWriteError(result.error);
+        return result.value;
+      }),
+    reopenRound: authenticatedProcedure
+      .input(slugInput)
+      .mutation(async ({ ctx, input }) => {
+        const result = await reopenReviewRound(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+        );
+        if (!result.ok) throwReviewWriteError(result.error);
+        return result.value;
+      }),
+  }),
+  decisions: trpc.router({
+    queue: authenticatedProcedure
+      .input(
+        slugInput.extend({
+          submissionId: submissionIdSchema,
+          status: decisionQueueStatusSchema,
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const result = await queueDecision(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.submissionId,
+          input.status,
+        );
+        if (!result.ok) throwReviewWriteError(result.error);
+        return result.value;
+      }),
+    publish: authenticatedProcedure
+      .input(decisionPublicationSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await publishDecisions(ctx.database, ctx.userId, input);
+        if (!result.ok) throwReviewWriteError(result.error);
+        return result.value;
+      }),
+  }),
 });
 
 function throwCfpItemNotFound(): never {
@@ -775,6 +913,75 @@ function throwInvitationLookupError(error: "not_found" | "unavailable"): never {
 
 function throwEventNotFound(): never {
   throw new TRPCError({ code: "NOT_FOUND", message: "Event not found." });
+}
+
+function throwReviewWriteError(
+  error:
+    | "duplicate_assignment"
+    | "invalid_assignment"
+    | "not_found"
+    | "persistence_failed"
+    | "published_outcome_exists"
+    | "round_incomplete"
+    | "round_not_closed"
+    | "round_not_open"
+    | "stale_queue"
+    | "submission_closed",
+): never {
+  if (error === "not_found") throwEventNotFound();
+  if (error === "invalid_assignment") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "Assign an active event reviewer to an active proposal.",
+    });
+  }
+  if (error === "duplicate_assignment") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "That reviewer is already assigned to this proposal.",
+    });
+  }
+  if (error === "round_not_open") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "The review round must be open for this action.",
+    });
+  }
+  if (error === "round_not_closed") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "Close the review round before publishing decisions.",
+    });
+  }
+  if (error === "round_incomplete") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message:
+        "Some active assignments have no review. Confirm to close anyway.",
+    });
+  }
+  if (error === "published_outcome_exists") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "A round with published outcomes cannot be reopened.",
+    });
+  }
+  if (error === "stale_queue") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "The decision queue changed. Reload it before publishing.",
+    });
+  }
+  if (error === "submission_closed") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "This proposal is no longer available for a queued decision.",
+    });
+  }
+  throw new TRPCError({
+    code: "INTERNAL_SERVER_ERROR",
+    message: "The review workflow could not be saved.",
+  });
 }
 
 export type AppRouter = typeof appRouter;
