@@ -9,6 +9,7 @@ import {
   getCapturedAuthenticationCode,
 } from "./server/identity/auth";
 import { findAccessibleTaskFile } from "./server/onboarding/repository";
+import { routePublishedSchedule } from "./server/published-schedule/routes";
 import { appRouter, createTrpcContext } from "./server/trpc";
 import type { UserId } from "./shared/events";
 
@@ -26,6 +27,12 @@ export default {
     const database = createDatabase(environment.DB);
     const auth = createAuth({ config, database });
     const url = new URL(request.url);
+
+    const publishedScheduleResponse = await routePublishedSchedule(
+      request,
+      database,
+    );
+    if (publishedScheduleResponse) return publishedScheduleResponse;
 
     if (url.pathname.startsWith("/api/auth/")) {
       return auth.handler(request);

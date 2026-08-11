@@ -37,8 +37,8 @@ import {
 } from "../database/schema";
 import { findEventForOrganizer } from "../events/repository";
 
-const d1BindingsPerStatement = 100;
-const publishedItemBindingsPerRow = 17;
+const d1BindingsPerStatement = 80;
+const publishedItemBindingsPerRow = 19;
 const publishedSpeakerBindingsPerRow = 8;
 const calendarChangeBindingsPerRow = 7;
 const publishedItemInsertSize = Math.floor(
@@ -359,6 +359,27 @@ export async function publishAgenda(
           : "update";
     return [{ snapshot, fingerprint, sequence, uid, action } as const];
   });
+  const calendarMetadata = new Map(
+    snapshots.flatMap((snapshot) => {
+      if (snapshot.kind !== "program") return [];
+      const change = calendarChanges.find(
+        (candidate) =>
+          candidate.snapshot.agendaItemId === snapshot.agendaItemId,
+      );
+      const previous = previousStates.find(
+        (state) => state.agendaItemId === snapshot.agendaItemId,
+      );
+      const metadata = change ?? previous;
+      return metadata
+        ? [
+            [
+              snapshot.agendaItemId,
+              { uid: metadata.uid, sequence: metadata.sequence },
+            ] as const,
+          ]
+        : [];
+    }),
+  );
 
   const publicationStatement = database.insert(agendaPublications).values({
     id: publicationId,
@@ -392,6 +413,8 @@ export async function publishAgenda(
     startsAt: snapshot.startsAt,
     endsAt: snapshot.endsAt,
     canceled: snapshot.canceled,
+    calendarUid: calendarMetadata.get(snapshot.agendaItemId)?.uid,
+    calendarSequence: calendarMetadata.get(snapshot.agendaItemId)?.sequence,
   }));
   const speakerValues = snapshots.flatMap((snapshot) =>
     snapshot.speakers.map((speaker) => ({
@@ -473,6 +496,13 @@ export async function publishAgenda(
     if (String(error).includes("stale_agenda_publication")) {
       return { ok: false, error: "agenda_changed" };
     }
+    console.error(
+      JSON.stringify({
+        event: "agenda_publication_failed",
+        eventId: event.id,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
     return { ok: false, error: "persistence_failed" };
   }
   return {

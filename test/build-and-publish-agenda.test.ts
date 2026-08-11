@@ -1,7 +1,16 @@
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
 
-import { callTrpc, getResult, signIn, testEnvironment } from "./support";
+import { createDatabase } from "../src/server/database/client";
+import { processAgendaDeliveryWork } from "../src/server/published-schedule/delivery";
+
+import {
+  callTrpc,
+  getResult,
+  signIn,
+  testEnvironment,
+  workerFetch,
+} from "./support";
 
 const idSchema = z.object({ id: z.string() });
 const workingAgendaSchema = z.object({
@@ -288,6 +297,85 @@ describe("build and publish an agenda", () => {
     ]);
     expect(published.items[0]?.speakers[0]?.displayName).toBe("Shared Speaker");
 
+    const failedDelivery = await processAgendaDeliveryWork(
+      createDatabase(testEnvironment.DB),
+      () => Promise.reject(new Error("Calendar transport unavailable")),
+      { now: new Date("2028-01-01T00:00:00.000Z"), limit: 100 },
+    );
+    expect(failedDelivery).toEqual({ delivered: 0, failed: 3, superseded: 0 });
+
+    const jsonResponse = await workerFetch(`/api/v1/events/${slug}/schedule`);
+    expect(jsonResponse.status).toBe(200);
+    expect(jsonResponse.headers.get("access-control-allow-origin")).toBe("*");
+    expect(jsonResponse.headers.get("cache-control")).toMatch(/^public,/);
+    const etag = jsonResponse.headers.get("etag");
+    expect(etag).toBeTruthy();
+    const publicSchedule = await jsonResponse.json<{
+      revision: number;
+      event: { timezone: string };
+      items: Array<Record<string, unknown>>;
+    }>();
+    expect(publicSchedule.revision).toBe(1);
+    expect(publicSchedule.event.timezone).toBe("Europe/Berlin");
+    expect(publicSchedule.items[0]).not.toHaveProperty("programItemId");
+    expect(publicSchedule.items[0]).not.toHaveProperty("publicationId");
+
+    const calendarResponse = await workerFetch(
+      `/api/v1/events/${slug}/schedule.ics`,
+    );
+    expect(calendarResponse.status).toBe(200);
+    expect(calendarResponse.headers.get("content-type")).toMatch(
+      /^text\/calendar/,
+    );
+    expect(await calendarResponse.text()).toContain(
+      "X-OPENBOARD-REVISION:1\r\n",
+    );
+
+    const unchangedResponse = await workerFetch(
+      `/api/v1/events/${slug}/schedule`,
+      { headers: { "If-None-Match": etag ?? "" } },
+    );
+    expect(unchangedResponse.status).toBe(304);
+
+    const compressedResponse = await workerFetch(
+      `/api/v1/events/${slug}/schedule`,
+      { headers: { "Accept-Encoding": "gzip" } },
+    );
+    expect(compressedResponse.headers.get("content-encoding")).toBe("gzip");
+
+    const openApiResponse = await workerFetch("/api/v1/openapi.json");
+    expect(openApiResponse.status).toBe(200);
+    const openApi = await openApiResponse.json<{
+      openapi: string;
+      paths: Record<string, unknown>;
+    }>();
+    expect(openApi.openapi).toBe("3.1.0");
+    expect(Object.keys(openApi.paths)).toEqual([
+      "/api/v1/events/{eventSlug}/schedule",
+      "/api/v1/events/{eventSlug}/schedule.ics",
+    ]);
+
+    await expectOk(
+      "events.create",
+      {
+        name: "Unpublished agenda",
+        slug: "agenda-unpublished",
+        startsOn: "2027-10-30",
+        endsOn: "2027-10-30",
+        timezone: "Europe/Berlin",
+      },
+      owner.cookie,
+    );
+
+    const unknownResponse = await workerFetch(
+      "/api/v1/events/unknown-event/schedule",
+    );
+    const unpublishedResponse = await workerFetch(
+      "/api/v1/events/agenda-unpublished/schedule",
+    );
+    expect(unknownResponse.status).toBe(404);
+    expect(await unknownResponse.text()).toBe(await unpublishedResponse.text());
+
     await testEnvironment.DB.batch([
       testEnvironment.DB.prepare(
         "UPDATE submissions SET title = ? WHERE id = ?",
@@ -403,6 +491,40 @@ describe("build and publish an agenda", () => {
       "cancel",
       "restore",
     ]);
+
+    const deliveredSequences: number[] = [];
+    const retriedDelivery = await processAgendaDeliveryWork(
+      createDatabase(testEnvironment.DB),
+      (delivery) => {
+        deliveredSequences.push(delivery.sequence);
+        return Promise.resolve();
+      },
+      { now: new Date("2030-01-01T00:00:00.000Z"), limit: 100 },
+    );
+    expect(retriedDelivery.superseded).toBeGreaterThanOrEqual(2);
+    expect(retriedDelivery.delivered).toBeGreaterThan(0);
+    expect(deliveredSequences).toContain(2);
+    const firstPlacementAttempts = await testEnvironment.DB.prepare(
+      "SELECT agenda_delivery_attempts.result FROM agenda_delivery_attempts INNER JOIN agenda_delivery_work ON agenda_delivery_work.id = agenda_delivery_attempts.work_id WHERE agenda_delivery_work.agenda_item_id = ? ORDER BY agenda_delivery_work.calendar_sequence, agenda_delivery_attempts.attempt_number",
+    )
+      .bind(firstPlacement.id)
+      .all<{ result: string }>();
+    expect(
+      firstPlacementAttempts.results.map((attempt) => attempt.result),
+    ).toEqual(["failed", "superseded", "superseded", "delivered"]);
+
+    const unchangedPublication = await callTrpc(
+      "agendas.publish",
+      { slug, expectedRevision: working.revision },
+      owner.cookie,
+    );
+    expect(unchangedPublication.status).toBe(200);
+    expect(
+      getResult(
+        unchangedPublication.body,
+        z.object({ revision: z.number(), deliveryWork: z.number() }),
+      ),
+    ).toEqual({ revision: 4, deliveryWork: 0 });
   });
 
   test("publishes an agenda above D1 statement binding limits", async () => {
