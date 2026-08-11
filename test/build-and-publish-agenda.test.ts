@@ -41,6 +41,9 @@ describe("build and publish an agenda", () => {
     const slug = "agenda-flow-2027";
     const owner = await signIn("agenda-owner@example.com");
     const organizer = await signIn("agenda-organizer@example.com");
+    const additiveOrganizer = await signIn(
+      "agenda-additive-organizer@example.com",
+    );
     const outsider = await signIn("agenda-outsider@example.com");
     const sharedSpeaker = await signIn("agenda-speaker@example.com");
     const otherSpeaker = await signIn("agenda-speaker-two@example.com");
@@ -99,6 +102,26 @@ describe("build and publish an agenda", () => {
         slug,
       )
       .run();
+    await testEnvironment.DB.batch([
+      testEnvironment.DB.prepare(
+        "INSERT INTO event_roles (id, event_id, user_id, role, granted_by_user_id, created_at) SELECT ?, id, ?, 'reviewer', ?, ? FROM events WHERE slug = ?",
+      ).bind(
+        crypto.randomUUID(),
+        additiveOrganizer.userId,
+        owner.userId,
+        Date.now(),
+        slug,
+      ),
+      testEnvironment.DB.prepare(
+        "INSERT INTO event_roles (id, event_id, user_id, role, granted_by_user_id, created_at) SELECT ?, id, ?, 'organizer', ?, ? FROM events WHERE slug = ?",
+      ).bind(
+        crypto.randomUUID(),
+        additiveOrganizer.userId,
+        owner.userId,
+        Date.now(),
+        slug,
+      ),
+    ]);
 
     expect(
       (await callTrpc("agendas.working", { slug }, outsider.cookie, "query"))
@@ -107,6 +130,16 @@ describe("build and publish an agenda", () => {
     expect(
       (await callTrpc("agendas.working", { slug }, organizer.cookie, "query"))
         .status,
+    ).toBe(200);
+    expect(
+      (
+        await callTrpc(
+          "agendas.working",
+          { slug },
+          additiveOrganizer.cookie,
+          "query",
+        )
+      ).status,
     ).toBe(200);
     expect(
       (await callTrpc("agendas.published", { slug }, undefined, "query"))
