@@ -35,12 +35,39 @@ test("finalizes existing agenda revisions during upgrade", async () => {
   );
 
   const publication = await migrationEnvironment.MIGRATION_DB.prepare(
-    "SELECT finalized FROM agenda_publications WHERE id = 'publication'",
-  ).first<{ finalized: number }>();
-  expect(publication).toEqual({ finalized: 1 });
+    "SELECT finalized, requires_finalization AS requiresFinalization FROM agenda_publications WHERE id = 'publication'",
+  ).first<{ finalized: number; requiresFinalization: number }>();
+  expect(publication).toEqual({ finalized: 1, requiresFinalization: 0 });
   await expect(
     migrationEnvironment.MIGRATION_DB.prepare(
       "UPDATE agenda_publications SET finalized = 0 WHERE id = 'publication'",
+    ).run(),
+  ).rejects.toThrow("immutable_agenda_publication");
+
+  await migrationEnvironment.MIGRATION_DB.prepare(
+    "INSERT INTO agenda_items (id, agenda_id, event_id, kind, service_scope, service_title, starts_at_local, ends_at_local, created_at, updated_at) VALUES ('legacy-item', 'agenda', 'event', 'service', 'event', 'Legacy break', '2028-08-10T12:00', '2028-08-10T13:00', ?, ?)",
+  )
+    .bind(createdAt, createdAt)
+    .run();
+  await migrationEnvironment.MIGRATION_DB.prepare(
+    "INSERT INTO agenda_publications (id, agenda_id, event_id, revision, working_revision, event_name, timezone, starts_on, ends_on, published_by_user_id, created_at) VALUES ('legacy-publication', 'agenda', 'event', 2, 1, 'Event', 'Europe/Berlin', '2028-08-10', '2028-08-10', 'owner', ?)",
+  )
+    .bind(createdAt + 1)
+    .run();
+  await migrationEnvironment.MIGRATION_DB.prepare(
+    "INSERT INTO published_agenda_items (id, publication_id, agenda_item_id, kind, title, starts_at, ends_at, canceled) VALUES ('legacy-snapshot', 'legacy-publication', 'legacy-item', 'service', 'Legacy break', '2028-08-10T10:00:00.000Z', '2028-08-10T11:00:00.000Z', 0)",
+  ).run();
+  await migrationEnvironment.MIGRATION_DB.prepare(
+    "UPDATE agenda_publications SET finalized = 1 WHERE requires_finalization = 0 AND finalized = 0",
+  ).run();
+  expect(
+    await migrationEnvironment.MIGRATION_DB.prepare(
+      "SELECT finalized FROM agenda_publications WHERE id = 'legacy-publication'",
+    ).first(),
+  ).toEqual({ finalized: 1 });
+  await expect(
+    migrationEnvironment.MIGRATION_DB.prepare(
+      "INSERT INTO published_agenda_items (id, publication_id, agenda_item_id, kind, title, starts_at, ends_at, canceled) VALUES ('late-snapshot', 'legacy-publication', 'legacy-item', 'service', 'Legacy break', '2028-08-10T10:00:00.000Z', '2028-08-10T11:00:00.000Z', 0)",
     ).run(),
   ).rejects.toThrow("immutable_agenda_publication");
 });

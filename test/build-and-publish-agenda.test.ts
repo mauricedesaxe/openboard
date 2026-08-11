@@ -378,7 +378,7 @@ describe("build and publish an agenda", () => {
     const fixture = await seedAgendaFixture(
       slug,
       owner,
-      62,
+      70,
       3,
       "2028-08-10",
       "2028-08-13",
@@ -411,7 +411,7 @@ describe("build and publish an agenda", () => {
       ).status,
     ).toBe(200);
     const published = await getPublished(slug);
-    expect(published.items).toHaveLength(62);
+    expect(published.items).toHaveLength(70);
     expect(published.items.every((item) => item.speakers.length === 3)).toBe(
       true,
     );
@@ -466,7 +466,7 @@ describe("build and publish an agenda", () => {
     );
     working = await getWorking(owner.cookie, slug);
     await testEnvironment.DB.prepare(
-      "INSERT INTO agenda_publications (id, agenda_id, event_id, revision, working_revision, event_name, timezone, starts_on, ends_on, published_by_user_id, created_at) SELECT ?, agendas.id, events.id, 2, agendas.revision, events.name, events.timezone, events.starts_on, events.ends_on, ?, ? FROM agendas INNER JOIN events ON events.id = agendas.event_id WHERE events.slug = ?",
+      "INSERT INTO agenda_publications (id, agenda_id, event_id, revision, working_revision, event_name, timezone, starts_on, ends_on, published_by_user_id, created_at, requires_finalization) SELECT ?, agendas.id, events.id, 2, agendas.revision, events.name, events.timezone, events.starts_on, events.ends_on, ?, ?, 1 FROM agendas INNER JOIN events ON events.id = agendas.event_id WHERE events.slug = ?",
     )
       .bind(crypto.randomUUID(), owner.userId, Date.now(), slug)
       .run();

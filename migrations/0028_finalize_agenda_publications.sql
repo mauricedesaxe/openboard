@@ -1,5 +1,8 @@
 ALTER TABLE agenda_publications
   ADD COLUMN finalized INTEGER NOT NULL DEFAULT 0 CHECK (finalized IN (0, 1));
+ALTER TABLE agenda_publications
+  ADD COLUMN requires_finalization INTEGER NOT NULL DEFAULT 0
+  CHECK (requires_finalization IN (0, 1));
 
 DROP TRIGGER agenda_publications_are_immutable_update;
 
@@ -20,6 +23,7 @@ WHEN OLD.finalized = 1
   OR NEW.ends_on != OLD.ends_on
   OR NEW.published_by_user_id != OLD.published_by_user_id
   OR NEW.created_at != OLD.created_at
+  OR NEW.requires_finalization != OLD.requires_finalization
 BEGIN
   SELECT RAISE(ABORT, 'immutable_agenda_publication');
 END;
@@ -28,6 +32,7 @@ CREATE TRIGGER agenda_publications_require_complete_current_source_finalize
 BEFORE UPDATE OF finalized ON agenda_publications
 WHEN OLD.finalized = 0
   AND NEW.finalized = 1
+  AND OLD.requires_finalization = 1
   AND (
     NOT EXISTS (
       SELECT 1 FROM agendas
