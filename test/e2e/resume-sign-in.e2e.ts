@@ -21,6 +21,15 @@ test("keeps the issued sign-in code available after the browser resumes", async 
       response.request().method() === "GET",
   );
   await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
     document.dispatchEvent(new Event("visibilitychange"));
   });
   await resumedSession;
@@ -36,8 +45,12 @@ test("keeps the issued sign-in code available after the browser resumes", async 
     page.getByText(`Enter the six-digit code sent to ${email}.`),
   ).toBeVisible();
 
-  const invalidCode = `${code?.startsWith("0") ? "1" : "0"}${code?.slice(1)}`;
-  await codeInput.fill(invalidCode);
+  await page.getByRole("button", { name: "Resend code" }).click();
+  const replacementCode = await page.locator(".dev-code strong").textContent();
+  expect(replacementCode).toMatch(/^\d{6}$/);
+  expect(replacementCode).not.toBe(code);
+
+  await codeInput.fill(code ?? "");
   await page.getByRole("button", { name: "Open my board" }).click();
   await expect(page.getByRole("alert")).toContainText(
     "That code is invalid or expired.",
@@ -47,7 +60,7 @@ test("keeps the issued sign-in code available after the browser resumes", async 
     page.getByRole("button", { name: "Use another email" }),
   ).toBeVisible();
 
-  await codeInput.fill(code ?? "");
+  await codeInput.fill(replacementCode ?? "");
   await Promise.all([
     page.waitForURL("**/events/new"),
     page.getByRole("button", { name: "Open my board" }).click(),
