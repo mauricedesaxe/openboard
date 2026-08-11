@@ -357,6 +357,8 @@ export const submissionSpeakers = sqliteTable(
       .references(() => submissions.id, { onDelete: "cascade" }),
     invitedName: text("invited_name").notNull(),
     invitedEmail: text("invited_email").notNull(),
+    claimedUserId: text("claimed_user_id").references(() => user.id),
+    claimedAt: integer("claimed_at", { mode: "timestamp_ms" }),
     position: integer("position").notNull(),
     removedAt: integer("removed_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
@@ -366,6 +368,51 @@ export const submissionSpeakers = sqliteTable(
     index("submission_speakers_submission_id_idx").on(table.submissionId),
   ],
 );
+
+export const submissionSpeakerInvitations = sqliteTable(
+  "submission_speaker_invitations",
+  {
+    id: text("id").primaryKey(),
+    submissionSpeakerId: text("submission_speaker_id")
+      .notNull()
+      .references(() => submissionSpeakers.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    secretHash: text("secret_hash").notNull().unique(),
+    status: text("status", {
+      enum: ["pending", "accepted", "declined", "revoked"],
+    }).notNull(),
+    invitedByUserId: text("invited_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    replacementForInvitationId: text("replacement_for_invitation_id"),
+    acceptedByUserId: text("accepted_by_user_id").references(() => user.id),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("submission_speaker_invitations_speaker_id_idx").on(
+      table.submissionSpeakerId,
+    ),
+    index("submission_speaker_invitations_email_idx").on(table.email),
+    uniqueIndex("submission_speaker_invitations_pending_idx")
+      .on(table.submissionSpeakerId)
+      .where(sql`${table.status} = 'pending'`),
+  ],
+);
+
+export const speakerProfiles = sqliteTable("speaker_profiles", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .unique()
+    .references(() => user.id, { onDelete: "cascade" }),
+  displayName: text("display_name").notNull(),
+  bio: text("bio").notNull(),
+  headshotUrl: text("headshot_url"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
 
 export const formResponses = sqliteTable("form_responses", {
   id: text("id").primaryKey(),
@@ -502,7 +549,9 @@ export const schema = {
   reviews,
   rooms,
   session,
+  speakerProfiles,
   submissions,
+  submissionSpeakerInvitations,
   submissionSpeakers,
   tracks,
   user,

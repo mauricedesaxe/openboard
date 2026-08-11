@@ -29,13 +29,19 @@ import {
   cfps,
   communications,
   decisions,
+  eventRoles,
   events,
   formResponses,
   reviewerAssignments,
   submissions,
+  submissionSpeakerInvitations,
   submissionSpeakers,
   tracks,
 } from "../database/schema";
+import {
+  prepareSubmissionSpeakerInvitation,
+  type SubmissionSpeakerInvitationDelivery,
+} from "../submission-speakers/repository";
 
 type ProposalWriteError =
   | "cfp_unavailable"
@@ -46,17 +52,26 @@ type ProposalWriteError =
   | "invalid_track"
   | "not_found"
   | "persistence_failed"
+  | "speaker_list_changed"
   | "submission_closed";
 
 type ProposalWriteResult =
   { ok: true; value: Submission } | { ok: false; error: ProposalWriteError };
+
+type SubmitProposalResult =
+  | {
+      ok: true;
+      value: Submission;
+      invitationDeliveries: SubmissionSpeakerInvitationDelivery[];
+    }
+  | { ok: false; error: ProposalWriteError };
 
 export async function submitProposal(
   database: Database,
   ownerUserId: UserId,
   ownerEmail: string,
   input: SubmitProposalInput,
-): Promise<ProposalWriteResult> {
+): Promise<SubmitProposalResult> {
   const [existing] = await database
     .select({ id: submissions.id })
     .from(submissions)
@@ -75,7 +90,7 @@ export async function submitProposal(
       existing.id as SubmissionId,
     );
     return submission
-      ? { ok: true, value: submission }
+      ? { ok: true, value: submission, invitationDeliveries: [] }
       : { ok: false, error: "persistence_failed" };
   }
 
@@ -89,6 +104,30 @@ export async function submitProposal(
 
   const submissionId = crypto.randomUUID() as SubmissionId;
   const now = new Date();
+  const speakerRows = input.proposedSpeakers.map((speaker, position) => ({
+    id: crypto.randomUUID(),
+    submissionId,
+    invitedName: speaker.name,
+    invitedEmail: speaker.email,
+    position,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  const invitationAttempts = await Promise.all(
+    speakerRows.map((speaker) =>
+      prepareSubmissionSpeakerInvitation(
+        {
+          submissionSpeakerId: speaker.id,
+          email: speaker.invitedEmail,
+          eventName: validated.eventName,
+          speakerName: speaker.invitedName,
+          submissionTitle: input.title,
+          invitedByUserId: ownerUserId,
+        },
+        now,
+      ),
+    ),
+  );
   try {
     await database.batch([
       database.insert(submissions).values({
@@ -113,17 +152,10 @@ export async function submitProposal(
         createdAt: now,
         updatedAt: now,
       }),
-      database.insert(submissionSpeakers).values(
-        input.proposedSpeakers.map((speaker, position) => ({
-          id: crypto.randomUUID(),
-          submissionId,
-          invitedName: speaker.name,
-          invitedEmail: speaker.email,
-          position,
-          createdAt: now,
-          updatedAt: now,
-        })),
-      ),
+      database.insert(submissionSpeakers).values(speakerRows),
+      database
+        .insert(submissionSpeakerInvitations)
+        .values(invitationAttempts.map((attempt) => attempt.values)),
       database.insert(formResponses).values({
         id: crypto.randomUUID(),
         cfpId: input.cfpId,
@@ -169,7 +201,7 @@ export async function submitProposal(
           )
         : undefined;
       return submission
-        ? { ok: true, value: submission }
+        ? { ok: true, value: submission, invitationDeliveries: [] }
         : { ok: false, error: "persistence_failed" };
     }
     return { ok: false, error: "persistence_failed" };
@@ -181,7 +213,13 @@ export async function submitProposal(
     submissionId,
   );
   return submission
-    ? { ok: true, value: submission }
+    ? {
+        ok: true,
+        value: submission,
+        invitationDeliveries: invitationAttempts.map(
+          (attempt) => attempt.delivery,
+        ),
+      }
     : { ok: false, error: "persistence_failed" };
 }
 
@@ -210,6 +248,8 @@ export async function findOwnSubmission(
       answersJson: formResponses.answersJson,
       decisionStatus: decisions.status,
       communicationId: communications.id,
+      submissionOwnerUserId: submissions.ownerUserId,
+      eventOwnerUserId: events.ownerUserId,
     })
     .from(submissions)
     .innerJoin(events, eq(events.id, submissions.eventId))
@@ -227,17 +267,59 @@ export async function findOwnSubmission(
     .where(
       and(
         eq(submissions.id, submissionId),
-        eq(submissions.ownerUserId, ownerUserId),
+        or(
+          eq(submissions.ownerUserId, ownerUserId),
+          eq(events.ownerUserId, ownerUserId),
+          exists(
+            database
+              .select({ id: submissionSpeakers.id })
+              .from(submissionSpeakers)
+              .where(
+                and(
+                  eq(submissionSpeakers.submissionId, submissions.id),
+                  eq(submissionSpeakers.claimedUserId, ownerUserId),
+                  isNull(submissionSpeakers.removedAt),
+                ),
+              ),
+          ),
+          exists(
+            database
+              .select({ id: eventRoles.id })
+              .from(eventRoles)
+              .where(
+                and(
+                  eq(eventRoles.eventId, submissions.eventId),
+                  eq(eventRoles.userId, ownerUserId),
+                  eq(eventRoles.role, "organizer"),
+                  isNull(eventRoles.revokedAt),
+                ),
+              ),
+          ),
+        ),
       ),
     )
     .limit(1);
   if (!row) return undefined;
+
+  const [organizerRole] = await database
+    .select({ id: eventRoles.id })
+    .from(eventRoles)
+    .where(
+      and(
+        eq(eventRoles.eventId, row.eventId),
+        eq(eventRoles.userId, ownerUserId),
+        eq(eventRoles.role, "organizer"),
+        isNull(eventRoles.revokedAt),
+      ),
+    )
+    .limit(1);
 
   const speakers = await database
     .select({
       id: submissionSpeakers.id,
       name: submissionSpeakers.invitedName,
       email: submissionSpeakers.invitedEmail,
+      claimedUserId: submissionSpeakers.claimedUserId,
     })
     .from(submissionSpeakers)
     .where(
@@ -247,6 +329,33 @@ export async function findOwnSubmission(
       ),
     )
     .orderBy(submissionSpeakers.position);
+  const invitationHistory = speakers.length
+    ? await database
+        .select({
+          id: submissionSpeakerInvitations.id,
+          speakerId: submissionSpeakerInvitations.submissionSpeakerId,
+          status: submissionSpeakerInvitations.status,
+          expiresAt: submissionSpeakerInvitations.expiresAt,
+          createdAt: submissionSpeakerInvitations.createdAt,
+        })
+        .from(submissionSpeakerInvitations)
+        .where(
+          inArray(
+            submissionSpeakerInvitations.submissionSpeakerId,
+            speakers.map((speaker) => speaker.id),
+          ),
+        )
+        .orderBy(desc(submissionSpeakerInvitations.createdAt))
+    : [];
+  const latestInvitationBySpeaker = new Map<
+    string,
+    (typeof invitationHistory)[number]
+  >();
+  for (const invitation of invitationHistory) {
+    if (!latestInvitationBySpeaker.has(invitation.speakerId)) {
+      latestInvitationBySpeaker.set(invitation.speakerId, invitation);
+    }
+  }
   const formTracks = await database
     .select({
       id: tracks.id,
@@ -283,13 +392,43 @@ export async function findOwnSubmission(
       })),
       customFields: JSON.parse(row.customFieldsJson) as unknown,
     },
-    proposedSpeakers: speakers,
+    proposedSpeakers: speakers.map((speaker) => {
+      const invitation = latestInvitationBySpeaker.get(speaker.id);
+      return {
+        id: speaker.id,
+        name: speaker.name,
+        email: speaker.email,
+        claimed: speaker.claimedUserId !== null,
+        invitation: invitation
+          ? {
+              id: invitation.id,
+              status: invitation.status,
+              expiresAt: invitation.expiresAt.toISOString(),
+              usable:
+                invitation.status === "pending" &&
+                invitation.expiresAt.getTime() > Date.now(),
+            }
+          : null,
+      };
+    }),
     customAnswers: JSON.parse(row.answersJson) as unknown,
     decision: { status: publicDecisionStatus(row.decisionStatus) },
     confirmation: { status: row.communicationId ? "recorded" : undefined },
     permissions: {
-      canEdit: active && !published && new Date(row.deadline) > new Date(),
-      canWithdraw: active && !published,
+      canEdit:
+        row.submissionOwnerUserId === ownerUserId &&
+        active &&
+        !published &&
+        new Date(row.deadline) > new Date(),
+      canManageSpeakers:
+        (row.submissionOwnerUserId === ownerUserId ||
+          row.eventOwnerUserId === ownerUserId ||
+          organizerRole !== undefined) &&
+        active &&
+        !published &&
+        new Date(row.deadline) > new Date(),
+      canWithdraw:
+        row.submissionOwnerUserId === ownerUserId && active && !published,
     },
   });
 }
@@ -309,6 +448,54 @@ export async function listOwnSubmissions(
     ),
   );
   return owned.filter((submission) => submission !== undefined);
+}
+
+export async function listAccessibleSubmissions(
+  database: Database,
+  userId: UserId,
+): Promise<Submission[]> {
+  const rows = await database
+    .selectDistinct({ id: submissions.id })
+    .from(submissions)
+    .innerJoin(events, eq(events.id, submissions.eventId))
+    .where(
+      or(
+        eq(submissions.ownerUserId, userId),
+        eq(events.ownerUserId, userId),
+        exists(
+          database
+            .select({ id: submissionSpeakers.id })
+            .from(submissionSpeakers)
+            .where(
+              and(
+                eq(submissionSpeakers.submissionId, submissions.id),
+                eq(submissionSpeakers.claimedUserId, userId),
+                isNull(submissionSpeakers.removedAt),
+              ),
+            ),
+        ),
+        exists(
+          database
+            .select({ id: eventRoles.id })
+            .from(eventRoles)
+            .where(
+              and(
+                eq(eventRoles.eventId, submissions.eventId),
+                eq(eventRoles.userId, userId),
+                eq(eventRoles.role, "organizer"),
+                isNull(eventRoles.revokedAt),
+              ),
+            ),
+        ),
+      ),
+    )
+    .orderBy(desc(submissions.updatedAt));
+  const accessible = await Promise.all(
+    rows.map(({ id }) =>
+      findOwnSubmission(database, userId, id as SubmissionId),
+    ),
+  );
+  return accessible.filter((submission) => submission !== undefined);
 }
 
 export async function updateOwnSubmission(
@@ -337,6 +524,29 @@ export async function updateOwnSubmission(
   if (!current) return { ok: false, error: "not_found" };
   if (current.status !== "active" || isPublished(current.decisionStatus)) {
     return { ok: false, error: "submission_closed" };
+  }
+  const activeSpeakers = await database
+    .select({
+      name: submissionSpeakers.invitedName,
+      email: submissionSpeakers.invitedEmail,
+    })
+    .from(submissionSpeakers)
+    .where(
+      and(
+        eq(submissionSpeakers.submissionId, submissionId),
+        isNull(submissionSpeakers.removedAt),
+      ),
+    )
+    .orderBy(submissionSpeakers.position);
+  if (
+    activeSpeakers.length !== input.proposedSpeakers.length ||
+    activeSpeakers.some(
+      (speaker, index) =>
+        speaker.name !== input.proposedSpeakers[index]?.name ||
+        speaker.email !== input.proposedSpeakers[index]?.email,
+    )
+  ) {
+    return { ok: false, error: "speaker_list_changed" };
   }
 
   const validated = await validateProposal(
@@ -398,26 +608,6 @@ export async function updateOwnSubmission(
             ),
           ),
         ),
-      database
-        .update(submissionSpeakers)
-        .set({ removedAt: now, updatedAt: now })
-        .where(
-          and(
-            eq(submissionSpeakers.submissionId, submissionId),
-            isNull(submissionSpeakers.removedAt),
-          ),
-        ),
-      database.insert(submissionSpeakers).values(
-        input.proposedSpeakers.map((speaker, position) => ({
-          id: crypto.randomUUID(),
-          submissionId,
-          invitedName: speaker.name,
-          invitedEmail: speaker.email,
-          position,
-          createdAt: now,
-          updatedAt: now,
-        })),
-      ),
       database
         .update(formResponses)
         .set({
@@ -550,6 +740,7 @@ async function validateProposal(
   | {
       ok: true;
       eventId: string;
+      eventName: string;
       revision: Date;
       answers: Record<string, string>;
     }
@@ -558,6 +749,7 @@ async function validateProposal(
   const [definition] = await database
     .select({
       eventId: events.id,
+      eventName: events.name,
       deadline: cfps.deadline,
       formatsJson: cfps.formatsJson,
       customFieldsJson: cfps.customFieldsJson,
@@ -613,6 +805,7 @@ async function validateProposal(
   return {
     ok: true,
     eventId: definition.eventId,
+    eventName: definition.eventName,
     revision: definition.updatedAt,
     answers: Object.fromEntries(
       visible.flatMap((field) => {

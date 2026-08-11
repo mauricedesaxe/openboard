@@ -32,6 +32,7 @@ import {
   listTimezones,
   type EventInput,
 } from "../shared/events";
+import type { SpeakerProfileInput } from "../shared/speaker-profiles";
 import {
   proposalContentSchema,
   proposalDraftSchema,
@@ -82,6 +83,15 @@ function SessionApp() {
         }
       />
       <Route
+        path="/speaker-invitations/:secret"
+        element={
+          <SpeakerInvitationPage
+            email={session.data?.user.email}
+            signedIn={Boolean(session.data)}
+          />
+        }
+      />
+      <Route
         path="/sign-in"
         element={<SignInRoute signedIn={Boolean(session.data)} />}
       />
@@ -117,6 +127,9 @@ function AuthenticatedApp({ email }: { email: string }) {
           <span>OpenBoard</span>
         </Link>
         <div className="account-strip">
+          <Link className="text-button" to="/speaker-profile">
+            Speaker profile
+          </Link>
           <span>{email}</span>
           <button
             className="text-button"
@@ -138,6 +151,7 @@ function AuthenticatedApp({ email }: { email: string }) {
             path="submissions/:submissionId"
             element={<SubmissionPage />}
           />
+          <Route path="speaker-profile" element={<SpeakerProfilePage />} />
         </Routes>
       </main>
     </div>
@@ -147,7 +161,9 @@ function AuthenticatedApp({ email }: { email: string }) {
 function SignInPage() {
   const [searchParams] = useSearchParams();
   const returnTo = safeReturnTo(searchParams.get("returnTo"));
-  const invitationSignIn = returnTo.startsWith("/invitations/");
+  const invitationSignIn =
+    returnTo.startsWith("/invitations/") ||
+    returnTo.startsWith("/speaker-invitations/");
   const proposalSignIn = /^\/events\/[^/]+\/cfp$/.test(returnTo);
   const [email, setEmail] = useState(searchParams.get("email") ?? "");
   const [code, setCode] = useState("");
@@ -342,7 +358,7 @@ function SignInPage() {
 function EventIndex() {
   const trpc = useTRPC();
   const events = useQuery(trpc.events.list.queryOptions());
-  const submissions = useQuery(trpc.submissions.listOwn.queryOptions());
+  const submissions = useQuery(trpc.submissions.list.queryOptions());
 
   return (
     <div className="page page-wide">
@@ -1924,6 +1940,215 @@ function InvitationPage({
   );
 }
 
+function SpeakerInvitationPage({
+  email,
+  signedIn,
+}: {
+  email?: string | undefined;
+  signedIn: boolean;
+}) {
+  const { secret = "" } = useParams();
+  const navigate = useNavigate();
+  const trpc = useTRPC();
+  const invitation = useQuery(
+    trpc.submissionSpeakerInvitations.get.queryOptions({ secret }),
+  );
+  const accept = useMutation(
+    trpc.submissionSpeakerInvitations.accept.mutationOptions({
+      onSuccess: (result) => {
+        void navigate(`/submissions/${result.submissionId}`, { replace: true });
+      },
+    }),
+  );
+  const decline = useMutation(
+    trpc.submissionSpeakerInvitations.decline.mutationOptions(),
+  );
+
+  if (invitation.isPending) {
+    return <FullPageStatus label="Opening speaker invitation" />;
+  }
+  if (invitation.isError) {
+    return (
+      <main className="invitation-page">
+        <section className="invitation-card">
+          <div className="eyebrow">Invitation unavailable</div>
+          <h1>This invitation can’t be used.</h1>
+          <p>Check the link or ask the proposal owner for a new invitation.</p>
+          <Link className="arrow-link" to="/">
+            Open OpenBoard
+          </Link>
+        </section>
+      </main>
+    );
+  }
+  if (decline.isSuccess) {
+    return (
+      <main className="invitation-page">
+        <section className="invitation-card">
+          <div className="eyebrow">Invitation declined</div>
+          <h1>No proposal access was added.</h1>
+          <p>This invitation can’t be reused.</p>
+        </section>
+      </main>
+    );
+  }
+
+  const returnTo = `/speaker-invitations/${secret}`;
+  const signInUrl = `/sign-in?returnTo=${encodeURIComponent(returnTo)}&email=${encodeURIComponent(invitation.data.email)}`;
+  const emailMismatch = signedIn && email !== invitation.data.email;
+  return (
+    <main className="invitation-page">
+      <section className="invitation-card">
+        <div className="eyebrow">Proposed-speaker invitation</div>
+        <h1>Join {invitation.data.submissionTitle}.</h1>
+        <p>
+          <strong>{invitation.data.speakerName}</strong> was invited to speak at{" "}
+          {invitation.data.eventName} through{" "}
+          <strong>{invitation.data.email}</strong>.
+        </p>
+        {emailMismatch && (
+          <p className="form-error" role="alert">
+            Sign out and use {invitation.data.email} to accept this invitation.
+          </p>
+        )}
+        {(accept.error || decline.error) && (
+          <p className="form-error" role="alert">
+            {accept.error?.message ?? decline.error?.message}
+          </p>
+        )}
+        <div className="invitation-actions">
+          {signedIn ? (
+            <button
+              className="primary-button"
+              disabled={accept.isPending || emailMismatch}
+              onClick={() => accept.mutate({ secret })}
+              type="button"
+            >
+              {accept.isPending ? "Accepting…" : "Accept invitation"}
+            </button>
+          ) : (
+            <Link className="primary-button link-button" to={signInUrl}>
+              Verify email and accept
+            </Link>
+          )}
+          <button
+            className="text-button"
+            disabled={decline.isPending || emailMismatch}
+            onClick={() => decline.mutate({ secret })}
+            type="button"
+          >
+            {decline.isPending ? "Declining…" : "Decline invitation"}
+          </button>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function SpeakerProfilePage() {
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const profile = useQuery(trpc.speakerProfile.getOwn.queryOptions());
+  const [draft, setDraft] = useState<SpeakerProfileInput>();
+  const save = useMutation(
+    trpc.speakerProfile.saveOwn.mutationOptions({
+      onSuccess: async (saved) => {
+        setDraft(saved);
+        await queryClient.invalidateQueries(
+          trpc.speakerProfile.getOwn.queryFilter(),
+        );
+      },
+    }),
+  );
+
+  if (profile.isPending)
+    return <FullPageStatus label="Opening speaker profile" />;
+  if (profile.isError) {
+    return (
+      <div className="page">
+        <BoardStatus
+          label="Profile unavailable"
+          detail={profile.error.message}
+        />
+      </div>
+    );
+  }
+
+  const current = draft ??
+    profile.data ?? {
+      displayName: "",
+      bio: "",
+      headshotUrl: null,
+    };
+  function updateProfile(values: Partial<SpeakerProfileInput>) {
+    setDraft({ ...current, ...values });
+  }
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    save.mutate(current);
+  }
+
+  return (
+    <div className="page setup-page">
+      <Link className="arrow-link" to="/">
+        ← My events
+      </Link>
+      <section className="page-heading compact-heading">
+        <div className="eyebrow">Reusable speaker profile</div>
+        <h1>{profile.data ? "Your public details" : "Create your profile"}</h1>
+        <p>
+          Your bio and headshot stay with you across events and accepted
+          proposals.
+        </p>
+      </section>
+      <section className="form-board submission-form">
+        <form onSubmit={submit}>
+          <fieldset className="submission-fields" disabled={save.isPending}>
+            <Field label="Display name" name="speaker-profile-name">
+              <input
+                id="speaker-profile-name"
+                required
+                value={current.displayName}
+                onChange={(event) =>
+                  updateProfile({ displayName: event.target.value })
+                }
+              />
+            </Field>
+            <Field label="Bio" name="speaker-profile-bio">
+              <textarea
+                id="speaker-profile-bio"
+                required
+                value={current.bio}
+                onChange={(event) => updateProfile({ bio: event.target.value })}
+              />
+            </Field>
+            <Field label="Headshot URL" name="speaker-profile-headshot">
+              <input
+                id="speaker-profile-headshot"
+                type="url"
+                value={current.headshotUrl ?? ""}
+                onChange={(event) =>
+                  updateProfile({ headshotUrl: event.target.value || null })
+                }
+              />
+            </Field>
+          </fieldset>
+          {save.error && (
+            <p className="form-error" role="alert">
+              {save.error.message}
+            </p>
+          )}
+          <div className="submission-actions">
+            <button className="primary-button" disabled={save.isPending}>
+              {save.isPending ? "Saving…" : "Save profile"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 function CfpBuilder({
   cfp,
   endsOn,
@@ -2378,7 +2603,7 @@ function SubmissionPage() {
   const queryClient = useQueryClient();
   const submissionInput = { submissionId: submissionId as SubmissionId };
   const submission = useQuery(
-    trpc.submissions.getOwn.queryOptions(submissionInput),
+    trpc.submissions.get.queryOptions(submissionInput),
   );
   const [editState, setEditState] = useState<{
     submissionId: string;
@@ -2392,7 +2617,7 @@ function SubmissionPage() {
           content: submissionContent(saved),
         });
         await queryClient.invalidateQueries(
-          trpc.submissions.getOwn.queryFilter(submissionInput),
+          trpc.submissions.get.queryFilter(submissionInput),
         );
       },
     }),
@@ -2401,7 +2626,7 @@ function SubmissionPage() {
     trpc.submissions.withdrawOwn.mutationOptions({
       onSuccess: async () => {
         await queryClient.invalidateQueries(
-          trpc.submissions.getOwn.queryFilter(submissionInput),
+          trpc.submissions.get.queryFilter(submissionInput),
         );
       },
     }),
@@ -2532,63 +2757,22 @@ function SubmissionPage() {
                   }
                 />
               </Field>
-              <div className="field-pair">
-                <Field label="Format" name="submission-format">
-                  <select
-                    id="submission-format"
-                    required
-                    value={currentContent.format}
-                    onChange={(event) =>
-                      changeContent((current) => ({
-                        ...current,
-                        format: event.target.value,
-                      }))
-                    }
-                  >
-                    {submission.data.form.formats.map((format) => (
-                      <option key={format}>{format}</option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Proposed speaker" name="submission-speaker">
-                  <input
-                    id="submission-speaker"
-                    required
-                    value={currentContent.proposedSpeakers[0]?.name ?? ""}
-                    onChange={(event) =>
-                      changeContent((current) => ({
-                        ...current,
-                        proposedSpeakers: [
-                          {
-                            name: event.target.value,
-                            email: current.proposedSpeakers[0]?.email ?? "",
-                          },
-                          ...current.proposedSpeakers.slice(1),
-                        ],
-                      }))
-                    }
-                  />
-                </Field>
-              </div>
-              <Field label="Speaker email" name="submission-speaker-email">
-                <input
-                  id="submission-speaker-email"
+              <Field label="Format" name="submission-format">
+                <select
+                  id="submission-format"
                   required
-                  type="email"
-                  value={currentContent.proposedSpeakers[0]?.email ?? ""}
+                  value={currentContent.format}
                   onChange={(event) =>
                     changeContent((current) => ({
                       ...current,
-                      proposedSpeakers: [
-                        {
-                          name: current.proposedSpeakers[0]?.name ?? "",
-                          email: event.target.value,
-                        },
-                        ...current.proposedSpeakers.slice(1),
-                      ],
+                      format: event.target.value,
                     }))
                   }
-                />
+                >
+                  {submission.data.form.formats.map((format) => (
+                    <option key={format}>{format}</option>
+                  ))}
+                </select>
               </Field>
               {visibleCustomFields(
                 submission.data.form.customFields,
@@ -2644,7 +2828,147 @@ function SubmissionPage() {
           </form>
         </section>
       )}
+      <SubmissionSpeakerManager
+        submission={submission.data}
+        submissionInput={submissionInput}
+      />
     </div>
+  );
+}
+
+function SubmissionSpeakerManager({
+  submission,
+  submissionInput,
+}: {
+  submission: Submission;
+  submissionInput: { submissionId: SubmissionId };
+}) {
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const refresh = () =>
+    queryClient.invalidateQueries(
+      trpc.submissions.get.queryFilter(submissionInput),
+    );
+  const add = useMutation(
+    trpc.submissions.addSpeaker.mutationOptions({
+      onSuccess: async () => {
+        setName("");
+        setEmail("");
+        await refresh();
+      },
+    }),
+  );
+  const remove = useMutation(
+    trpc.submissions.removeSpeaker.mutationOptions({ onSuccess: refresh }),
+  );
+  const replace = useMutation(
+    trpc.submissions.replaceSpeakerInvitation.mutationOptions({
+      onSuccess: refresh,
+    }),
+  );
+  const mutationError = add.error ?? remove.error ?? replace.error;
+
+  function invite(event: FormEvent) {
+    event.preventDefault();
+    add.mutate({ ...submissionInput, name, email });
+  }
+
+  return (
+    <section className="form-board speaker-board">
+      <div className="builder-title">
+        <div>
+          <div className="eyebrow">Proposed speakers</div>
+          <h2>People attached to this proposal</h2>
+        </div>
+        <span className="submission-state">
+          {submission.proposedSpeakers.length} active
+        </span>
+      </div>
+      <div className="speaker-list">
+        {submission.proposedSpeakers.map((speaker) => (
+          <div className="speaker-row" key={speaker.id}>
+            <div>
+              <strong>{speaker.name}</strong>
+              <span>{speaker.email}</span>
+            </div>
+            <div className="speaker-row-actions">
+              <span
+                className={`submission-state ${speaker.claimed ? "active" : ""}`}
+              >
+                {speaker.claimed
+                  ? "Claimed"
+                  : speaker.invitation?.usable
+                    ? "Invitation pending"
+                    : "Invitation unavailable"}
+              </span>
+              {submission.permissions.canManageSpeakers &&
+                !speaker.claimed &&
+                speaker.invitation?.status === "pending" && (
+                  <button
+                    className="text-button"
+                    disabled={replace.isPending}
+                    onClick={() =>
+                      replace.mutate({
+                        ...submissionInput,
+                        speakerId: speaker.id,
+                        replacesInvitationId: speaker.invitation?.id ?? "",
+                      })
+                    }
+                    type="button"
+                  >
+                    Send new invitation
+                  </button>
+                )}
+              {submission.permissions.canManageSpeakers && (
+                <button
+                  className="text-button danger-button"
+                  disabled={
+                    remove.isPending || submission.proposedSpeakers.length === 1
+                  }
+                  onClick={() =>
+                    remove.mutate({ ...submissionInput, speakerId: speaker.id })
+                  }
+                  type="button"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      {submission.permissions.canManageSpeakers && (
+        <form className="speaker-invite-form" onSubmit={invite}>
+          <Field label="Speaker name" name="new-speaker-name">
+            <input
+              id="new-speaker-name"
+              required
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </Field>
+          <Field label="Speaker email" name="new-speaker-email">
+            <input
+              id="new-speaker-email"
+              required
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+          </Field>
+          <button className="primary-button" disabled={add.isPending}>
+            {add.isPending ? "Inviting…" : "Invite speaker"}
+          </button>
+        </form>
+      )}
+      {mutationError && (
+        <p className="form-error" role="alert">
+          {mutationError.message}
+        </p>
+      )}
+    </section>
   );
 }
 

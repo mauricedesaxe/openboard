@@ -14,6 +14,10 @@ import {
   reviewerAssignments,
   user,
 } from "../database/schema";
+import {
+  createInvitationSecret,
+  hashInvitationSecret,
+} from "../invitations/secrets";
 
 const invitationLifetimeMs = 7 * 24 * 60 * 60 * 1000;
 
@@ -509,19 +513,4 @@ export async function revokeInvitation(
       and(eq(invitations.id, invitation.id), eq(invitations.status, "pending")),
     );
   return result.meta.changes === 1;
-}
-
-function createInvitationSecret(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-async function hashInvitationSecret(secret: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(secret),
-  );
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }

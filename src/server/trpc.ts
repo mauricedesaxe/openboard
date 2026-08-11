@@ -15,6 +15,7 @@ import {
   revokeInvitationSchema,
 } from "../shared/event-team";
 import { eventInputSchema, type UserId } from "../shared/events";
+import { speakerProfileInputSchema } from "../shared/speaker-profiles";
 import {
   decisionPublicationSchema,
   decisionQueueStatusSchema,
@@ -22,7 +23,10 @@ import {
   saveReviewSchema,
 } from "../shared/reviews";
 import {
+  addSubmissionSpeakerSchema,
   proposalContentSchema,
+  removeSubmissionSpeakerSchema,
+  replaceSubmissionSpeakerInvitationSchema,
   submissionIdSchema,
   submitProposalSchema,
 } from "../shared/submissions";
@@ -80,7 +84,22 @@ import {
   type ReviewWriteError,
 } from "./reviews/repository";
 import {
+  findOwnSpeakerProfile,
+  saveOwnSpeakerProfile,
+} from "./speaker-profiles/repository";
+import { sendSubmissionSpeakerInvitation } from "./submission-speakers/delivery";
+import {
+  addSubmissionSpeaker,
+  acceptSubmissionSpeakerInvitation,
+  declineSubmissionSpeakerInvitation,
+  findUsableSubmissionSpeakerInvitation,
+  removeSubmissionSpeaker,
+  replaceSubmissionSpeakerInvitation,
+  type SubmissionSpeakerInvitationDelivery,
+} from "./submission-speakers/repository";
+import {
   findOwnSubmission,
+  listAccessibleSubmissions,
   listOwnSubmissions,
   submitProposal,
   updateOwnSubmission,
@@ -516,6 +535,9 @@ export const appRouter = trpc.router({
       }),
   }),
   submissions: trpc.router({
+    list: authenticatedProcedure.query(({ ctx }) =>
+      listAccessibleSubmissions(ctx.database, ctx.userId),
+    ),
     listOwn: authenticatedProcedure.query(({ ctx }) =>
       listOwnSubmissions(ctx.database, ctx.userId),
     ),
@@ -535,6 +557,11 @@ export const appRouter = trpc.router({
           input,
         );
         if (!result.ok) throwProposalWriteError(result.error);
+        await Promise.all(
+          result.invitationDeliveries.map((invitation) =>
+            deliverSubmissionSpeakerInvitation(ctx.config, invitation),
+          ),
+        );
         return result.value;
       }),
     getOwn: authenticatedProcedure
@@ -547,6 +574,61 @@ export const appRouter = trpc.router({
         );
         if (!submission) throwSubmissionNotFound();
         return submission;
+      }),
+    get: authenticatedProcedure
+      .input(z.object({ submissionId: submissionIdSchema }))
+      .query(async ({ ctx, input }) => {
+        const submission = await findOwnSubmission(
+          ctx.database,
+          ctx.userId,
+          input.submissionId,
+        );
+        if (!submission) throwSubmissionNotFound();
+        return submission;
+      }),
+    addSpeaker: authenticatedProcedure
+      .input(addSubmissionSpeakerSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await addSubmissionSpeaker(
+          ctx.database,
+          ctx.userId,
+          input,
+        );
+        if (!result.ok) throwSubmissionSpeakerWriteError(result.error);
+        await deliverSubmissionSpeakerInvitation(
+          ctx.config,
+          result.value.delivery,
+        );
+        return {
+          speakerId: result.value.speakerId,
+          invitationId: result.value.invitationId,
+        };
+      }),
+    replaceSpeakerInvitation: authenticatedProcedure
+      .input(replaceSubmissionSpeakerInvitationSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await replaceSubmissionSpeakerInvitation(
+          ctx.database,
+          ctx.userId,
+          input,
+        );
+        if (!result.ok) throwSubmissionSpeakerWriteError(result.error);
+        await deliverSubmissionSpeakerInvitation(
+          ctx.config,
+          result.value.delivery,
+        );
+        return { invitationId: result.value.invitationId };
+      }),
+    removeSpeaker: authenticatedProcedure
+      .input(removeSubmissionSpeakerSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await removeSubmissionSpeaker(
+          ctx.database,
+          ctx.userId,
+          input,
+        );
+        if (!result.ok) throwSubmissionSpeakerWriteError(result.error);
+        return result.value;
       }),
     updateOwn: authenticatedProcedure
       .input(proposalContentSchema.extend({ submissionId: submissionIdSchema }))
@@ -699,7 +781,106 @@ export const appRouter = trpc.router({
         return result.value;
       }),
   }),
+  submissionSpeakerInvitations: trpc.router({
+    get: trpc.procedure
+      .input(invitationSecretInputSchema)
+      .query(async ({ ctx, input }) => {
+        const result = await findUsableSubmissionSpeakerInvitation(
+          ctx.database,
+          input.secret,
+        );
+        if (!result.ok) throwInvitationLookupError(result.error);
+        return {
+          kind: "submission_speaker" as const,
+          ...result.value,
+          expiresAt: result.value.expiresAt.toISOString(),
+        };
+      }),
+    decline: trpc.procedure
+      .input(invitationSecretInputSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await declineSubmissionSpeakerInvitation(
+          ctx.database,
+          input.secret,
+        );
+        if (!result.ok) throwInvitationLookupError(result.error);
+        return { declined: true };
+      }),
+    accept: authenticatedProcedure
+      .input(invitationSecretInputSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await acceptSubmissionSpeakerInvitation(
+          ctx.database,
+          {
+            id: ctx.userId,
+            email: ctx.session.user.email,
+            emailVerified: ctx.session.user.emailVerified,
+          },
+          input.secret,
+        );
+        if (!result.ok) {
+          if (result.error === "email_mismatch") {
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message: "Sign in with the invited email address.",
+            });
+          }
+          if (result.error === "unverified_email") {
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message: "Verify your email before accepting this invitation.",
+            });
+          }
+          throwInvitationLookupError(result.error);
+        }
+        return result.value;
+      }),
+  }),
+  speakerProfile: trpc.router({
+    getOwn: authenticatedProcedure.query(({ ctx }) =>
+      findOwnSpeakerProfile(ctx.database, ctx.userId),
+    ),
+    saveOwn: authenticatedProcedure
+      .input(speakerProfileInputSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await saveOwnSpeakerProfile(
+          ctx.database,
+          ctx.userId,
+          input,
+        );
+        if (!result.ok) {
+          throw new TRPCError({
+            code:
+              result.error === "not_a_speaker"
+                ? "FORBIDDEN"
+                : "INTERNAL_SERVER_ERROR",
+            message:
+              result.error === "not_a_speaker"
+                ? "Claim a proposed-speaker invitation before creating a profile."
+                : "The speaker profile could not be saved.",
+          });
+        }
+        return result.value;
+      }),
+  }),
 });
+
+async function deliverSubmissionSpeakerInvitation(
+  config: AppConfig,
+  invitation: SubmissionSpeakerInvitationDelivery,
+): Promise<void> {
+  try {
+    await sendSubmissionSpeakerInvitation(config, invitation);
+  } catch (error: unknown) {
+    console.error(
+      JSON.stringify({
+        event: "submission_speaker_invitation_delivery_failed",
+        invitationId: invitation.id,
+        error: error instanceof Error ? error.message : "Unknown email failure",
+      }),
+    );
+  }
+}
 
 function throwCfpItemNotFound(): never {
   throw new TRPCError({ code: "NOT_FOUND", message: "Event item not found." });
@@ -839,6 +1020,7 @@ function throwProposalWriteError(
     | "invalid_track"
     | "not_found"
     | "persistence_failed"
+    | "speaker_list_changed"
     | "submission_closed",
 ): never {
   if (error === "not_found") throwSubmissionNotFound();
@@ -858,6 +1040,12 @@ function throwProposalWriteError(
     throw new TRPCError({
       code: "CONFLICT",
       message: "The proposal form changed. Reload it before submitting.",
+    });
+  }
+  if (error === "speaker_list_changed") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "Add or remove proposed speakers through the speaker controls.",
     });
   }
   if (error === "invalid_track") {
@@ -886,6 +1074,39 @@ function throwProposalWriteError(
 
 function throwSubmissionNotFound(): never {
   throw new TRPCError({ code: "NOT_FOUND", message: "Proposal not found." });
+}
+
+function throwSubmissionSpeakerWriteError(
+  error:
+    | "invitation_not_replaceable"
+    | "last_speaker"
+    | "not_found"
+    | "persistence_failed"
+    | "submission_closed",
+): never {
+  if (error === "not_found") throwSubmissionNotFound();
+  if (error === "submission_closed") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "This proposal can no longer be edited.",
+    });
+  }
+  if (error === "last_speaker") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "An active proposal must keep at least one proposed speaker.",
+    });
+  }
+  if (error === "invitation_not_replaceable") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "That invitation can no longer be replaced.",
+    });
+  }
+  throw new TRPCError({
+    code: "INTERNAL_SERVER_ERROR",
+    message: "The proposed speaker could not be saved.",
+  });
 }
 
 function throwInvitationWriteError(

@@ -13,7 +13,7 @@ export async function sendEventInvitation(
   },
 ): Promise<void> {
   if (config.email.type === "capture") {
-    capturedInvitationSecrets.set(invitation.email, invitation.secret);
+    captureInvitationSecret(invitation.email, invitation.secret);
     return;
   }
 
@@ -25,6 +25,10 @@ export async function sendEventInvitation(
     subject: `Join ${invitation.eventName} on OpenBoard`,
     text: `You have been invited as ${article} ${invitation.role} for ${invitation.eventName}. Open ${invitationUrl} to accept or decline.`,
   });
+}
+
+export function captureInvitationSecret(email: string, secret: string): void {
+  capturedInvitationSecrets.set(normalizeEmail(email), secret);
 }
 
 export function getCapturedInvitationSecret(
