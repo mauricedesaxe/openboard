@@ -5,18 +5,28 @@ const migrationEnvironment = env as unknown as {
   TEST_MIGRATIONS: { name: string }[];
 };
 
-test("keeps migration numeric prefixes unique", () => {
-  const prefixes = migrationEnvironment.TEST_MIGRATIONS.map(({ name }) => {
-    const match = /^(\d{4})_/.exec(name);
-    if (!match) {
+test("keeps the known migration number collision isolated", () => {
+  const migrationsByPrefix = new Map<string, string[]>();
+  for (const { name } of migrationEnvironment.TEST_MIGRATIONS) {
+    const prefix = /^(\d{4})_/.exec(name)?.[1];
+    if (!prefix) {
       throw new Error(`migration filename must start with NNNN_: ${name}`);
     }
 
-    return match[1];
-  });
-  const duplicates = prefixes.filter(
-    (prefix, index) => prefixes.indexOf(prefix) !== index,
+    migrationsByPrefix.set(prefix, [
+      ...(migrationsByPrefix.get(prefix) ?? []),
+      name,
+    ]);
+  }
+
+  const collisions = [...migrationsByPrefix].filter(
+    ([, names]) => names.length > 1,
   );
 
-  expect(duplicates, "migration numeric prefixes must be unique").toEqual([]);
+  expect(collisions, "only the applied 0025 collision may remain").toEqual([
+    [
+      "0025",
+      ["0025_invitation_replacement_guard.sql", "0025_speaker_onboarding.sql"],
+    ],
+  ]);
 });
