@@ -1,0 +1,745 @@
+import { describe, expect, test } from "vitest";
+import { z } from "zod";
+
+import {
+  callTrpc,
+  getResult,
+  signIn,
+  testEnvironment,
+  workerFetch,
+} from "./support";
+
+const idSchema = z.object({ id: z.string() });
+const assignmentSchema = z.object({ id: z.string() });
+const boardSchema = z.object({
+  round: z.object({
+    id: z.string(),
+    status: z.enum(["draft", "open", "closed"]),
+  }),
+  reviewers: z.array(
+    z.object({ id: z.string(), name: z.string(), email: z.string() }),
+  ),
+  submissions: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      status: z.enum(["active", "withdrawn"]),
+      decision: z.object({
+        status: z.enum([
+          "pending",
+          "accept_queued",
+          "decline_queued",
+          "accepted",
+          "declined",
+        ]),
+        revision: z.number().int(),
+      }),
+      review: z.object({
+        assigned: z.number().int(),
+        completed: z.number().int(),
+        average: z.number().nullable(),
+        assignments: z.array(
+          z.object({
+            id: z.string(),
+            reviewerUserId: z.string(),
+            reviewerName: z.string(),
+            score: z.number().nullable(),
+            comment: z.string().nullable(),
+          }),
+        ),
+      }),
+    }),
+  ),
+});
+const mineSchema = z.array(
+  z.object({
+    assignmentId: z.string(),
+    roundStatus: z.enum(["draft", "open", "closed"]),
+    submission: z.object({
+      id: z.string(),
+      title: z.string(),
+      abstract: z.string(),
+      format: z.string(),
+      track: z.string(),
+    }),
+    review: z
+      .object({ score: z.number(), comment: z.string().nullable() })
+      .nullable(),
+  }),
+);
+const ownerSubmissionSchema = z.object({
+  decision: z.object({
+    status: z.enum(["pending", "accepted", "declined"]),
+  }),
+});
+
+describe("review submissions and publish decisions", () => {
+  test("runs one blinded round and publishes selected outcomes atomically", async () => {
+    const slug = "review-flow-2027";
+    const owner = await signIn("review-owner@example.com");
+    const organizer = await signIn("review-organizer@example.com");
+    const reviewer = await signIn("reviewer-one@example.com");
+    const secondReviewer = await signIn("reviewer-two@example.com");
+    const firstSubmitter = await signIn("review-submit-one@example.com");
+    const secondSubmitter = await signIn("review-submit-two@example.com");
+    const thirdSubmitter = await signIn("review-submit-three@example.com");
+    const unrelated = await signIn("review-outsider@example.com");
+
+    await createEvent(owner.cookie, slug);
+    await inviteAndAccept(
+      owner.cookie,
+      organizer.cookie,
+      slug,
+      organizerEmail,
+      "organizer",
+    );
+    await inviteAndAccept(
+      owner.cookie,
+      reviewer.cookie,
+      slug,
+      reviewerEmail,
+      "reviewer",
+    );
+    await inviteAndAccept(
+      owner.cookie,
+      secondReviewer.cookie,
+      slug,
+      secondReviewerEmail,
+      "reviewer",
+    );
+    const track = getResult(
+      (
+        await callTrpc(
+          "tracks.create",
+          { slug, name: "Engineering" },
+          owner.cookie,
+        )
+      ).body,
+      idSchema,
+    );
+    const cfp = getResult(
+      (
+        await callTrpc(
+          "cfps.createDraft",
+          {
+            slug,
+            name: "OpenBoard CFP",
+            deadline: "2027-06-01T00:00:00Z",
+            formats: ["Talk"],
+            customFields: [
+              {
+                key: "private_note",
+                label: "Private identifying note",
+                type: "short_text",
+                required: false,
+              },
+            ],
+          },
+          owner.cookie,
+        )
+      ).body,
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        deadline: z.string(),
+        formats: z.array(z.string()),
+        customFields: z.array(z.unknown()),
+      }),
+    );
+    await callTrpc(
+      "cfps.open",
+      {
+        slug,
+        cfpId: cfp.id,
+        name: cfp.name,
+        deadline: cfp.deadline,
+        formats: cfp.formats,
+        customFields: cfp.customFields,
+      },
+      owner.cookie,
+    );
+    const first = await submitProposal(
+      firstSubmitter.cookie,
+      slug,
+      cfp.id,
+      track.id,
+      "A calm review system",
+      "Visible abstract for the first proposal.",
+    );
+    const second = await submitProposal(
+      secondSubmitter.cookie,
+      slug,
+      cfp.id,
+      track.id,
+      "A reliable agenda system",
+      "Visible abstract for the second proposal.",
+    );
+    const withdrawn = await submitProposal(
+      thirdSubmitter.cookie,
+      slug,
+      cfp.id,
+      track.id,
+      "A withdrawn proposal",
+      "This proposal leaves before publication.",
+    );
+
+    expect(
+      (
+        await callTrpc(
+          "reviews.organizerBoard",
+          { slug },
+          unrelated.cookie,
+          "query",
+        )
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await callTrpc(
+          "reviews.assign",
+          { slug, submissionId: first.id, reviewerUserId: reviewer.userId },
+          reviewer.cookie,
+        )
+      ).status,
+    ).toBe(404);
+
+    let board = getResult(
+      (
+        await callTrpc(
+          "reviews.organizerBoard",
+          { slug },
+          organizer.cookie,
+          "query",
+        )
+      ).body,
+      boardSchema,
+    );
+    expect(board.round.status).toBe("draft");
+    expect(board.reviewers.map((candidate) => candidate.email)).toEqual([
+      reviewerEmail,
+      secondReviewerEmail,
+    ]);
+    const firstAssignment = getResult(
+      (
+        await callTrpc(
+          "reviews.assign",
+          { slug, submissionId: first.id, reviewerUserId: reviewer.userId },
+          organizer.cookie,
+        )
+      ).body,
+      assignmentSchema,
+    );
+    const incompleteAssignment = getResult(
+      (
+        await callTrpc(
+          "reviews.assign",
+          {
+            slug,
+            submissionId: second.id,
+            reviewerUserId: secondReviewer.userId,
+          },
+          owner.cookie,
+        )
+      ).body,
+      assignmentSchema,
+    );
+    expect(
+      (
+        await callTrpc(
+          "reviews.save",
+          {
+            assignmentId: firstAssignment.id,
+            score: 4,
+            comment: "Strong proposal.",
+          },
+          reviewer.cookie,
+        )
+      ).status,
+    ).toBe(409);
+
+    expect(
+      (await callTrpc("reviews.openRound", { slug }, organizer.cookie)).status,
+    ).toBe(200);
+    const mine = getResult(
+      (await callTrpc("reviews.mine", { slug }, reviewer.cookie, "query")).body,
+      mineSchema,
+    );
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toMatchObject({
+      assignmentId: firstAssignment.id,
+      roundStatus: "open",
+      submission: {
+        id: first.id,
+        title: "A calm review system",
+        abstract: "Visible abstract for the first proposal.",
+        format: "Talk",
+        track: "Engineering",
+      },
+      review: null,
+    });
+    expect(JSON.stringify(mine)).not.toContain(firstSubmitter.userId);
+    expect(JSON.stringify(mine)).not.toContain("review-submit-one@example.com");
+    expect(JSON.stringify(mine)).not.toContain("Private identifying note");
+
+    expect(
+      (
+        await callTrpc(
+          "reviews.save",
+          {
+            assignmentId: firstAssignment.id,
+            score: 4,
+            comment: "Strong proposal.",
+          },
+          reviewer.cookie,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await callTrpc(
+          "reviews.save",
+          {
+            assignmentId: firstAssignment.id,
+            score: 5,
+            comment: "Ready to accept.",
+          },
+          reviewer.cookie,
+        )
+      ).status,
+    ).toBe(200);
+    board = getResult(
+      (
+        await callTrpc(
+          "reviews.organizerBoard",
+          { slug },
+          owner.cookie,
+          "query",
+        )
+      ).body,
+      boardSchema,
+    );
+    expect(
+      board.submissions.find((submission) => submission.id === first.id)
+        ?.review,
+    ).toMatchObject({
+      assigned: 1,
+      completed: 1,
+      average: 5,
+    });
+
+    expect(
+      (
+        await callTrpc(
+          "reviews.revokeAssignment",
+          { slug, assignmentId: firstAssignment.id },
+          organizer.cookie,
+        )
+      ).status,
+    ).toBe(200);
+    board = getResult(
+      (
+        await callTrpc(
+          "reviews.organizerBoard",
+          { slug },
+          owner.cookie,
+          "query",
+        )
+      ).body,
+      boardSchema,
+    );
+    expect(
+      board.submissions.find((submission) => submission.id === first.id)
+        ?.review,
+    ).toMatchObject({
+      assigned: 0,
+      completed: 0,
+      average: null,
+      assignments: [],
+    });
+    const reassigned = getResult(
+      (
+        await callTrpc(
+          "reviews.assign",
+          { slug, submissionId: first.id, reviewerUserId: reviewer.userId },
+          owner.cookie,
+        )
+      ).body,
+      assignmentSchema,
+    );
+    expect(reassigned.id).not.toBe(firstAssignment.id);
+    const reassignedMine = getResult(
+      (await callTrpc("reviews.mine", { slug }, reviewer.cookie, "query")).body,
+      mineSchema,
+    );
+    expect(reassignedMine[0]?.review).toBeNull();
+    await callTrpc(
+      "reviews.save",
+      { assignmentId: reassigned.id, score: 3, comment: null },
+      reviewer.cookie,
+    );
+
+    expect(
+      (
+        await callTrpc(
+          "reviews.closeRound",
+          { slug, confirmIncomplete: false },
+          organizer.cookie,
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await callTrpc(
+          "reviews.closeRound",
+          { slug, confirmIncomplete: true },
+          organizer.cookie,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await callTrpc(
+          "reviews.save",
+          { assignmentId: reassigned.id, score: 4, comment: null },
+          reviewer.cookie,
+        )
+      ).status,
+    ).toBe(409);
+
+    await callTrpc(
+      "decisions.queue",
+      { slug, submissionId: first.id, status: "accept_queued" },
+      organizer.cookie,
+    );
+    await callTrpc(
+      "decisions.queue",
+      { slug, submissionId: second.id, status: "decline_queued" },
+      owner.cookie,
+    );
+    expect(
+      getResult(
+        (
+          await callTrpc(
+            "submissions.getOwn",
+            { submissionId: first.id },
+            firstSubmitter.cookie,
+            "query",
+          )
+        ).body,
+        ownerSubmissionSchema,
+      ).decision.status,
+    ).toBe("pending");
+
+    expect(
+      (await callTrpc("reviews.reopenRound", { slug }, organizer.cookie))
+        .status,
+    ).toBe(200);
+    board = getResult(
+      (
+        await callTrpc(
+          "reviews.organizerBoard",
+          { slug },
+          owner.cookie,
+          "query",
+        )
+      ).body,
+      boardSchema,
+    );
+    expect(
+      board.submissions.map((submission) => submission.decision.status),
+    ).toEqual(["pending", "pending", "pending"]);
+    await callTrpc(
+      "decisions.queue",
+      { slug, submissionId: first.id, status: "accept_queued" },
+      owner.cookie,
+    );
+    expect(
+      (
+        await callTrpc(
+          "decisions.publish",
+          {
+            slug,
+            selections: [
+              {
+                submissionId: first.id,
+                expectedStatus: "accept_queued",
+                expectedRevision: 3,
+              },
+            ],
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(409);
+
+    await callTrpc(
+      "reviews.closeRound",
+      { slug, confirmIncomplete: true },
+      owner.cookie,
+    );
+    await callTrpc(
+      "decisions.queue",
+      { slug, submissionId: second.id, status: "decline_queued" },
+      owner.cookie,
+    );
+    board = getResult(
+      (
+        await callTrpc(
+          "reviews.organizerBoard",
+          { slug },
+          owner.cookie,
+          "query",
+        )
+      ).body,
+      boardSchema,
+    );
+    const firstQueued = board.submissions.find(
+      (submission) => submission.id === first.id,
+    );
+    const secondQueued = board.submissions.find(
+      (submission) => submission.id === second.id,
+    );
+    expect(firstQueued?.decision.status).toBe("accept_queued");
+    expect(secondQueued?.decision.status).toBe("decline_queued");
+    if (!firstQueued || !secondQueued)
+      throw new Error("Expected queued decisions");
+
+    await callTrpc(
+      "decisions.queue",
+      { slug, submissionId: second.id, status: "pending" },
+      owner.cookie,
+    );
+    const stalePublication = await callTrpc(
+      "decisions.publish",
+      {
+        slug,
+        selections: [
+          {
+            submissionId: first.id,
+            expectedStatus: "accept_queued",
+            expectedRevision: firstQueued.decision.revision,
+          },
+          {
+            submissionId: second.id,
+            expectedStatus: "decline_queued",
+            expectedRevision: secondQueued.decision.revision,
+          },
+        ],
+      },
+      owner.cookie,
+    );
+    expect(stalePublication.status).toBe(409);
+    expect(
+      (
+        await testEnvironment.DB.prepare(
+          "SELECT COUNT(*) AS count FROM program_items",
+        ).first<{ count: number }>()
+      )?.count,
+    ).toBe(0);
+
+    await callTrpc(
+      "decisions.queue",
+      { slug, submissionId: second.id, status: "decline_queued" },
+      owner.cookie,
+    );
+    board = getResult(
+      (
+        await callTrpc(
+          "reviews.organizerBoard",
+          { slug },
+          owner.cookie,
+          "query",
+        )
+      ).body,
+      boardSchema,
+    );
+    const publishable = board.submissions.filter((submission) =>
+      submission.decision.status.endsWith("_queued"),
+    );
+    const publishSelections = publishable.map((submission) => ({
+      submissionId: submission.id,
+      expectedStatus: submission.decision.status,
+      expectedRevision: submission.decision.revision,
+    }));
+    const published = await callTrpc(
+      "decisions.publish",
+      {
+        slug,
+        selections: publishSelections,
+      },
+      organizer.cookie,
+    );
+    expect(published.status).toBe(200);
+    expect(
+      await testEnvironment.DB.prepare(
+        "SELECT submission_id AS submissionId FROM program_items",
+      ).all<{ submissionId: string }>(),
+    ).toMatchObject({ results: [{ submissionId: first.id }] });
+    const finalDecisions = await testEnvironment.DB.prepare(
+      "SELECT submission_id AS submissionId, status FROM decisions ORDER BY submission_id",
+    ).all<{ submissionId: string; status: string }>();
+    expect(
+      new Map(
+        finalDecisions.results.map((decision) => [
+          decision.submissionId,
+          decision.status,
+        ]),
+      ),
+    ).toEqual(
+      new Map([
+        [first.id, "accepted"],
+        [second.id, "declined"],
+        [withdrawn.id, "pending"],
+      ]),
+    );
+    const decisionMessages = await testEnvironment.DB.prepare(
+      "SELECT submission_id AS submissionId, recipient_user_id AS recipientUserId, purpose FROM communications WHERE purpose IN ('decision_acceptance', 'decision_decline') ORDER BY submission_id",
+    ).all<{ submissionId: string; recipientUserId: string; purpose: string }>();
+    expect(
+      new Map(
+        decisionMessages.results.map((message) => [
+          message.submissionId,
+          {
+            recipientUserId: message.recipientUserId,
+            purpose: message.purpose,
+          },
+        ]),
+      ),
+    ).toEqual(
+      new Map([
+        [
+          first.id,
+          {
+            recipientUserId: firstSubmitter.userId,
+            purpose: "decision_acceptance",
+          },
+        ],
+        [
+          second.id,
+          {
+            recipientUserId: secondSubmitter.userId,
+            purpose: "decision_decline",
+          },
+        ],
+      ]),
+    );
+    expect(
+      getResult(
+        (
+          await callTrpc(
+            "submissions.getOwn",
+            { submissionId: first.id },
+            firstSubmitter.cookie,
+            "query",
+          )
+        ).body,
+        ownerSubmissionSchema,
+      ).decision.status,
+    ).toBe("accepted");
+    expect(
+      (await callTrpc("reviews.reopenRound", { slug }, owner.cookie)).status,
+    ).toBe(409);
+    expect(
+      (
+        await callTrpc(
+          "decisions.publish",
+          { slug, selections: publishSelections },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(409);
+
+    expect(
+      (
+        await callTrpc(
+          "submissions.withdrawOwn",
+          { submissionId: withdrawn.id },
+          thirdSubmitter.cookie,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await callTrpc(
+          "decisions.queue",
+          { slug, submissionId: withdrawn.id, status: "accept_queued" },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(409);
+    expect(incompleteAssignment.id).toEqual(expect.any(String));
+  });
+});
+
+const organizerEmail = "review-organizer@example.com";
+const reviewerEmail = "reviewer-one@example.com";
+const secondReviewerEmail = "reviewer-two@example.com";
+
+async function createEvent(cookie: string, slug: string): Promise<void> {
+  expect(
+    (
+      await callTrpc(
+        "events.create",
+        {
+          name: "Review Flow Conference",
+          slug,
+          startsOn: "2027-08-10",
+          endsOn: "2027-08-12",
+          timezone: "Europe/Berlin",
+        },
+        cookie,
+      )
+    ).status,
+  ).toBe(200);
+}
+
+async function inviteAndAccept(
+  ownerCookie: string,
+  recipientCookie: string,
+  slug: string,
+  email: string,
+  role: "organizer" | "reviewer",
+): Promise<void> {
+  expect(
+    (await callTrpc("eventTeam.invite", { slug, email, role }, ownerCookie))
+      .status,
+  ).toBe(200);
+  const secretResponse = await workerFetch(
+    `/api/dev/invitation-secret?email=${encodeURIComponent(email)}`,
+  );
+  const secret = z
+    .object({ secret: z.string() })
+    .parse(await secretResponse.json()).secret;
+  expect(
+    (await callTrpc("invitations.accept", { secret }, recipientCookie)).status,
+  ).toBe(200);
+}
+
+async function submitProposal(
+  cookie: string,
+  slug: string,
+  cfpId: string,
+  trackId: string,
+  title: string,
+  abstract: string,
+): Promise<{ id: string }> {
+  const response = await callTrpc(
+    "submissions.submit",
+    {
+      slug,
+      cfpId,
+      clientDraftId: crypto.randomUUID(),
+      title,
+      abstract,
+      format: "Talk",
+      trackId,
+      proposedSpeakers: [
+        { name: "Named Speaker", email: `${crypto.randomUUID()}@example.com` },
+      ],
+      customAnswers: { private_note: "The reviewer must not see this." },
+    },
+    cookie,
+  );
+  expect(response.status).toBe(200);
+  return getResult(response.body, idSchema);
+}

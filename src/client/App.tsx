@@ -133,6 +133,7 @@ function AuthenticatedApp({ email }: { email: string }) {
           <Route path="events/new" element={<CreateEventPage />} />
           <Route path="events/:slug" element={<EventPage />} />
           <Route path="events/:slug/cfp/setup" element={<CfpSetupPage />} />
+          <Route path="events/:slug/review" element={<ReviewPage />} />
           <Route
             path="submissions/:submissionId"
             element={<SubmissionPage />}
@@ -623,7 +624,491 @@ function EventPage() {
           </Link>
         </section>
       )}
+      <section className="setup-callout review-callout">
+        <div>
+          <div className="eyebrow">Review and decisions</div>
+          <h2>
+            {event.data.access === "reviewer"
+              ? "Score your assigned proposals."
+              : "Move proposals into the program."}
+          </h2>
+          <p>
+            {event.data.access === "reviewer"
+              ? "Your assignments stay blinded and editable while the round is open."
+              : "Assign reviewers, watch progress, queue outcomes, and publish them together."}
+          </p>
+        </div>
+        <Link
+          className="primary-button link-button"
+          to={`/events/${slug}/review`}
+        >
+          Open review board
+        </Link>
+      </section>
     </div>
+  );
+}
+
+function ReviewPage() {
+  const { slug = "" } = useParams();
+  const trpc = useTRPC();
+  const event = useQuery(trpc.events.get.queryOptions({ slug }));
+
+  if (event.isPending) return <FullPageStatus label="Opening review board" />;
+  if (event.isError) {
+    return (
+      <div className="page">
+        <BoardStatus
+          label="Review board unavailable"
+          detail={event.error.message}
+        />
+      </div>
+    );
+  }
+
+  return event.data.access === "reviewer" ? (
+    <ReviewerAssignments slug={slug} />
+  ) : (
+    <OrganizerReviewBoard slug={slug} />
+  );
+}
+
+function OrganizerReviewBoard({ slug }: { slug: string }) {
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const board = useQuery(trpc.reviews.organizerBoard.queryOptions({ slug }));
+  const refresh = () =>
+    queryClient.invalidateQueries(
+      trpc.reviews.organizerBoard.queryFilter({ slug }),
+    );
+  const openRound = useMutation(
+    trpc.reviews.openRound.mutationOptions({ onSuccess: refresh }),
+  );
+  const closeRound = useMutation(
+    trpc.reviews.closeRound.mutationOptions({ onSuccess: refresh }),
+  );
+  const reopenRound = useMutation(
+    trpc.reviews.reopenRound.mutationOptions({ onSuccess: refresh }),
+  );
+  const assign = useMutation(
+    trpc.reviews.assign.mutationOptions({ onSuccess: refresh }),
+  );
+  const revoke = useMutation(
+    trpc.reviews.revokeAssignment.mutationOptions({ onSuccess: refresh }),
+  );
+  const queue = useMutation(
+    trpc.decisions.queue.mutationOptions({ onSuccess: refresh }),
+  );
+  const publish = useMutation(
+    trpc.decisions.publish.mutationOptions({ onSuccess: refresh }),
+  );
+  const [reviewerBySubmission, setReviewerBySubmission] = useState<
+    Record<string, string>
+  >({});
+
+  if (board.isPending) return <FullPageStatus label="Opening review board" />;
+  if (board.isError) {
+    return (
+      <div className="page">
+        <BoardStatus
+          label="Review board unavailable"
+          detail={board.error.message}
+        />
+      </div>
+    );
+  }
+
+  const queued = board.data.submissions.filter(
+    (submission) =>
+      submission.decision.status === "accept_queued" ||
+      submission.decision.status === "decline_queued",
+  );
+  const mutationError =
+    openRound.error ??
+    closeRound.error ??
+    reopenRound.error ??
+    assign.error ??
+    revoke.error ??
+    queue.error ??
+    publish.error;
+
+  function closeWithConfirmation() {
+    if (
+      window.confirm(
+        "Close this round? Incomplete assignments will remain as history and reviewers can no longer edit.",
+      )
+    ) {
+      closeRound.mutate({ slug, confirmIncomplete: true });
+    }
+  }
+
+  return (
+    <div className="page review-page">
+      <Link className="arrow-link" to={`/events/${slug}`}>
+        ← Back to event
+      </Link>
+      <section className="review-heading">
+        <div>
+          <div className="eyebrow">Review campaign</div>
+          <h1>{board.data.round.name}</h1>
+          <p>
+            {board.data.submissions.length} proposals · {queued.length} queued
+            outcomes
+          </p>
+        </div>
+        <div className="round-control">
+          <span className={`status-chip status-${board.data.round.status}`}>
+            {board.data.round.status}
+          </span>
+          {board.data.round.status === "draft" && (
+            <button
+              className="primary-button"
+              disabled={openRound.isPending}
+              onClick={() => openRound.mutate({ slug })}
+              type="button"
+            >
+              Open reviewing
+            </button>
+          )}
+          {board.data.round.status === "open" && (
+            <button
+              className="primary-button"
+              disabled={closeRound.isPending}
+              onClick={closeWithConfirmation}
+              type="button"
+            >
+              Close reviewing
+            </button>
+          )}
+          {board.data.round.status === "closed" && (
+            <button
+              className="text-button"
+              disabled={reopenRound.isPending}
+              onClick={() => reopenRound.mutate({ slug })}
+              type="button"
+            >
+              Reopen round
+            </button>
+          )}
+        </div>
+      </section>
+      {mutationError && (
+        <p className="form-error" role="alert">
+          {mutationError.message}
+        </p>
+      )}
+      {board.data.submissions.length === 0 && (
+        <BoardStatus
+          label="No proposals to review"
+          detail="Open the CFP and wait for the first final submission."
+        />
+      )}
+      <div className="review-list">
+        {board.data.submissions.map((submission) => {
+          const terminal =
+            submission.decision.status === "accepted" ||
+            submission.decision.status === "declined";
+          return (
+            <article className="review-proposal" key={submission.id}>
+              <div className="review-proposal-copy">
+                <div className="eyebrow">
+                  {submission.track} · {submission.format}
+                </div>
+                <h2>{submission.title}</h2>
+                <p>{submission.abstract}</p>
+                <div className="review-metrics">
+                  <span>
+                    {submission.review.completed}/{submission.review.assigned}{" "}
+                    reviewed
+                  </span>
+                  <span>
+                    Average {submission.review.average?.toFixed(1) ?? "—"}
+                  </span>
+                  <span>{submission.status}</span>
+                </div>
+              </div>
+              <div className="review-controls">
+                <Field
+                  label="Internal outcome"
+                  name={`decision-${submission.id}`}
+                >
+                  <select
+                    disabled={terminal || submission.status === "withdrawn"}
+                    id={`decision-${submission.id}`}
+                    onChange={(event) =>
+                      queue.mutate({
+                        slug,
+                        submissionId: submission.id,
+                        status: event.target.value as
+                          "pending" | "accept_queued" | "decline_queued",
+                      })
+                    }
+                    value={submission.decision.status}
+                  >
+                    <option value="pending">Pending</option>
+                    <option value="accept_queued">Queue acceptance</option>
+                    <option value="decline_queued">Queue decline</option>
+                    {terminal && (
+                      <option value={submission.decision.status}>
+                        {submission.decision.status}
+                      </option>
+                    )}
+                  </select>
+                </Field>
+                {!terminal && submission.status === "active" && (
+                  <div className="assignment-control">
+                    <select
+                      aria-label={`Reviewer for ${submission.title}`}
+                      onChange={(event) =>
+                        setReviewerBySubmission((current) => ({
+                          ...current,
+                          [submission.id]: event.target.value,
+                        }))
+                      }
+                      value={reviewerBySubmission[submission.id] ?? ""}
+                    >
+                      <option value="">Choose reviewer</option>
+                      {board.data.reviewers.map((reviewer) => (
+                        <option key={reviewer.id} value={reviewer.id}>
+                          {reviewer.name} · {reviewer.email}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="mini-button"
+                      disabled={
+                        !reviewerBySubmission[submission.id] || assign.isPending
+                      }
+                      onClick={() => {
+                        const reviewerUserId =
+                          reviewerBySubmission[submission.id];
+                        if (!reviewerUserId) return;
+                        assign.mutate({
+                          slug,
+                          submissionId: submission.id,
+                          reviewerUserId,
+                        });
+                      }}
+                      type="button"
+                    >
+                      Assign
+                    </button>
+                  </div>
+                )}
+                <div className="assignment-list">
+                  {submission.review.assignments.map((assignment) => (
+                    <div className="assignment-row" key={assignment.id}>
+                      <span>
+                        {assignment.reviewerName} ·{" "}
+                        {assignment.score ?? "not scored"}
+                      </span>
+                      <button
+                        className="text-button"
+                        disabled={revoke.isPending}
+                        onClick={() =>
+                          revoke.mutate({
+                            slug,
+                            assignmentId: assignment.id,
+                          })
+                        }
+                        type="button"
+                      >
+                        Revoke
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      {board.data.round.status === "closed" && queued.length > 0 && (
+        <section className="publication-bar">
+          <div>
+            <div className="eyebrow">Atomic publication</div>
+            <strong>Publish {queued.length} queued outcomes together</strong>
+          </div>
+          <button
+            className="primary-button"
+            disabled={publish.isPending}
+            onClick={() =>
+              publish.mutate({
+                slug,
+                selections: queued.map((submission) => ({
+                  submissionId: submission.id,
+                  expectedStatus: submission.decision.status as
+                    "accept_queued" | "decline_queued",
+                  expectedRevision: submission.decision.revision,
+                })),
+              })
+            }
+            type="button"
+          >
+            {publish.isPending ? "Publishing…" : "Publish decisions"}
+          </button>
+        </section>
+      )}
+      <ReviewerAssignments compact slug={slug} />
+    </div>
+  );
+}
+
+function ReviewerAssignments({
+  compact = false,
+  slug,
+}: {
+  compact?: boolean;
+  slug: string;
+}) {
+  const trpc = useTRPC();
+  const assignments = useQuery(trpc.reviews.mine.queryOptions({ slug }));
+
+  if (assignments.isPending) {
+    return compact ? (
+      <BoardStatus label="Loading your assignments" />
+    ) : (
+      <FullPageStatus label="Opening assignments" />
+    );
+  }
+  if (assignments.isError) {
+    return (
+      <div className={compact ? "" : "page"}>
+        <BoardStatus
+          label="Assignments unavailable"
+          detail={assignments.error.message}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <section className={compact ? "own-review-section" : "page review-page"}>
+      {!compact && (
+        <Link className="arrow-link" to={`/events/${slug}`}>
+          ← Back to event
+        </Link>
+      )}
+      <div className="review-heading">
+        <div>
+          <div className="eyebrow">Your blinded assignments</div>
+          <h1>{compact ? "Your reviews" : "Read the work, not the name."}</h1>
+          <p>Scores remain editable while the review round is open.</p>
+        </div>
+      </div>
+      {assignments.data.length === 0 && (
+        <BoardStatus
+          label="No active assignments"
+          detail="Assigned proposals will appear here."
+        />
+      )}
+      <div className="review-list">
+        {assignments.data.map((assignment) => (
+          <ReviewAssignmentCard
+            assignment={assignment}
+            key={assignment.assignmentId}
+            slug={slug}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ReviewAssignmentCard({
+  assignment,
+  slug,
+}: {
+  assignment: {
+    assignmentId: string;
+    roundStatus: "draft" | "open" | "closed";
+    submission: {
+      id: string;
+      title: string;
+      abstract: string;
+      format: string;
+      track: string;
+    };
+    review: { score: number; comment: string | null } | null;
+  };
+  slug: string;
+}) {
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const [score, setScore] = useState(assignment.review?.score ?? 3);
+  const [comment, setComment] = useState(assignment.review?.comment ?? "");
+  const save = useMutation(
+    trpc.reviews.save.mutationOptions({
+      onSuccess: () =>
+        queryClient.invalidateQueries(trpc.reviews.mine.queryFilter({ slug })),
+    }),
+  );
+  const editable = assignment.roundStatus === "open";
+
+  return (
+    <article className="review-proposal reviewer-card">
+      <div className="review-proposal-copy">
+        <div className="eyebrow">
+          {assignment.submission.track} · {assignment.submission.format}
+        </div>
+        <h2>{assignment.submission.title}</h2>
+        <p>{assignment.submission.abstract}</p>
+      </div>
+      <form
+        className="review-controls"
+        onSubmit={(event) => {
+          event.preventDefault();
+          save.mutate({
+            assignmentId: assignment.assignmentId,
+            score,
+            comment: comment.trim() || null,
+          });
+        }}
+      >
+        <Field label="Score" name={`score-${assignment.assignmentId}`}>
+          <select
+            disabled={!editable}
+            id={`score-${assignment.assignmentId}`}
+            onChange={(event) => setScore(Number(event.target.value))}
+            value={score}
+          >
+            {[1, 2, 3, 4, 5].map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field
+          label="Private reviewer comment"
+          name={`comment-${assignment.assignmentId}`}
+        >
+          <textarea
+            disabled={!editable}
+            id={`comment-${assignment.assignmentId}`}
+            maxLength={5000}
+            onChange={(event) => setComment(event.target.value)}
+            value={comment}
+          />
+        </Field>
+        {save.error && (
+          <p className="form-error" role="alert">
+            {save.error.message}
+          </p>
+        )}
+        <button
+          className="primary-button"
+          disabled={!editable || save.isPending}
+          type="submit"
+        >
+          {save.isPending
+            ? "Saving…"
+            : assignment.review
+              ? "Update review"
+              : "Save review"}
+        </button>
+      </form>
+    </article>
   );
 }
 

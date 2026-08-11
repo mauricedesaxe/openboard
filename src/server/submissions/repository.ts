@@ -31,6 +31,7 @@ import {
   decisions,
   events,
   formResponses,
+  reviewerAssignments,
   submissions,
   submissionSpeakers,
   tracks,
@@ -284,7 +285,7 @@ export async function findOwnSubmission(
     },
     proposedSpeakers: speakers,
     customAnswers: JSON.parse(row.answersJson) as unknown,
-    decision: { status: row.decisionStatus },
+    decision: { status: publicDecisionStatus(row.decisionStatus) },
     confirmation: { status: row.communicationId ? "recorded" : undefined },
     permissions: {
       canEdit: active && !published && new Date(row.deadline) > new Date(),
@@ -513,6 +514,15 @@ export async function withdrawOwnSubmission(
             ),
           ),
         ),
+      database
+        .update(reviewerAssignments)
+        .set({ revokedAt: now, revokedByUserId: ownerUserId })
+        .where(
+          and(
+            eq(reviewerAssignments.submissionId, submissionId),
+            isNull(reviewerAssignments.revokedAt),
+          ),
+        ),
     ]);
   } catch {
     return { ok: false, error: "persistence_failed" };
@@ -615,6 +625,12 @@ async function validateProposal(
 
 function isPublished(status: typeof decisions.$inferSelect.status): boolean {
   return status === "accepted" || status === "declined";
+}
+
+function publicDecisionStatus(
+  status: typeof decisions.$inferSelect.status,
+): "pending" | "accepted" | "declined" {
+  return status === "accepted" || status === "declined" ? status : "pending";
 }
 
 function validAnswer(field: CustomField, value: string | undefined): boolean {

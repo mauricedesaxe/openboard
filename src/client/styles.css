@@ -623,6 +623,139 @@ a {
   max-width: 600px;
   margin: 0;
 }
+.review-callout {
+  background: var(--orange);
+}
+.review-page > .arrow-link {
+  display: inline-block;
+  margin-bottom: 55px;
+}
+.review-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 40px;
+  margin-bottom: 48px;
+  border-bottom: 1px solid var(--ink);
+  padding-bottom: 36px;
+}
+.review-heading h1 {
+  margin: 12px 0 8px;
+  font:
+    600 clamp(44px, 6vw, 78px)/0.92 "Newsreader",
+    serif;
+  letter-spacing: -0.05em;
+}
+.review-heading p {
+  color: rgba(27, 39, 36, 0.62);
+}
+.round-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 18px;
+}
+.status-draft {
+  background: var(--paper);
+}
+.status-closed {
+  color: var(--paper);
+  background: var(--ink);
+}
+.review-list {
+  display: grid;
+  gap: 18px;
+}
+.review-proposal {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.75fr);
+  border: 1px solid var(--ink);
+  background: rgba(255, 255, 255, 0.2);
+}
+.review-proposal-copy,
+.review-controls {
+  padding: clamp(26px, 4vw, 46px);
+}
+.review-proposal-copy {
+  border-right: 1px solid var(--ink);
+}
+.review-proposal h2 {
+  margin: 14px 0;
+  font:
+    600 clamp(30px, 4vw, 48px)/0.98 "Newsreader",
+    serif;
+}
+.review-proposal-copy > p {
+  max-width: 700px;
+  color: rgba(27, 39, 36, 0.7);
+  line-height: 1.65;
+}
+.review-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 30px;
+}
+.review-metrics span {
+  border: 1px solid var(--line);
+  padding: 7px 9px;
+  font: 10px "DM Mono";
+  text-transform: uppercase;
+}
+.assignment-control {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 20px;
+}
+.assignment-control select {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--line);
+  padding: 9px;
+  background: var(--paper);
+}
+.assignment-list {
+  border-top: 1px solid var(--line);
+}
+.assignment-row {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.publication-bar {
+  position: sticky;
+  bottom: 18px;
+  z-index: 2;
+  margin-top: 28px;
+  padding: 22px 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border: 1px solid var(--ink);
+  background: var(--acid);
+  box-shadow: 7px 7px 0 var(--ink);
+}
+.publication-bar strong {
+  display: block;
+  margin-top: 8px;
+}
+.own-review-section {
+  margin-top: 70px;
+  border-top: 1px solid var(--ink);
+  padding-top: 55px;
+}
+.own-review-section .review-heading h1 {
+  font-size: clamp(38px, 5vw, 60px);
+}
+.reviewer-card .review-controls textarea {
+  min-height: 100px;
+}
 .setup-page > .arrow-link {
   display: inline-block;
   margin-bottom: 55px;
@@ -1015,9 +1148,18 @@ a {
   .setup-callout,
   .builder-title,
   .custom-field-heading,
-  .submission-heading {
+  .submission-heading,
+  .review-heading,
+  .publication-bar {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .review-proposal {
+    grid-template-columns: 1fr;
+  }
+  .review-proposal-copy {
+    border-right: 0;
+    border-bottom: 1px solid var(--ink);
   }
   .public-cfp-header {
     padding: 16px 20px;

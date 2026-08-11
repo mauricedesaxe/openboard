@@ -28,13 +28,7 @@ const submissionSchema = z.object({
   ),
   customAnswers: z.record(z.string(), z.string()),
   decision: z.object({
-    status: z.enum([
-      "pending",
-      "accept_queued",
-      "decline_queued",
-      "accepted",
-      "declined",
-    ]),
+    status: z.enum(["pending", "accepted", "declined"]),
   }),
   confirmation: z.object({ status: z.literal("recorded") }),
   permissions: z.object({ canEdit: z.boolean(), canWithdraw: z.boolean() }),
@@ -385,7 +379,7 @@ describe("submit a proposal through the local-first flow", () => {
       submissionSchema,
     );
     expect(queued).toMatchObject({
-      decision: { status: "accept_queued" },
+      decision: { status: "pending" },
       permissions: { canEdit: true, canWithdraw: true },
     });
 

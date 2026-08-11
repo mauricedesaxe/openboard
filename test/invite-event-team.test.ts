@@ -378,6 +378,62 @@ describe("invite the event team", () => {
       .bind("access-event")
       .first<{ id: string }>();
     expect(event).toBeTruthy();
+    const track = getResult(
+      await callTrpc<{ id: string }>(
+        "tracks.create",
+        { slug: "access-event", name: "Review track" },
+        owner.cookie,
+      ).then((response) => response.body),
+    );
+    const draft = getResult(
+      await callTrpc<{
+        id: string;
+        name: string;
+        deadline: string;
+        formats: string[];
+        customFields: unknown[];
+      }>(
+        "cfps.createDraft",
+        {
+          slug: "access-event",
+          name: "Review access CFP",
+          deadline: "2027-05-01T00:00:00Z",
+          formats: ["Talk"],
+          customFields: [],
+        },
+        owner.cookie,
+      ).then((response) => response.body),
+    );
+    await callTrpc(
+      "cfps.open",
+      { slug: "access-event", cfpId: draft.id, ...draft },
+      owner.cookie,
+    );
+    const proposal = getResult(
+      await callTrpc<{ id: string }>(
+        "submissions.submit",
+        {
+          slug: "access-event",
+          cfpId: draft.id,
+          clientDraftId: crypto.randomUUID(),
+          title: "Reviewer access history",
+          abstract: "Preserve the assignment when its event role is revoked.",
+          format: "Talk",
+          trackId: track.id,
+          proposedSpeakers: [
+            { name: "Event Owner", email: "access-owner@example.com" },
+          ],
+          customAnswers: {},
+        },
+        owner.cookie,
+      ).then((response) => response.body),
+    );
+    const round = await testEnvironment.DB.prepare(
+      "SELECT id FROM review_rounds WHERE cfp_id = ?",
+    )
+      .bind(draft.id)
+      .first<{ id: string }>();
+    expect(round).toBeTruthy();
     await testEnvironment.DB.prepare(
       `INSERT INTO reviewer_assignments
        (id, event_id, review_round_id, submission_id, reviewer_user_id,
@@ -387,8 +443,8 @@ describe("invite the event team", () => {
       .bind(
         crypto.randomUUID(),
         event?.id,
-        crypto.randomUUID(),
-        crypto.randomUUID(),
+        round?.id,
+        proposal.id,
         reviewer.userId,
         owner.userId,
         Date.now(),

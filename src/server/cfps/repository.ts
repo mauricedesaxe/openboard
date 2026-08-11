@@ -12,7 +12,7 @@ import {
 import { instantFallsAfterLocalDate } from "../../shared/date-time";
 import type { UserId } from "../../shared/events";
 import type { Database } from "../database/client";
-import { cfps, events, tracks } from "../database/schema";
+import { cfps, events, reviewRounds, tracks } from "../database/schema";
 import { findEventForOrganizer } from "../events/repository";
 
 type CfpWriteResult =
@@ -71,19 +71,31 @@ export async function createDraftCfp(
   if (currentDraft) return { ok: false, error: "already_draft" };
 
   const id = crypto.randomUUID() as CfpId;
+  const roundId = crypto.randomUUID();
   const now = new Date();
   try {
-    await database.insert(cfps).values({
-      id,
-      eventId: event.id,
-      name: input.name,
-      deadline: input.deadline,
-      status: "draft",
-      formatsJson: JSON.stringify(input.formats),
-      customFieldsJson: JSON.stringify(input.customFields),
-      createdAt: now,
-      updatedAt: now,
-    });
+    await database.batch([
+      database.insert(cfps).values({
+        id,
+        eventId: event.id,
+        name: input.name,
+        deadline: input.deadline,
+        status: "draft",
+        formatsJson: JSON.stringify(input.formats),
+        customFieldsJson: JSON.stringify(input.customFields),
+        createdAt: now,
+        updatedAt: now,
+      }),
+      database.insert(reviewRounds).values({
+        id: roundId,
+        eventId: event.id,
+        cfpId: id,
+        name: `${input.name} review`,
+        status: "draft",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    ]);
   } catch (error: unknown) {
     if (String(error).includes("UNIQUE constraint failed")) {
       return { ok: false, error: "already_draft" };
