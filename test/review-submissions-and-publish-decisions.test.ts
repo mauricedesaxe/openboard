@@ -453,7 +453,7 @@ describe("review submissions and publish decisions", () => {
       getResult(
         (
           await callTrpc(
-            "submissions.getOwn",
+            "submissions.get",
             { submissionId: first.id },
             firstSubmissionOwner.cookie,
             "query",
@@ -720,7 +720,7 @@ describe("review submissions and publish decisions", () => {
       getResult(
         (
           await callTrpc(
-            "submissions.getOwn",
+            "submissions.get",
             { submissionId: first.id },
             firstSubmissionOwner.cookie,
             "query",
