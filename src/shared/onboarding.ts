@@ -12,6 +12,9 @@ export type TaskEvidenceId = string & {
   readonly __brand: "TaskEvidenceId";
 };
 
+export const MAX_TASK_FILE_BYTES = 10_000_000;
+const MAX_TASK_FILE_BASE64_LENGTH = Math.ceil(MAX_TASK_FILE_BYTES / 3) * 4;
+
 export const taskDefinitionIdSchema = z
   .uuid()
   .transform((value) => value as TaskDefinitionId);
@@ -121,7 +124,7 @@ export const saveOnboardingFormSchema = assignmentInputSchema.extend({
 export const taskFileUploadSchema = assignmentInputSchema.extend({
   fileName: z.string().trim().min(1).max(255),
   contentType: z.string().trim().min(1).max(255),
-  contentBase64: z.string().min(1).max(14_000_000),
+  contentBase64: z.string().min(1).max(MAX_TASK_FILE_BASE64_LENGTH),
 });
 
 export function profileSatisfiesRequirement(

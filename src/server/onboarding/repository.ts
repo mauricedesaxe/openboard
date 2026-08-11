@@ -11,6 +11,8 @@ import {
 
 import type { UserId } from "../../shared/events";
 import {
+  MAX_TASK_FILE_BYTES,
+  onboardingFormFieldSchema,
   profileSatisfiesRequirement,
   type CreateTaskAssignmentInput,
   type CreateTaskDefinitionInput,
@@ -30,7 +32,6 @@ import {
   taskAssignmentAttachments,
   taskAssignmentRevisions,
   taskAssignments,
-  taskAttachmentSupersessions,
   taskDefinitions,
   taskEvidence,
   taskEvidenceRejections,
@@ -46,7 +47,8 @@ export type OnboardingWriteError =
   | "invalid_assignment"
   | "invalid_mechanism"
   | "not_found"
-  | "persistence_failed";
+  | "persistence_failed"
+  | "current_evidence_exists";
 
 type WriteResult<T> =
   { ok: true; value: T } | { ok: false; error: OnboardingWriteError };
@@ -140,9 +142,6 @@ export async function createTaskAssignment(
   } catch {
     return { ok: false, error: "persistence_failed" };
   }
-  if (definition.completionMechanism === "profile") {
-    await syncProfileEvidenceForAssignment(database, id);
-  }
   return { ok: true, value: { id } };
 }
 
@@ -174,7 +173,11 @@ export async function getOrganizerOnboardingBoard(
   const requiredIncomplete = assignmentStates.filter(
     (assignment) => assignment.required && !assignment.completed,
   );
-  const speakers = uniqueSpeakers(targetRows);
+  const readinessSpeakers = readinessSpeakerRows(targetRows);
+  const speakers = readinessSpeakers.filter(
+    (speaker): speaker is typeof speaker & { userId: string } =>
+      speaker.userId !== null,
+  );
   const programItemsWithReadiness = targetRows.map((programItem) => {
     const speakerIds = programItem.speakers.map((speaker) => speaker.id);
     const speakerUserIds = programItem.speakers.flatMap((speaker) =>
@@ -203,17 +206,16 @@ export async function getOrganizerOnboardingBoard(
       scope: definition.scope,
       completionMechanism: definition.completionMechanism,
       profileRequirement: definition.profileRequirement,
-      formFields: definition.formSchemaJson
-        ? (JSON.parse(definition.formSchemaJson) as unknown)
-        : null,
+      formFields: parseOnboardingFormFields(definition.formSchemaJson),
     })),
     assignments: assignmentStates,
     targets: { speakers, programItems: targetRows },
     readiness: {
-      speakers: speakers.map((speaker) => {
+      speakers: readinessSpeakers.map((speaker) => {
         const blockers = requiredIncomplete.filter(
           (assignment) =>
-            assignment.targetUserId === speaker.userId ||
+            (speaker.userId !== null &&
+              assignment.targetUserId === speaker.userId) ||
             (assignment.targetSubmissionSpeakerId !== null &&
               speaker.relationshipIds.includes(
                 assignment.targetSubmissionSpeakerId,
@@ -264,6 +266,32 @@ export async function confirmManualTask(
     return { ok: false, error: "invalid_mechanism" };
   }
   return insertEvidence(database, assignment, actorUserId, "manual", {});
+}
+
+export async function cancelTaskAssignment(
+  database: Database,
+  actorUserId: UserId,
+  assignmentId: TaskAssignmentId,
+): Promise<WriteResult<{ canceled: true }>> {
+  const assignment = await findAssignment(database, assignmentId);
+  if (!assignment) return { ok: false, error: "not_found" };
+  if (
+    !(await findOrganizerEventById(database, actorUserId, assignment.eventId))
+  ) {
+    return { ok: false, error: "not_found" };
+  }
+  const result = await database
+    .update(taskAssignments)
+    .set({ canceledAt: new Date(), canceledByUserId: actorUserId })
+    .where(
+      and(
+        eq(taskAssignments.id, assignmentId),
+        isNull(taskAssignments.canceledAt),
+      ),
+    );
+  return result.meta.changes > 0
+    ? { ok: true, value: { canceled: true } }
+    : { ok: false, error: "invalid_assignment" };
 }
 
 export async function saveOnboardingFormDraft(
@@ -351,8 +379,13 @@ export async function submitOnboardingForm(
         createdAt: now,
       }),
     ]);
-  } catch {
-    return { ok: false, error: "persistence_failed" };
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      error: String(error).includes("current_form_evidence_exists")
+        ? "current_evidence_exists"
+        : "persistence_failed",
+    };
   }
   return { ok: true, value: { evidenceId } };
 }
@@ -383,6 +416,9 @@ export async function attachTaskFile(
       character.charCodeAt(0),
     );
   } catch {
+    return { ok: false, error: "invalid_answers" };
+  }
+  if (bytes.byteLength > MAX_TASK_FILE_BYTES) {
     return { ok: false, error: "invalid_answers" };
   }
   const fileId = crypto.randomUUID();
@@ -430,12 +466,6 @@ export async function attachTaskFile(
         database.insert(taskEvidenceSupersessions).values({
           previousEvidenceId: current.evidenceId,
           replacementEvidenceId: evidenceId,
-          supersededByUserId: actorUserId,
-          createdAt: now,
-        }),
-        database.insert(taskAttachmentSupersessions).values({
-          previousAttachmentId: current.attachmentId,
-          replacementAttachmentId: attachmentId,
           supersededByUserId: actorUserId,
           createdAt: now,
         }),
@@ -567,9 +597,6 @@ export async function reopenTaskAssignment(
   } catch {
     return { ok: false, error: "persistence_failed" };
   }
-  if (assignment.completionMechanism === "profile") {
-    await syncProfileEvidenceForAssignment(database, assignmentId);
-  }
   return { ok: true, value: { revision: nextRevision } };
 }
 
@@ -597,67 +624,6 @@ export async function recordTaskReminder(
     return { ok: false, error: "persistence_failed" };
   }
   return { ok: true, value: { reminderId } };
-}
-
-export async function syncProfileTaskEvidence(
-  database: Database,
-  userId: UserId,
-): Promise<void> {
-  const assignments = await database
-    .select({ id: taskAssignments.id })
-    .from(taskAssignments)
-    .innerJoin(
-      taskDefinitions,
-      eq(taskDefinitions.id, taskAssignments.taskDefinitionId),
-    )
-    .where(
-      and(
-        eq(taskAssignments.targetUserId, userId),
-        eq(taskDefinitions.completionMechanism, "profile"),
-        isNull(taskAssignments.canceledAt),
-      ),
-    );
-  for (const assignment of assignments) {
-    await syncProfileEvidenceForAssignment(database, assignment.id);
-  }
-}
-
-async function syncProfileEvidenceForAssignment(
-  database: Database,
-  assignmentId: string,
-): Promise<void> {
-  const assignment = await findAssignment(database, assignmentId);
-  if (
-    !assignment ||
-    assignment.completionMechanism !== "profile" ||
-    !assignment.targetUserId ||
-    !assignment.profileRequirement
-  ) {
-    return;
-  }
-  const [profile] = await database
-    .select()
-    .from(speakerProfiles)
-    .where(eq(speakerProfiles.userId, assignment.targetUserId))
-    .limit(1);
-  if (
-    !profile ||
-    !profileSatisfiesRequirement(profile, assignment.profileRequirement)
-  ) {
-    return;
-  }
-  await database
-    .insert(taskEvidence)
-    .values({
-      id: crypto.randomUUID(),
-      assignmentId: assignment.id,
-      completionRevision: assignment.completionRevision,
-      kind: "profile",
-      actorUserId: assignment.targetUserId,
-      speakerProfileId: profile.id,
-      createdAt: new Date(),
-    })
-    .onConflictDoNothing();
 }
 
 async function addOrganizerEvidence(
@@ -967,15 +933,8 @@ async function findCurrentFileEvidence(
   assignment: NonNullable<AssignmentRow>,
 ) {
   const [current] = await database
-    .select({
-      evidenceId: taskEvidence.id,
-      attachmentId: taskAssignmentAttachments.id,
-    })
+    .select({ evidenceId: taskEvidence.id })
     .from(taskEvidence)
-    .innerJoin(
-      taskAssignmentAttachments,
-      eq(taskAssignmentAttachments.id, taskEvidence.attachmentId),
-    )
     .where(
       and(
         eq(taskEvidence.assignmentId, assignment.id),
@@ -1036,26 +995,44 @@ async function listEventTargets(database: Database, eventId: string) {
   });
 }
 
-function uniqueSpeakers(
+function readinessSpeakerRows(
   programItemRows: Awaited<ReturnType<typeof listEventTargets>>,
 ) {
   const byUser = new Map<
     string,
     {
+      key: string;
       userId: string;
       name: string;
       email: string | null;
       relationshipIds: string[];
     }
   >();
+  const unclaimed: Array<{
+    key: string;
+    userId: null;
+    name: string;
+    email: string | null;
+    relationshipIds: string[];
+  }> = [];
   for (const item of programItemRows) {
     for (const speaker of item.speakers) {
-      if (!speaker.userId) continue;
+      if (!speaker.userId) {
+        unclaimed.push({
+          key: speaker.id,
+          userId: null,
+          name: speaker.name,
+          email: speaker.email,
+          relationshipIds: [speaker.id],
+        });
+        continue;
+      }
       const current = byUser.get(speaker.userId);
       if (current) {
         current.relationshipIds.push(speaker.id);
       } else {
         byUser.set(speaker.userId, {
+          key: speaker.userId,
           userId: speaker.userId,
           name: speaker.name,
           email: speaker.email,
@@ -1064,7 +1041,7 @@ function uniqueSpeakers(
       }
     }
   }
-  return [...byUser.values()];
+  return [...byUser.values(), ...unclaimed];
 }
 
 async function targetBelongsToEvent(
@@ -1151,9 +1128,7 @@ function presentAssignment(assignment: NonNullable<AssignmentRow>) {
     scope: assignment.scope,
     completionMechanism: assignment.completionMechanism,
     profileRequirement: assignment.profileRequirement,
-    formFields: assignment.formSchemaJson
-      ? (JSON.parse(assignment.formSchemaJson) as unknown)
-      : null,
+    formFields: parseOnboardingFormFields(assignment.formSchemaJson),
     targetUserId: assignment.targetUserId,
     targetProgramItemId: assignment.targetProgramItemId,
     targetSubmissionSpeakerId: assignment.targetSubmissionSpeakerId,
@@ -1186,11 +1161,15 @@ function formAnswersAreValid(
   answers: Record<string, string>,
 ): boolean {
   if (!formSchemaJson) return false;
-  const fields = JSON.parse(formSchemaJson) as Array<{
-    key: string;
-    required: boolean;
-  }>;
+  const fields = parseOnboardingFormFields(formSchemaJson);
+  if (!fields) return false;
   return fields.every(
     (field) => !field.required || Boolean(answers[field.key]?.trim()),
   );
+}
+
+function parseOnboardingFormFields(formSchemaJson: string | null) {
+  return formSchemaJson
+    ? onboardingFormFieldSchema.array().parse(JSON.parse(formSchemaJson))
+    : null;
 }

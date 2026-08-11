@@ -45,6 +45,9 @@ import {
 import { authClient } from "./auth";
 import { useTRPC } from "./trpc";
 
+const ONBOARDING_REFETCH_INTERVAL_MS = 15_000;
+const FILE_ENCODING_CHUNK_BYTES = 32_768;
+
 export function App() {
   const location = useLocation();
   useEffect(() => {
@@ -702,7 +705,7 @@ function OrganizerOnboardingPage() {
   const board = useQuery(
     trpc.onboarding.organizerBoard.queryOptions(
       { slug },
-      { refetchInterval: 15_000 },
+      { refetchInterval: ONBOARDING_REFETCH_INTERVAL_MS },
     ),
   );
   const refresh = () =>
@@ -724,8 +727,11 @@ function OrganizerOnboardingPage() {
   const reopen = useMutation(
     trpc.onboarding.reopen.mutationOptions({ onSuccess: refresh }),
   );
-  const remind = useMutation(
-    trpc.onboarding.remind.mutationOptions({ onSuccess: refresh }),
+  const recordReminder = useMutation(
+    trpc.onboarding.recordReminder.mutationOptions({ onSuccess: refresh }),
+  );
+  const cancelAssignment = useMutation(
+    trpc.onboarding.cancelAssignment.mutationOptions({ onSuccess: refresh }),
   );
   const rejectEvidence = useMutation(
     trpc.onboarding.rejectEvidence.mutationOptions({ onSuccess: refresh }),
@@ -770,7 +776,8 @@ function OrganizerOnboardingPage() {
     waive.error ??
     override.error ??
     reopen.error ??
-    remind.error ??
+    recordReminder.error ??
+    cancelAssignment.error ??
     rejectEvidence.error;
 
   function addDefinition(event: FormEvent) {
@@ -845,8 +852,8 @@ function OrganizerOnboardingPage() {
       )}
       <div className="onboarding-builders">
         <form className="form-board" onSubmit={addDefinition}>
-          <div className="eyebrow">New requirement</div>
-          <h2>Define the obligation</h2>
+          <div className="eyebrow">New task definition</div>
+          <h2>Define the onboarding task</h2>
           <Field label="Name" name="task-name">
             <input
               id="task-name"
@@ -872,10 +879,10 @@ function OrganizerOnboardingPage() {
                 }
                 value={definition.scope}
               >
-                <option value="event_speaker">Event speaker</option>
-                <option value="program_item">Program item</option>
+                <option value="event_speaker">Event-speaker task</option>
+                <option value="program_item">Program-item task</option>
                 <option value="program_item_speaker">
-                  Program item speaker
+                  Program-item-speaker task
                 </option>
               </select>
             </Field>
@@ -893,7 +900,7 @@ function OrganizerOnboardingPage() {
               >
                 <option value="manual">Manual confirmation</option>
                 <option value="profile">Speaker profile</option>
-                <option value="form">Submitted form</option>
+                <option value="form">Form response</option>
                 <option value="file">File upload</option>
               </select>
             </Field>
@@ -937,13 +944,13 @@ function OrganizerOnboardingPage() {
             disabled={createDefinition.isPending}
             type="submit"
           >
-            Create requirement
+            Create task definition
           </button>
         </form>
         <form className="form-board" onSubmit={addAssignment}>
           <div className="eyebrow">New assignment</div>
           <h2>Target accepted work</h2>
-          <Field label="Requirement" name="assignment-definition">
+          <Field label="Task definition" name="assignment-definition">
             <select
               id="assignment-definition"
               onChange={(event) =>
@@ -1048,7 +1055,7 @@ function OrganizerOnboardingPage() {
         <h2>Speakers</h2>
         <div className="readiness-table" role="table">
           {board.data.readiness.speakers.map((speaker) => (
-            <div className="readiness-row" key={speaker.userId} role="row">
+            <div className="readiness-row" key={speaker.key} role="row">
               <strong>{speaker.name}</strong>
               <span
                 className={`status-chip ${speaker.ready ? "status-open" : "status-closed"}`}
@@ -1081,7 +1088,8 @@ function OrganizerOnboardingPage() {
               </p>
               {item.lastReminderAt && (
                 <p>
-                  Last reminder {new Date(item.lastReminderAt).toLocaleString()}
+                  Last reminder recorded{" "}
+                  {new Date(item.lastReminderAt).toLocaleString()}
                 </p>
               )}
             </div>
@@ -1093,10 +1101,10 @@ function OrganizerOnboardingPage() {
             <div className="task-actions">
               <button
                 className="text-button"
-                onClick={() => remind.mutate({ assignmentId: item.id })}
+                onClick={() => recordReminder.mutate({ assignmentId: item.id })}
                 type="button"
               >
-                Remind
+                Record reminder
               </button>
               <button
                 className="text-button"
@@ -1127,7 +1135,18 @@ function OrganizerOnboardingPage() {
                 }}
                 type="button"
               >
-                Override
+                Organizer override
+              </button>
+              <button
+                className="text-button"
+                onClick={() => {
+                  if (window.confirm("Cancel this assignment?")) {
+                    cancelAssignment.mutate({ assignmentId: item.id });
+                  }
+                }}
+                type="button"
+              >
+                Cancel assignment
               </button>
             </div>
             {item.evidence.map((evidence) => (
@@ -1203,7 +1222,9 @@ function SpeakerTasksPage() {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const tasks = useQuery(
-    trpc.onboarding.mine.queryOptions(undefined, { refetchInterval: 15_000 }),
+    trpc.onboarding.mine.queryOptions(undefined, {
+      refetchInterval: ONBOARDING_REFETCH_INTERVAL_MS,
+    }),
   );
   const refresh = () =>
     queryClient.invalidateQueries(trpc.onboarding.mine.queryFilter());
@@ -1232,11 +1253,15 @@ function SpeakerTasksPage() {
     );
   }
 
-  async function submitAnswers(event: FormEvent, assignmentId: string) {
+  async function submitAnswers(
+    event: FormEvent,
+    assignmentId: string,
+    savedAnswers: Record<string, string> | undefined,
+  ) {
     event.preventDefault();
     await saveDraft.mutateAsync({
       assignmentId,
-      answers: answers[assignmentId] ?? {},
+      answers: answers[assignmentId] ?? savedAnswers ?? {},
     });
     await submitForm.mutateAsync({ assignmentId });
   }
@@ -1274,14 +1299,7 @@ function SpeakerTasksPage() {
       )}
       <section className="assignment-cards">
         {tasks.data.map((task) => {
-          const fields = Array.isArray(task.formFields)
-            ? (task.formFields as Array<{
-                key: string;
-                label: string;
-                type: string;
-                required: boolean;
-              }>)
-            : [];
+          const fields = task.formFields ?? [];
           return (
             <article className="task-card" key={task.id}>
               <div>
@@ -1331,7 +1349,11 @@ function SpeakerTasksPage() {
                 </Field>
               )}
               {task.completionMechanism === "form" && !task.completed && (
-                <form onSubmit={(event) => void submitAnswers(event, task.id)}>
+                <form
+                  onSubmit={(event) =>
+                    void submitAnswers(event, task.id, task.draft?.answers)
+                  }
+                >
                   {fields.map((field) => (
                     <Field
                       key={field.key}
@@ -1419,8 +1441,14 @@ function SpeakerTasksPage() {
 async function browserFileToBase64(file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += 32_768) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
+  for (
+    let offset = 0;
+    offset < bytes.length;
+    offset += FILE_ENCODING_CHUNK_BYTES
+  ) {
+    binary += String.fromCharCode(
+      ...bytes.subarray(offset, offset + FILE_ENCODING_CHUNK_BYTES),
+    );
   }
   return btoa(binary);
 }

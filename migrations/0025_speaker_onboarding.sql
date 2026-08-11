@@ -164,14 +164,6 @@ CREATE TABLE task_evidence_supersessions (
   CHECK (previous_evidence_id <> replacement_evidence_id)
 );
 
-CREATE TABLE task_attachment_supersessions (
-  previous_attachment_id TEXT PRIMARY KEY NOT NULL REFERENCES task_assignment_attachments(id) ON DELETE CASCADE,
-  replacement_attachment_id TEXT NOT NULL UNIQUE REFERENCES task_assignment_attachments(id) ON DELETE CASCADE,
-  superseded_by_user_id TEXT NOT NULL REFERENCES user(id),
-  created_at INTEGER NOT NULL,
-  CHECK (previous_attachment_id <> replacement_attachment_id)
-);
-
 CREATE TABLE task_reminders (
   id TEXT PRIMARY KEY NOT NULL,
   assignment_id TEXT NOT NULL REFERENCES task_assignments(id) ON DELETE CASCADE,
@@ -180,3 +172,151 @@ CREATE TABLE task_reminders (
 );
 
 CREATE INDEX task_reminders_assignment_idx ON task_reminders(assignment_id, created_at);
+
+CREATE TRIGGER task_evidence_prevent_duplicate_form_completion
+BEFORE INSERT ON task_evidence
+WHEN NEW.kind = 'form'
+  AND EXISTS (
+    SELECT 1
+    FROM task_evidence AS existing
+    LEFT JOIN task_evidence_rejections
+      ON task_evidence_rejections.evidence_id = existing.id
+    LEFT JOIN task_evidence_supersessions
+      ON task_evidence_supersessions.previous_evidence_id = existing.id
+    WHERE existing.assignment_id = NEW.assignment_id
+      AND existing.completion_revision = NEW.completion_revision
+      AND existing.kind = 'form'
+      AND task_evidence_rejections.evidence_id IS NULL
+      AND task_evidence_supersessions.previous_evidence_id IS NULL
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'current_form_evidence_exists');
+END;
+
+CREATE TRIGGER task_assignments_add_existing_profile_evidence
+AFTER INSERT ON task_assignments
+WHEN NEW.target_user_id IS NOT NULL
+  AND EXISTS (
+    SELECT 1
+    FROM task_definitions
+    INNER JOIN speaker_profiles ON speaker_profiles.user_id = NEW.target_user_id
+    WHERE task_definitions.id = NEW.task_definition_id
+      AND task_definitions.completion_mechanism = 'profile'
+      AND (
+        (task_definitions.profile_requirement = 'complete'
+          AND length(trim(speaker_profiles.display_name)) > 0
+          AND length(trim(speaker_profiles.bio)) > 0)
+        OR (task_definitions.profile_requirement = 'bio'
+          AND length(trim(speaker_profiles.bio)) > 0)
+        OR (task_definitions.profile_requirement = 'headshot'
+          AND length(trim(COALESCE(speaker_profiles.headshot_url, ''))) > 0)
+      )
+  )
+BEGIN
+  INSERT OR IGNORE INTO task_evidence (
+    id, assignment_id, completion_revision, kind, actor_user_id,
+    speaker_profile_id, created_at
+  )
+  SELECT
+    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
+      lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' ||
+      lower(hex(randomblob(6))),
+    NEW.id, NEW.completion_revision, 'profile', NEW.target_user_id,
+    speaker_profiles.id, unixepoch('subsec') * 1000
+  FROM speaker_profiles
+  WHERE speaker_profiles.user_id = NEW.target_user_id;
+END;
+
+CREATE TRIGGER task_assignments_add_reopened_profile_evidence
+AFTER UPDATE OF completion_revision ON task_assignments
+WHEN NEW.target_user_id IS NOT NULL
+  AND EXISTS (
+    SELECT 1
+    FROM task_definitions
+    INNER JOIN speaker_profiles ON speaker_profiles.user_id = NEW.target_user_id
+    WHERE task_definitions.id = NEW.task_definition_id
+      AND task_definitions.completion_mechanism = 'profile'
+      AND (
+        (task_definitions.profile_requirement = 'complete'
+          AND length(trim(speaker_profiles.display_name)) > 0
+          AND length(trim(speaker_profiles.bio)) > 0)
+        OR (task_definitions.profile_requirement = 'bio'
+          AND length(trim(speaker_profiles.bio)) > 0)
+        OR (task_definitions.profile_requirement = 'headshot'
+          AND length(trim(COALESCE(speaker_profiles.headshot_url, ''))) > 0)
+      )
+  )
+BEGIN
+  INSERT OR IGNORE INTO task_evidence (
+    id, assignment_id, completion_revision, kind, actor_user_id,
+    speaker_profile_id, created_at
+  )
+  SELECT
+    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
+      lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' ||
+      lower(hex(randomblob(6))),
+    NEW.id, NEW.completion_revision, 'profile', NEW.target_user_id,
+    speaker_profiles.id, unixepoch('subsec') * 1000
+  FROM speaker_profiles
+  WHERE speaker_profiles.user_id = NEW.target_user_id;
+END;
+
+CREATE TRIGGER speaker_profiles_add_task_evidence_after_insert
+AFTER INSERT ON speaker_profiles
+BEGIN
+  INSERT OR IGNORE INTO task_evidence (
+    id, assignment_id, completion_revision, kind, actor_user_id,
+    speaker_profile_id, created_at
+  )
+  SELECT
+    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
+      lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' ||
+      lower(hex(randomblob(6))),
+    task_assignments.id, task_assignments.completion_revision, 'profile',
+    NEW.user_id, NEW.id, unixepoch('subsec') * 1000
+  FROM task_assignments
+  INNER JOIN task_definitions
+    ON task_definitions.id = task_assignments.task_definition_id
+  WHERE task_assignments.target_user_id = NEW.user_id
+    AND task_assignments.canceled_at IS NULL
+    AND task_definitions.completion_mechanism = 'profile'
+    AND (
+      (task_definitions.profile_requirement = 'complete'
+        AND length(trim(NEW.display_name)) > 0
+        AND length(trim(NEW.bio)) > 0)
+      OR (task_definitions.profile_requirement = 'bio'
+        AND length(trim(NEW.bio)) > 0)
+      OR (task_definitions.profile_requirement = 'headshot'
+        AND length(trim(COALESCE(NEW.headshot_url, ''))) > 0)
+    );
+END;
+
+CREATE TRIGGER speaker_profiles_add_task_evidence_after_update
+AFTER UPDATE OF display_name, bio, headshot_url ON speaker_profiles
+BEGIN
+  INSERT OR IGNORE INTO task_evidence (
+    id, assignment_id, completion_revision, kind, actor_user_id,
+    speaker_profile_id, created_at
+  )
+  SELECT
+    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
+      lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' ||
+      lower(hex(randomblob(6))),
+    task_assignments.id, task_assignments.completion_revision, 'profile',
+    NEW.user_id, NEW.id, unixepoch('subsec') * 1000
+  FROM task_assignments
+  INNER JOIN task_definitions
+    ON task_definitions.id = task_assignments.task_definition_id
+  WHERE task_assignments.target_user_id = NEW.user_id
+    AND task_assignments.canceled_at IS NULL
+    AND task_definitions.completion_mechanism = 'profile'
+    AND (
+      (task_definitions.profile_requirement = 'complete'
+        AND length(trim(NEW.display_name)) > 0
+        AND length(trim(NEW.bio)) > 0)
+      OR (task_definitions.profile_requirement = 'bio'
+        AND length(trim(NEW.bio)) > 0)
+      OR (task_definitions.profile_requirement = 'headshot'
+        AND length(trim(COALESCE(NEW.headshot_url, ''))) > 0)
+    );
+END;
