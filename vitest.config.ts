@@ -13,6 +13,9 @@ export default defineConfig(async () => {
   const replacementGuardMigration = migrations.filter(({ name }) =>
     name.startsWith("0025_"),
   );
+  const submissionRevisionMigration = migrations.filter(({ name }) =>
+    name.startsWith("0026_"),
+  );
 
   return {
     plugins: [
@@ -21,6 +24,7 @@ export default defineConfig(async () => {
         miniflare: {
           bindings: {
             REPLACEMENT_GUARD_MIGRATION: replacementGuardMigration,
+            SUBMISSION_REVISION_MIGRATION: submissionRevisionMigration,
             TEST_MIGRATIONS: migrations,
           },
         },
