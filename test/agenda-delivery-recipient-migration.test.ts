@@ -6,6 +6,7 @@ const migrationEnvironment = env as unknown as {
   MIGRATION_DB: D1Database;
   AGENDA_DELIVERY_BASE_MIGRATIONS: Parameters<typeof applyD1Migrations>[1];
   AGENDA_DELIVERY_RECIPIENT_MIGRATION: Parameters<typeof applyD1Migrations>[1];
+  AGENDA_DELIVERY_CLAIM_MIGRATION: Parameters<typeof applyD1Migrations>[1];
 };
 
 test("preserves calendar work when recipient fan-out is added", async () => {
@@ -61,6 +62,10 @@ test("preserves calendar work when recipient fan-out is added", async () => {
     database,
     migrationEnvironment.AGENDA_DELIVERY_RECIPIENT_MIGRATION,
   );
+  await applyD1Migrations(
+    database,
+    migrationEnvironment.AGENDA_DELIVERY_CLAIM_MIGRATION,
+  );
 
   expect(
     await database
@@ -88,4 +93,10 @@ test("preserves calendar work when recipient fan-out is added", async () => {
       )
       .bind(now),
   ]);
+  await database
+    .prepare(
+      "INSERT INTO agenda_delivery_work (id, publication_id, agenda_item_id, recipient_key, destination, recipient_name, action, calendar_uid, calendar_sequence, created_at) VALUES ('recipient-cancel', 'publication', 'item', 'user-1', 'one@example.com', 'One', 'cancel', 'item@openboard', 0, ?)",
+    )
+    .bind(now)
+    .run();
 });

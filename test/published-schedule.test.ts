@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 
-import { renderPublishedScheduleCalendar } from "../src/server/published-schedule/ical";
+import {
+  renderAgendaCalendarMessage,
+  renderPublishedScheduleCalendar,
+} from "../src/server/published-schedule/ical";
 import type { PublishedSchedule } from "../src/shared/published-schedule";
 
 const schedule: PublishedSchedule = {
@@ -68,5 +71,38 @@ describe("published schedule", () => {
       expect(new TextEncoder().encode(line).byteLength).toBeLessThanOrEqual(75);
     }
     expect(calendar.endsWith("END:VCALENDAR\r\n")).toBe(true);
+  });
+
+  test("renders a safe calendar cancellation message", () => {
+    const message = renderAgendaCalendarMessage({
+      eventName: "OpenBoard Live",
+      timezone: "Europe/Berlin",
+      publishedAt: "2028-08-10T07:30:00.000Z",
+      destination: "speaker@example.com",
+      recipientName: 'A^"B\nC',
+      organizerEmail: "calendar@example.com",
+      action: "cancel",
+      uid: "agenda-1@openboard",
+      sequence: 4,
+      item: {
+        title: "APIs and calendars",
+        abstract: "Calendar details",
+        trackName: "Engineering",
+        roomName: "Main hall",
+        startsAt: "2028-08-10T08:00:00.000Z",
+        endsAt: "2028-08-10T09:00:00.000Z",
+        speakers: ["Example Speaker"],
+      },
+    });
+
+    expect(message.method).toBe("CANCEL");
+    expect(message.calendar).toContain("METHOD:CANCEL\r\n");
+    expect(message.calendar).toContain(
+      "ORGANIZER:mailto:calendar@example.com\r\n",
+    );
+    expect(message.calendar.replaceAll("\r\n ", "")).toContain(
+      'ATTENDEE;CN="A^^^\'B^nC":mailto:speaker@example.com\r\n',
+    );
+    expect(message.calendar).toContain("STATUS:CANCELLED\r\n");
   });
 });

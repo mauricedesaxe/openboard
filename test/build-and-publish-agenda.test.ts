@@ -300,9 +300,47 @@ describe("build and publish an agenda", () => {
     const failedDelivery = await processAgendaDeliveryWork(
       createDatabase(testEnvironment.DB),
       () => Promise.reject(new Error("Calendar transport unavailable")),
-      { now: new Date("2028-01-01T00:00:00.000Z"), limit: 100 },
+      {
+        organizerEmail: "calendar@example.com",
+        now: new Date("2028-01-01T00:00:00.000Z"),
+        limit: 100,
+      },
     );
     expect(failedDelivery).toEqual({ delivered: 0, failed: 3, superseded: 0 });
+
+    const initialRetries: Array<{
+      workId: string;
+      agendaItemId: string;
+      uid: string;
+      sequence: number;
+    }> = [];
+    const successfulRetry = await processAgendaDeliveryWork(
+      createDatabase(testEnvironment.DB),
+      (delivery) => {
+        initialRetries.push(delivery);
+        return Promise.resolve();
+      },
+      {
+        organizerEmail: "calendar@example.com",
+        now: new Date("2028-01-02T00:00:00.000Z"),
+        limit: 100,
+      },
+    );
+    expect(successfulRetry).toEqual({ delivered: 3, failed: 0, superseded: 0 });
+    const retriedFirstPlacement = initialRetries.find(
+      (delivery) => delivery.agendaItemId === firstPlacement.id,
+    );
+    expect(retriedFirstPlacement).toMatchObject({
+      uid: `${firstPlacement.id}@openboard`,
+      sequence: 0,
+    });
+    expect(
+      await testEnvironment.DB.prepare(
+        "SELECT attempt_count AS attemptCount FROM agenda_delivery_work WHERE id = ?",
+      )
+        .bind(retriedFirstPlacement?.workId)
+        .first(),
+    ).toEqual({ attemptCount: 2 });
 
     const jsonResponse = await workerFetch(`/api/v1/events/${slug}/schedule`);
     expect(jsonResponse.status).toBe(200);
@@ -388,6 +426,10 @@ describe("build and publish an agenda", () => {
         "Grand hall",
         mainRoom.id,
       ),
+      testEnvironment.DB.prepare("UPDATE user SET email = ? WHERE id = ?").bind(
+        "agenda-speaker-two-new@example.com",
+        otherSpeaker.userId,
+      ),
     ]);
     published = await getPublished(slug);
     expect(published.items[0]?.title).toBe("Opening systems");
@@ -465,27 +507,45 @@ describe("build and publish an agenda", () => {
       "X-OPENBOARD-REVISION:2\r\n",
     );
 
-    const canceledDeliveries: Array<{
-      action: string;
-      method: string;
-      sequence: number;
-    }> = [];
-    const cancellationDelivery = await processAgendaDeliveryWork(
-      createDatabase(testEnvironment.DB),
-      (delivery) => {
-        canceledDeliveries.push(delivery);
-        return Promise.resolve();
+    const changedRecipientHistory = await testEnvironment.DB.prepare(
+      "SELECT action, destination, calendar_sequence AS sequence FROM agenda_delivery_work WHERE agenda_item_id = ? ORDER BY calendar_sequence, action, destination",
+    )
+      .bind(thirdPlacement.id)
+      .all<{ action: string; destination: string; sequence: number }>();
+    expect(changedRecipientHistory.results).toEqual([
+      {
+        action: "publish",
+        destination: "agenda-speaker-two@example.com",
+        sequence: 0,
       },
-      { now: new Date("2029-01-01T00:00:00.000Z"), limit: 100 },
-    );
-    expect(cancellationDelivery.superseded).toBeGreaterThan(0);
-    expect(canceledDeliveries).toContainEqual(
-      expect.objectContaining({
+      {
         action: "cancel",
-        method: "CANCEL",
+        destination: "agenda-speaker-two@example.com",
         sequence: 1,
-      }),
-    );
+      },
+      {
+        action: "update",
+        destination: "agenda-speaker-two-new@example.com",
+        sequence: 1,
+      },
+    ]);
+    const changedRecipientWork = await testEnvironment.DB.prepare(
+      "SELECT action, destination, calendar_sequence AS sequence FROM agenda_delivery_work WHERE agenda_item_id = ? AND calendar_sequence = 1 ORDER BY action, destination",
+    )
+      .bind(thirdPlacement.id)
+      .all<{ action: string; destination: string; sequence: number }>();
+    expect(changedRecipientWork.results).toEqual([
+      {
+        action: "cancel",
+        destination: "agenda-speaker-two@example.com",
+        sequence: 1,
+      },
+      {
+        action: "update",
+        destination: "agenda-speaker-two-new@example.com",
+        sequence: 1,
+      },
+    ]);
 
     await expectOk(
       "agendas.restore",
@@ -541,9 +601,13 @@ describe("build and publish an agenda", () => {
         deliveredSequences.push(delivery.sequence);
         return Promise.resolve();
       },
-      { now: new Date("2030-01-01T00:00:00.000Z"), limit: 100 },
+      {
+        organizerEmail: "calendar@example.com",
+        now: new Date("2030-01-01T00:00:00.000Z"),
+        limit: 100,
+      },
     );
-    expect(retriedDelivery.superseded).toBe(0);
+    expect(retriedDelivery.superseded).toBeGreaterThan(0);
     expect(retriedDelivery.delivered).toBeGreaterThan(0);
     expect(deliveredSequences).toContain(2);
     const firstPlacementAttempts = await testEnvironment.DB.prepare(
@@ -553,7 +617,7 @@ describe("build and publish an agenda", () => {
       .all<{ result: string }>();
     expect(
       firstPlacementAttempts.results.map((attempt) => attempt.result),
-    ).toEqual(["failed", "superseded", "delivered", "delivered"]);
+    ).toEqual(["failed", "delivered", "superseded", "delivered"]);
 
     const unchangedPublication = await callTrpc(
       "agendas.publish",

@@ -28,6 +28,9 @@ export default defineConfig(async () => {
   const agendaDeliveryRecipientMigration = migrations.filter(
     ({ name }) => name === "0030_agenda_delivery_recipients.sql",
   );
+  const agendaDeliveryClaimMigration = migrations.filter(
+    ({ name }) => name === "0031_agenda_delivery_claims.sql",
+  );
 
   return {
     plugins: [
@@ -39,6 +42,7 @@ export default defineConfig(async () => {
             AGENDA_DELIVERY_BASE_MIGRATIONS: agendaDeliveryBaseMigrations,
             AGENDA_DELIVERY_RECIPIENT_MIGRATION:
               agendaDeliveryRecipientMigration,
+            AGENDA_DELIVERY_CLAIM_MIGRATION: agendaDeliveryClaimMigration,
             AGENDA_FINALIZATION_MIGRATION: agendaFinalizationMigration,
             REPLACEMENT_GUARD_MIGRATION: replacementGuardMigration,
             SUBMISSION_REVISION_MIGRATION: submissionRevisionMigration,

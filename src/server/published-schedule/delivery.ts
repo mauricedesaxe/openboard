@@ -17,6 +17,13 @@ const deliveryClaimTimeoutMs = 5 * 60_000;
 const defaultDeliveryBatchSize = 25;
 const deliveryRetryBaseDelayMs = 30_000;
 const deliveryRetryMaximumDelayMs = 60 * 60_000;
+const deliveryTransportTimeoutMs = 60_000;
+
+type AgendaDeliveryOptions = {
+  organizerEmail: string;
+  now?: Date;
+  limit?: number;
+};
 
 export type AgendaCalendarDelivery = {
   workId: string;
@@ -37,7 +44,7 @@ export type AgendaCalendarDelivery = {
 export async function processAgendaDeliveryWork(
   database: Database,
   deliver: (delivery: AgendaCalendarDelivery) => Promise<void>,
-  options: { now?: Date; limit?: number } = {},
+  options: AgendaDeliveryOptions,
 ): Promise<{ delivered: number; failed: number; superseded: number }> {
   const now = options.now ?? new Date();
   const staleClaim = new Date(now.getTime() - deliveryClaimTimeoutMs);
@@ -62,9 +69,15 @@ export async function processAgendaDeliveryWork(
 
   const result = { delivered: 0, failed: 0, superseded: 0 };
   for (const candidate of work) {
+    const claimToken = crypto.randomUUID();
+    const attemptNumber = candidate.attemptCount + 1;
     const claimed = await database
       .update(agendaDeliveryWork)
-      .set({ claimedAt: now })
+      .set({
+        claimedAt: now,
+        claimToken,
+        attemptCount: attemptNumber,
+      })
       .where(
         and(
           eq(agendaDeliveryWork.id, candidate.id),
@@ -76,7 +89,6 @@ export async function processAgendaDeliveryWork(
       );
     if (claimed.meta.changes === 0) continue;
 
-    const attemptNumber = candidate.attemptCount + 1;
     const startedAt = now;
     const current = await database
       .select({
@@ -93,9 +105,10 @@ export async function processAgendaDeliveryWork(
       !candidate.destination ||
       !candidate.recipientName
     ) {
-      await finishAttempt(
+      const finished = await finishAttempt(
         database,
         candidate.id,
+        claimToken,
         attemptNumber,
         startedAt,
         currentTime(options),
@@ -103,19 +116,24 @@ export async function processAgendaDeliveryWork(
           status: "superseded",
         },
       );
-      result.superseded += 1;
+      if (finished) result.superseded += 1;
       continue;
     }
 
     try {
-      const delivery = await createAgendaCalendarDelivery(database, candidate);
+      const delivery = await createAgendaCalendarDelivery(
+        database,
+        candidate,
+        options.organizerEmail,
+      );
       if (!delivery)
         throw new Error("Calendar publication snapshot is missing");
-      await deliver(delivery);
+      await deliverBeforeTimeout(deliver(delivery));
       const finishedAt = currentTime(options);
-      await finishAttempt(
+      const finished = await finishAttempt(
         database,
         candidate.id,
+        claimToken,
         attemptNumber,
         startedAt,
         finishedAt,
@@ -123,14 +141,15 @@ export async function processAgendaDeliveryWork(
           status: "completed",
         },
       );
-      result.delivered += 1;
+      if (finished) result.delivered += 1;
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : "Unknown delivery failure";
       const finishedAt = currentTime(options);
-      await finishAttempt(
+      const finished = await finishAttempt(
         database,
         candidate.id,
+        claimToken,
         attemptNumber,
         startedAt,
         finishedAt,
@@ -140,7 +159,7 @@ export async function processAgendaDeliveryWork(
           nextAttemptAt: nextDeliveryAttemptAt(finishedAt, attemptNumber),
         },
       );
-      result.failed += 1;
+      if (finished) result.failed += 1;
     }
   }
   return result;
@@ -149,6 +168,7 @@ export async function processAgendaDeliveryWork(
 async function createAgendaCalendarDelivery(
   database: Database,
   candidate: typeof agendaDeliveryWork.$inferSelect,
+  organizerEmail: string,
 ): Promise<AgendaCalendarDelivery | undefined> {
   if (
     !candidate.recipientKey ||
@@ -165,7 +185,6 @@ async function createAgendaCalendarDelivery(
       publishedAgendaItemId: publishedAgendaItems.id,
       title: publishedAgendaItems.title,
       abstract: publishedAgendaItems.abstract,
-      format: publishedAgendaItems.format,
       trackName: publishedAgendaItems.trackName,
       roomName: publishedAgendaItems.roomName,
       startsAt: publishedAgendaItems.startsAt,
@@ -203,13 +222,13 @@ async function createAgendaCalendarDelivery(
     publishedAt: snapshot.publishedAt.toISOString(),
     destination: candidate.destination,
     recipientName: candidate.recipientName,
+    organizerEmail,
     action: candidate.action,
     uid: candidate.calendarUid,
     sequence: candidate.calendarSequence,
     item: {
       title: snapshot.title,
       abstract: snapshot.abstract,
-      format: snapshot.format,
       trackName: snapshot.trackName,
       roomName: snapshot.roomName,
       startsAt: snapshot.startsAt,
@@ -231,6 +250,23 @@ async function createAgendaCalendarDelivery(
   };
 }
 
+async function deliverBeforeTimeout(delivery: Promise<void>): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      delivery,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("Calendar transport timed out")),
+          deliveryTransportTimeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 function currentTime(options: { now?: Date }): Date {
   return options.now ?? new Date();
 }
@@ -246,42 +282,48 @@ function nextDeliveryAttemptAt(finishedAt: Date, attemptNumber: number): Date {
 async function finishAttempt(
   database: Database,
   workId: string,
+  claimToken: string,
   attemptNumber: number,
   startedAt: Date,
   finishedAt: Date,
   outcome:
     | { status: "completed" | "superseded" }
     | { status: "failed"; error: string; nextAttemptAt: Date },
-): Promise<void> {
+): Promise<boolean> {
   const result =
     outcome.status === "completed"
       ? "delivered"
       : outcome.status === "superseded"
         ? "superseded"
         : "failed";
-  await database.batch([
-    database.insert(agendaDeliveryAttempts).values({
-      id: crypto.randomUUID(),
-      workId,
-      attemptNumber,
-      startedAt,
-      finishedAt,
-      latencyMs: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
-      result,
-      error: outcome.status === "failed" ? outcome.error : null,
-    }),
-    database
-      .update(agendaDeliveryWork)
-      .set({
-        status: outcome.status,
-        attemptCount: attemptNumber,
-        claimedAt: null,
-        completedAt: outcome.status === "completed" ? finishedAt : null,
-        supersededAt: outcome.status === "superseded" ? finishedAt : null,
-        nextAttemptAt:
-          outcome.status === "failed" ? outcome.nextAttemptAt : null,
-        lastError: outcome.status === "failed" ? outcome.error : null,
-      })
-      .where(eq(agendaDeliveryWork.id, workId)),
-  ]);
+  const completed = await database
+    .update(agendaDeliveryWork)
+    .set({
+      status: outcome.status,
+      claimedAt: null,
+      claimToken: null,
+      completedAt: outcome.status === "completed" ? finishedAt : null,
+      supersededAt: outcome.status === "superseded" ? finishedAt : null,
+      nextAttemptAt: outcome.status === "failed" ? outcome.nextAttemptAt : null,
+      lastError: outcome.status === "failed" ? outcome.error : null,
+    })
+    .where(
+      and(
+        eq(agendaDeliveryWork.id, workId),
+        eq(agendaDeliveryWork.claimToken, claimToken),
+        eq(agendaDeliveryWork.attemptCount, attemptNumber),
+      ),
+    );
+  if (completed.meta.changes === 0) return false;
+  await database.insert(agendaDeliveryAttempts).values({
+    id: crypto.randomUUID(),
+    workId,
+    attemptNumber,
+    startedAt,
+    finishedAt,
+    latencyMs: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
+    result,
+    error: outcome.status === "failed" ? outcome.error : null,
+  });
+  return true;
 }
