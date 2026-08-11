@@ -501,6 +501,13 @@ describe("complete speaker onboarding tasks", () => {
       completionRevision: 2,
     });
     expect(reopenedSlides.lastReminderAt).toBeTypeOf("string");
+    expect(
+      await testEnvironment.DB.prepare(
+        "SELECT COUNT(*) AS count FROM communications WHERE purpose = 'task_reminder' AND context_json LIKE ?",
+      )
+        .bind(`%${slidesAssignment.id}%`)
+        .first(),
+    ).toEqual({ count: 2 });
     expect(readiness(board, practical.id).ready).toBe(false);
 
     await uploadFile(

@@ -1,5 +1,6 @@
 import type { EventRole } from "../../shared/event-team";
 import type { AppConfig } from "../config";
+import { sendConfiguredEmail } from "../email/transport";
 
 const capturedInvitationSecrets = new Map<string, string>();
 
@@ -19,8 +20,8 @@ export async function sendEventInvitation(
 
   const invitationUrl = `${config.appUrl}/invitations/${invitation.secret}`;
   const article = invitation.role === "organizer" ? "an" : "a";
-  await config.email.sender.send({
-    from: { email: config.email.from, name: "OpenBoard" },
+  await sendConfiguredEmail(config, {
+    idempotencyKey: `event-invitation:${invitation.secret}`,
     to: invitation.email,
     subject: `Join ${invitation.eventName} on OpenBoard`,
     text: `You have been invited as ${article} ${invitation.role} for ${invitation.eventName}. Open ${invitationUrl} to accept or decline.`,

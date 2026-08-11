@@ -539,11 +539,97 @@ export const communications = sqliteTable(
       onDelete: "cascade",
     }),
     recipientUserId: text("recipient_user_id").references(() => user.id),
+    eventId: text("event_id").references(() => events.id),
+    recipientKey: text("recipient_key"),
+    recipientInvitationId: text("recipient_invitation_id"),
     destination: text("destination").notNull(),
     purpose: text("purpose").notNull(),
+    subject: text("subject"),
+    body: text("body"),
+    contextJson: text("context_json"),
+    templateRevision: integer("template_revision"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [index("communications_submission_id_idx").on(table.submissionId)],
+);
+
+export const communicationTemplates = sqliteTable(
+  "communication_templates",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    purpose: text("purpose", {
+      enum: [
+        "submission_confirmation",
+        "decision_acceptance",
+        "decision_decline",
+        "task_reminder",
+        "agenda_invitation",
+        "agenda_update",
+        "agenda_cancellation",
+      ],
+    }).notNull(),
+    subjectTemplate: text("subject_template").notNull(),
+    bodyTemplate: text("body_template").notNull(),
+    revision: integer("revision").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("communication_templates_event_purpose_idx").on(
+      table.eventId,
+      table.purpose,
+    ),
+  ],
+);
+
+export const communicationDeliveryWork = sqliteTable(
+  "communication_delivery_work",
+  {
+    id: text("id").primaryKey(),
+    communicationId: text("communication_id")
+      .notNull()
+      .unique()
+      .references(() => communications.id, { onDelete: "cascade" }),
+    status: text("status", {
+      enum: ["pending", "failed", "completed", "terminal"],
+    })
+      .notNull()
+      .default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }),
+    claimedAt: integer("claimed_at", { mode: "timestamp_ms" }),
+    claimToken: text("claim_token"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+);
+
+export const communicationDeliveryAttempts = sqliteTable(
+  "communication_delivery_attempts",
+  {
+    id: text("id").primaryKey(),
+    workId: text("work_id")
+      .notNull()
+      .references(() => communicationDeliveryWork.id, { onDelete: "cascade" }),
+    attemptNumber: integer("attempt_number").notNull(),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
+    finishedAt: integer("finished_at", { mode: "timestamp_ms" }).notNull(),
+    latencyMs: integer("latency_ms").notNull(),
+    result: text("result", {
+      enum: ["delivered", "retryable_failure", "terminal_failure"],
+    }).notNull(),
+    providerId: text("provider_id"),
+    error: text("error"),
+  },
+  (table) => [
+    uniqueIndex("communication_delivery_attempts_work_number_idx").on(
+      table.workId,
+      table.attemptNumber,
+    ),
+  ],
 );
 
 export const taskDefinitions = sqliteTable(
@@ -954,6 +1040,11 @@ export const agendaDeliveryWork = sqliteTable(
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     supersededAt: integer("superseded_at", { mode: "timestamp_ms" }),
     lastError: text("last_error"),
+    subject: text("subject"),
+    body: text("body"),
+    retryEligible: integer("retry_eligible", { mode: "boolean" })
+      .notNull()
+      .default(true),
   },
   (table) => [
     uniqueIndex("agenda_delivery_work_publication_item_recipient_idx").on(
@@ -998,6 +1089,9 @@ export const schema = {
   agendaItems,
   agendaPublications,
   communications,
+  communicationDeliveryAttempts,
+  communicationDeliveryWork,
+  communicationTemplates,
   calendarSyncStates,
   decisionPublicationItems,
   decisionPublications,

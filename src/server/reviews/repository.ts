@@ -16,10 +16,15 @@ import type {
   ReviewerAssignmentId,
 } from "../../shared/reviews";
 import type { SubmissionId } from "../../shared/submissions";
+import {
+  communicationInsertStatements,
+  prepareCommunication,
+  type CommunicationRecipient,
+} from "../communications/repository";
 import type { Database } from "../database/client";
 import {
-  communications,
   cfps,
+  communications,
   decisionPublicationItems,
   decisionPublications,
   decisions,
@@ -31,6 +36,8 @@ import {
   reviewRounds,
   reviews,
   submissions,
+  submissionSpeakerInvitations,
+  submissionSpeakers,
   tracks,
   user,
 } from "../database/schema";
@@ -629,10 +636,14 @@ export async function publishDecisions(
       submissionId: submissions.id,
       ownerUserId: submissions.ownerUserId,
       ownerEmail: user.email,
+      ownerName: user.name,
+      eventName: events.name,
+      submissionTitle: submissions.title,
     })
     .from(decisions)
     .innerJoin(submissions, eq(submissions.id, decisions.submissionId))
     .innerJoin(user, eq(user.id, submissions.ownerUserId))
+    .innerJoin(events, eq(events.id, submissions.eventId))
     .where(
       and(
         inArray(submissions.id, selectedIds),
@@ -661,6 +672,29 @@ export async function publishDecisions(
           : ("declined" as const),
     };
   });
+  let communicationRecords: Awaited<
+    ReturnType<typeof prepareDecisionCommunicationRecords>
+  >;
+  try {
+    communicationRecords = await prepareDecisionCommunicationRecords(
+      database,
+      event.id,
+      selections.map((selection) => ({
+        publicationItemId: selection.publicationItemId,
+        actorUserId,
+        outcome: selection.outcome,
+        submissionId: selection.submissionId,
+        ownerUserId: selection.ownerUserId,
+        ownerEmail: selection.ownerEmail,
+        ownerName: selection.ownerName,
+        eventName: selection.eventName,
+        submissionTitle: selection.submissionTitle,
+      })),
+      now,
+    );
+  } catch {
+    return { ok: false, error: "persistence_failed" };
+  }
   try {
     await database.batch([
       database.insert(decisionPublications).values({
@@ -707,6 +741,21 @@ export async function publishDecisions(
             ]
           : [],
       ),
+      ...communicationRecords.flatMap((record) =>
+        record.communications.flatMap((communication) =>
+          communicationInsertStatements(database, communication),
+        ),
+      ),
+      ...communicationRecords.map((record) =>
+        database.insert(reviewAuditEvents).values({
+          id: crypto.randomUUID(),
+          eventId: event.id,
+          actorUserId: record.source.actorUserId,
+          publicationItemId: record.source.publicationItemId,
+          action: `decision_${record.source.outcome}`,
+          createdAt: now,
+        }),
+      ),
     ]);
   } catch (error: unknown) {
     if (
@@ -716,23 +765,6 @@ export async function publishDecisions(
       return { ok: false, error: "stale_queue" };
     }
     return { ok: false, error: "persistence_failed" };
-  }
-
-  try {
-    await recordDecisionCommunicationsAndAuditEvents(
-      database,
-      event.id,
-      publicationId,
-    );
-  } catch (error: unknown) {
-    console.error(
-      JSON.stringify({
-        event: "decision_publication_followup_failed",
-        publicationId,
-        error:
-          error instanceof Error ? error.message : "Unknown database failure",
-      }),
-    );
   }
   return { ok: true, value: { published: selections.length } };
 }
@@ -755,6 +787,31 @@ export async function retryDecisionCommunicationsAndAuditEvents(
   }
 }
 
+export async function repairDecisionCommunicationRecords(
+  database: Database,
+): Promise<number> {
+  const eventRows = await database
+    .selectDistinct({ eventId: decisionPublications.eventId })
+    .from(decisionPublications)
+    .innerJoin(
+      decisionPublicationItems,
+      eq(decisionPublicationItems.publicationId, decisionPublications.id),
+    )
+    .leftJoin(
+      reviewAuditEvents,
+      eq(reviewAuditEvents.publicationItemId, decisionPublicationItems.id),
+    )
+    .where(isNull(reviewAuditEvents.id));
+  let recorded = 0;
+  for (const row of eventRows) {
+    recorded += await recordDecisionCommunicationsAndAuditEvents(
+      database,
+      row.eventId,
+    );
+  }
+  return recorded;
+}
+
 async function recordDecisionCommunicationsAndAuditEvents(
   database: Database,
   eventId: string,
@@ -768,6 +825,9 @@ async function recordDecisionCommunicationsAndAuditEvents(
       submissionId: submissions.id,
       ownerUserId: submissions.ownerUserId,
       ownerEmail: user.email,
+      ownerName: user.name,
+      eventName: events.name,
+      submissionTitle: submissions.title,
     })
     .from(decisionPublicationItems)
     .innerJoin(
@@ -777,6 +837,7 @@ async function recordDecisionCommunicationsAndAuditEvents(
     .innerJoin(decisions, eq(decisions.id, decisionPublicationItems.decisionId))
     .innerJoin(submissions, eq(submissions.id, decisions.submissionId))
     .innerJoin(user, eq(user.id, submissions.ownerUserId))
+    .innerJoin(events, eq(events.id, submissions.eventId))
     .where(
       and(
         eq(decisionPublications.eventId, eventId),
@@ -784,36 +845,165 @@ async function recordDecisionCommunicationsAndAuditEvents(
       ),
     );
   const now = new Date();
-  for (const row of rows) {
+  const records = await prepareDecisionCommunicationRecords(
+    database,
+    eventId,
+    rows,
+    now,
+  );
+  for (const record of records) {
     await database.batch([
-      database
-        .insert(communications)
-        .values({
-          id: crypto.randomUUID(),
-          submissionId: row.submissionId,
-          recipientUserId: row.ownerUserId,
-          destination: row.ownerEmail,
-          purpose:
-            row.outcome === "accepted"
-              ? "decision_acceptance"
-              : "decision_decline",
-          createdAt: now,
-        })
-        .onConflictDoNothing(),
       database
         .insert(reviewAuditEvents)
         .values({
           id: crypto.randomUUID(),
           eventId,
-          actorUserId: row.actorUserId,
-          publicationItemId: row.publicationItemId,
-          action: `decision_${row.outcome}`,
+          actorUserId: record.source.actorUserId,
+          publicationItemId: record.source.publicationItemId,
+          action: `decision_${record.source.outcome}`,
           createdAt: now,
         })
         .onConflictDoNothing(),
+      ...record.communications.flatMap((communication) =>
+        communicationInsertStatements(database, communication),
+      ),
     ]);
   }
   return rows.length;
+}
+
+type DecisionCommunicationSource = {
+  publicationItemId: string;
+  actorUserId: string;
+  outcome: "accepted" | "declined";
+  submissionId: string;
+  ownerUserId: string;
+  ownerEmail: string;
+  ownerName: string;
+  eventName: string;
+  submissionTitle: string;
+};
+
+async function prepareDecisionCommunicationRecords(
+  database: Database,
+  eventId: string,
+  rows: DecisionCommunicationSource[],
+  now: Date,
+) {
+  return Promise.all(
+    rows.map(async (row) => {
+      const speakerRows = await database
+        .select({
+          id: submissionSpeakers.id,
+          invitationId: submissionSpeakerInvitations.id,
+          claimedUserId: submissionSpeakers.claimedUserId,
+          invitedEmail: submissionSpeakers.invitedEmail,
+          invitedName: submissionSpeakers.invitedName,
+        })
+        .from(submissionSpeakers)
+        .leftJoin(
+          submissionSpeakerInvitations,
+          and(
+            eq(
+              submissionSpeakerInvitations.submissionSpeakerId,
+              submissionSpeakers.id,
+            ),
+            eq(submissionSpeakerInvitations.status, "pending"),
+          ),
+        )
+        .where(
+          and(
+            eq(submissionSpeakers.submissionId, row.submissionId),
+            isNull(submissionSpeakers.removedAt),
+          ),
+        );
+      const claimedUserIds = speakerRows.flatMap((speaker) =>
+        speaker.claimedUserId ? [speaker.claimedUserId] : [],
+      );
+      const claimedUsers =
+        claimedUserIds.length === 0
+          ? []
+          : await database
+              .select({ id: user.id, email: user.email, name: user.name })
+              .from(user)
+              .where(inArray(user.id, claimedUserIds));
+      const recipients = new Map<string, CommunicationRecipient>([
+        [
+          `user:${row.ownerUserId}`,
+          {
+            key: `user:${row.ownerUserId}`,
+            userId: row.ownerUserId,
+            invitationId: null,
+            destination: row.ownerEmail,
+            name: row.ownerName,
+          },
+        ] as const,
+      ]);
+      for (const speaker of speakerRows) {
+        const claimed = claimedUsers.find(
+          (candidate) => candidate.id === speaker.claimedUserId,
+        );
+        const recipient = claimed
+          ? {
+              key: `user:${claimed.id}`,
+              userId: claimed.id,
+              invitationId: null,
+              destination: claimed.email,
+              name: claimed.name,
+            }
+          : speaker.invitationId
+            ? {
+                key: `invitation:${speaker.invitationId}`,
+                userId: null,
+                invitationId: speaker.invitationId,
+                destination: speaker.invitedEmail,
+                name: speaker.invitedName,
+              }
+            : {
+                key: `speaker:${speaker.id}`,
+                userId: null,
+                invitationId: null,
+                destination: speaker.invitedEmail,
+                name: speaker.invitedName,
+              };
+        recipients.set(recipient.key, recipient);
+      }
+      const purpose =
+        row.outcome === "accepted" ? "decision_acceptance" : "decision_decline";
+      const existing = await database
+        .select({ recipientKey: communications.recipientKey })
+        .from(communications)
+        .where(
+          and(
+            eq(communications.submissionId, row.submissionId),
+            eq(communications.purpose, purpose),
+          ),
+        );
+      const existingKeys = new Set(
+        existing.map((message) => message.recipientKey),
+      );
+      const prepared = await Promise.all(
+        [...recipients.values()]
+          .filter((recipient) => !existingKeys.has(recipient.key))
+          .map((recipient) =>
+            prepareCommunication(database, {
+              eventId,
+              submissionId: row.submissionId,
+              purpose,
+              recipient,
+              variables: {
+                eventName: row.eventName,
+                submissionTitle: row.submissionTitle,
+                recipientName: recipient.name,
+              },
+              context: { publicationItemId: row.publicationItemId },
+              now,
+            }),
+          ),
+      );
+      return { source: row, communications: prepared };
+    }),
+  );
 }
 
 async function findOpenOrLatestReviewRound(

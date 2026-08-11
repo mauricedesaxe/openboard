@@ -10,6 +10,9 @@ export function AgendaPage() {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const agenda = useQuery(trpc.agendas.working.queryOptions({ slug }));
+  const communicationFailures = useQuery(
+    trpc.communications.failures.queryOptions({ slug }),
+  );
   const refresh = () =>
     queryClient.invalidateQueries(trpc.agendas.working.queryFilter({ slug }));
   const placeProgram = useMutation(
@@ -127,6 +130,19 @@ export function AgendaPage() {
       {mutationError && (
         <p className="form-error agenda-error" role="alert">
           {mutationError.message}
+        </p>
+      )}
+      {communicationFailures.data?.some((failure) =>
+        failure.purpose.startsWith("agenda_"),
+      ) && (
+        <p className="form-error" role="alert">
+          A calendar message failed. Open communications to retry delivery.
+        </p>
+      )}
+      {communicationFailures.isError && (
+        <p className="form-error" role="alert">
+          Calendar delivery status is unavailable. Try again before you leave
+          this agenda.
         </p>
       )}
       {publish.isSuccess && (

@@ -24,6 +24,12 @@ const rawConfigSchema = z.discriminatedUnion("EMAIL_TRANSPORT", [
     EMAIL_FROM: z.literal("auth@alexlazar.dev"),
     EMAIL_TRANSPORT: z.literal("cloudflare"),
   }),
+  z.object({
+    ...commonConfigShape,
+    EMAIL_FROM: z.literal("auth@alexlazar.dev"),
+    EMAIL_TRANSPORT: z.literal("resend"),
+    RESEND_API_KEY: z.string().min(1),
+  }),
 ]);
 
 const configSchema = rawConfigSchema.superRefine((config, context) => {
@@ -56,7 +62,8 @@ export type AppConfig = {
   authSecret: string;
   email:
     | { type: "capture" }
-    | { type: "cloudflare"; from: string; sender: SendEmail };
+    | { type: "cloudflare"; from: string; sender: SendEmail }
+    | { type: "resend"; from: string; apiKey: string };
 };
 
 export type ConfigResult =
@@ -83,11 +90,17 @@ export function parseConfig(
       email:
         config.EMAIL_TRANSPORT === "capture"
           ? { type: "capture" }
-          : {
-              type: "cloudflare",
-              from: config.EMAIL_FROM,
-              sender: config.EMAIL,
-            },
+          : config.EMAIL_TRANSPORT === "cloudflare"
+            ? {
+                type: "cloudflare",
+                from: config.EMAIL_FROM,
+                sender: config.EMAIL,
+              }
+            : {
+                type: "resend",
+                from: config.EMAIL_FROM,
+                apiKey: config.RESEND_API_KEY,
+              },
     },
   };
 }

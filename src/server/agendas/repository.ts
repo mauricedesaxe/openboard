@@ -16,13 +16,16 @@ import type {
   PlaceServiceBlockInput,
   PublishAgendaInput,
 } from "../../shared/agendas";
+import type { CommunicationPurpose } from "../../shared/communications";
 import { resolveEventLocalDateTime } from "../../shared/date-time";
 import type { UserId } from "../../shared/events";
+import { renderTemplate } from "../communications/repository";
 import type { Database } from "../database/client";
 import {
   agendaDeliveryWork,
   agendaItems,
   agendaPublications,
+  communicationTemplates,
   calendarSyncStates,
   decisions,
   events,
@@ -354,6 +357,19 @@ export async function publishAgenda(
   const snapshots = working.items.map((item) =>
     snapshotItem(item, validation.times.get(item.id)),
   );
+  const agendaTemplates = await database
+    .select()
+    .from(communicationTemplates)
+    .where(
+      and(
+        eq(communicationTemplates.eventId, event.id),
+        inArray(communicationTemplates.purpose, [
+          "agenda_invitation",
+          "agenda_update",
+          "agenda_cancellation",
+        ]),
+      ),
+    );
   const calendarChanges = snapshots.flatMap((snapshot) => {
     if (snapshot.kind !== "program") return [];
     const recipients = snapshotRecipients(snapshot);
@@ -498,19 +514,34 @@ export async function publishAgenda(
       change,
       previousStates,
       previousRecipientRows,
-    ).map((recipient) => ({
-      id: crypto.randomUUID(),
-      publicationId,
-      agendaItemId: change.snapshot.agendaItemId,
-      recipientKey: recipient.key,
-      recipientUserId: recipient.userId,
-      destination: recipient.destination,
-      recipientName: recipient.name,
-      action: recipient.action,
-      calendarUid: change.uid,
-      calendarSequence: change.sequence,
-      createdAt: now,
-    })),
+    ).map((recipient) => {
+      const purpose = agendaCommunicationPurpose(recipient.action);
+      const template = agendaTemplates.find(
+        (candidate) => candidate.purpose === purpose,
+      );
+      if (!template)
+        throw new Error("Agenda communication template is missing");
+      const variables = {
+        eventName: event.name,
+        sessionTitle: change.snapshot.title,
+        recipientName: recipient.name,
+      };
+      return {
+        id: crypto.randomUUID(),
+        publicationId,
+        agendaItemId: change.snapshot.agendaItemId,
+        recipientKey: recipient.key,
+        recipientUserId: recipient.userId,
+        destination: recipient.destination,
+        recipientName: recipient.name,
+        action: recipient.action,
+        calendarUid: change.uid,
+        calendarSequence: change.sequence,
+        subject: renderTemplate(template.subjectTemplate, variables),
+        body: renderTemplate(template.bodyTemplate, variables),
+        createdAt: now,
+      };
+    }),
   );
   const deliveryStatements = chunks(
     deliveryValues,
@@ -925,7 +956,7 @@ function snapshotRecipients(
           speaker.claimedEmail ?? speaker.invitedEmail
         ).toLowerCase();
         return [
-          destination,
+          key,
           {
             key,
             userId: speaker.claimedUserId,
@@ -1014,6 +1045,14 @@ function deduplicateCalendarRecipients(
       ]),
     ).values(),
   ];
+}
+
+function agendaCommunicationPurpose(
+  action: "publish" | "update" | "cancel" | "restore",
+): CommunicationPurpose {
+  if (action === "publish") return "agenda_invitation";
+  if (action === "cancel") return "agenda_cancellation";
+  return "agenda_update";
 }
 
 function agendaItemPersistenceError(error: unknown): AgendaWriteError {

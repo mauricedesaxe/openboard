@@ -31,6 +31,11 @@ export default defineConfig(async () => {
   const agendaDeliveryClaimMigration = migrations.filter(
     ({ name }) => name === "0031_agenda_delivery_claims.sql",
   );
+  const templatedCommunicationsMigration = migrations.filter(
+    ({ name }) =>
+      name === "0033_templated_communications.sql" ||
+      name === "0034_harden_communication_delivery.sql",
+  );
 
   return {
     plugins: [
@@ -46,6 +51,8 @@ export default defineConfig(async () => {
             AGENDA_FINALIZATION_MIGRATION: agendaFinalizationMigration,
             REPLACEMENT_GUARD_MIGRATION: replacementGuardMigration,
             SUBMISSION_REVISION_MIGRATION: submissionRevisionMigration,
+            TEMPLATED_COMMUNICATIONS_MIGRATION:
+              templatedCommunicationsMigration,
             TEST_MIGRATIONS: migrations,
           },
         },

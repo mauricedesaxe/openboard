@@ -7,8 +7,14 @@ import type {
   EventInput,
   UserId,
 } from "../../shared/events";
+import { defaultCommunicationTemplateValues } from "../communications/repository";
 import type { Database } from "../database/client";
-import { agendas, eventRoles, events } from "../database/schema";
+import {
+  agendas,
+  communicationTemplates,
+  eventRoles,
+  events,
+} from "../database/schema";
 
 export type EventWriteResult =
   | { ok: true; value: Event }
@@ -42,6 +48,9 @@ export async function createEvent(
         createdAt: now,
         updatedAt: now,
       }),
+      database
+        .insert(communicationTemplates)
+        .values(defaultCommunicationTemplateValues(id, now)),
     ]);
   } catch (error: unknown) {
     if (String(error).includes("UNIQUE constraint failed: events.slug")) {
