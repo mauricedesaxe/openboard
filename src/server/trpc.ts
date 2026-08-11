@@ -2,10 +2,16 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 import {
+  agendaItemActionSchema,
+  moveAgendaItemSchema,
+  placeProgramItemSchema,
+  placeServiceBlockSchema,
+  publishAgendaSchema,
+} from "../shared/agendas";
+import {
   cfpDefinitionInputSchema,
   eventOptionNameSchema,
   type CfpId,
-  type RoomId,
   type TrackId,
 } from "../shared/cfps";
 import {
@@ -14,7 +20,7 @@ import {
   revokeEventRoleSchema,
   revokeInvitationSchema,
 } from "../shared/event-team";
-import { eventInputSchema, type UserId } from "../shared/events";
+import { eventInputSchema, roomIdSchema, type UserId } from "../shared/events";
 import {
   assignmentInputSchema,
   assignmentReasonSchema,
@@ -41,6 +47,17 @@ import {
   submitProposalSchema,
 } from "../shared/submissions";
 
+import {
+  getPublishedAgenda,
+  getWorkingAgenda,
+  moveAgendaItem,
+  placeProgramItem,
+  placeServiceBlock,
+  publishAgenda,
+  removeServiceBlock,
+  setProgramPlacementCanceled,
+  type AgendaWriteError,
+} from "./agendas/repository";
 import {
   createDraftCfp,
   findPublicCfp,
@@ -174,7 +191,6 @@ const optionNameInput = slugInput.extend({
   name: eventOptionNameSchema,
 });
 const trackIdSchema = z.uuid().transform((value) => value as TrackId);
-const roomIdSchema = z.uuid().transform((value) => value as RoomId);
 const cfpIdSchema = z.uuid().transform((value) => value as CfpId);
 const userIdSchema = z
   .string()
@@ -182,6 +198,95 @@ const userIdSchema = z
   .transform((value) => value as UserId);
 
 export const appRouter = trpc.router({
+  agendas: trpc.router({
+    working: authenticatedProcedure
+      .input(slugInput)
+      .query(async ({ ctx, input }) => {
+        const agenda = await getWorkingAgenda(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+        );
+        if (!agenda) throwEventNotFound();
+        return agenda;
+      }),
+    placeProgram: authenticatedProcedure
+      .input(placeProgramItemSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await placeProgramItem(ctx.database, ctx.userId, input);
+        if (!result.ok) throwAgendaWriteError(result.error);
+        return result.value;
+      }),
+    placeService: authenticatedProcedure
+      .input(placeServiceBlockSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await placeServiceBlock(ctx.database, ctx.userId, input);
+        if (!result.ok) throwAgendaWriteError(result.error);
+        return result.value;
+      }),
+    move: authenticatedProcedure
+      .input(moveAgendaItemSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await moveAgendaItem(ctx.database, ctx.userId, input);
+        if (!result.ok) throwAgendaWriteError(result.error);
+        return result.value;
+      }),
+    cancel: authenticatedProcedure
+      .input(agendaItemActionSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await setProgramPlacementCanceled(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.agendaItemId,
+          true,
+        );
+        if (!result.ok) throwAgendaWriteError(result.error);
+        return result.value;
+      }),
+    restore: authenticatedProcedure
+      .input(agendaItemActionSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await setProgramPlacementCanceled(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.agendaItemId,
+          false,
+        );
+        if (!result.ok) throwAgendaWriteError(result.error);
+        return result.value;
+      }),
+    removeService: authenticatedProcedure
+      .input(agendaItemActionSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await removeServiceBlock(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.agendaItemId,
+        );
+        if (!result.ok) throwAgendaWriteError(result.error);
+        return result.value;
+      }),
+    publish: authenticatedProcedure
+      .input(publishAgendaSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await publishAgenda(ctx.database, ctx.userId, input);
+        if (!result.ok) throwAgendaWriteError(result.error);
+        return result.value;
+      }),
+    published: trpc.procedure.input(slugInput).query(async ({ ctx, input }) => {
+      const agenda = await getPublishedAgenda(ctx.database, input.slug);
+      if (!agenda) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "This event has no published agenda.",
+        });
+      }
+      return agenda;
+    }),
+  }),
   events: trpc.router({
     create: authenticatedProcedure
       .input(eventInputSchema)
@@ -1342,6 +1447,41 @@ function throwInvitationLookupError(error: "not_found" | "unavailable"): never {
 
 function throwEventNotFound(): never {
   throw new TRPCError({ code: "NOT_FOUND", message: "Event not found." });
+}
+
+function throwAgendaWriteError(error: AgendaWriteError): never {
+  if (error === "not_found") throwEventNotFound();
+  if (error === "agenda_item_not_found") {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Agenda item not found.",
+    });
+  }
+  const messages: Partial<Record<AgendaWriteError, string>> = {
+    agenda_changed: "The working agenda changed. Reload it before publishing.",
+    archived_reference:
+      "Restore or replace archived rooms and tracks before publishing.",
+    invalid_time:
+      "Every agenda item needs a valid time within the event dates.",
+    invalid_agenda_item: "Use an agenda item that belongs to this event.",
+    missing_room:
+      "Assign every scheduled session and room-wide block to a room.",
+    program_item_unavailable:
+      "Only an unplaced accepted program item can be scheduled.",
+    room_conflict: "Resolve every room conflict before publishing.",
+    speaker_conflict: "Resolve every speaker conflict before publishing.",
+    timezone_ambiguous: "Choose times that occur once in the event timezone.",
+  };
+  if (error !== "persistence_failed") {
+    throw new TRPCError({
+      code: error === "invalid_time" ? "BAD_REQUEST" : "CONFLICT",
+      message: messages[error] ?? "The agenda cannot be published.",
+    });
+  }
+  throw new TRPCError({
+    code: "INTERNAL_SERVER_ERROR",
+    message: "The agenda could not be saved.",
+  });
 }
 
 function throwOnboardingWriteError(error: OnboardingWriteError): never {

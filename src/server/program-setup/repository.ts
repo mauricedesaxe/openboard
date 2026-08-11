@@ -10,8 +10,8 @@ import {
   sql,
 } from "drizzle-orm";
 
-import type { RoomId, TrackId } from "../../shared/cfps";
-import type { UserId } from "../../shared/events";
+import type { TrackId } from "../../shared/cfps";
+import type { RoomId, UserId } from "../../shared/events";
 import type { Database } from "../database/client";
 import { cfps, rooms, tracks } from "../database/schema";
 import { findEventForOrganizer } from "../events/repository";

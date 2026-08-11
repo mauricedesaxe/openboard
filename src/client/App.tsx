@@ -43,6 +43,7 @@ import {
   type SubmissionId,
 } from "../shared/submissions";
 
+import { AgendaPage, PublicAgendaPage } from "./AgendaPage";
 import { authClient } from "./auth";
 import { useTRPC } from "./trpc";
 
@@ -62,6 +63,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/events/:slug/cfp" element={<PublicCfpPage />} />
+      <Route path="/events/:slug/schedule" element={<PublicAgendaPage />} />
       <Route path="/*" element={<SessionApp />} />
     </Routes>
   );
@@ -164,6 +166,7 @@ function AuthenticatedApp({ email }: { email: string }) {
           <Route path="events/:slug" element={<EventPage />} />
           <Route path="events/:slug/cfp/setup" element={<CfpSetupPage />} />
           <Route path="events/:slug/review" element={<ReviewPage />} />
+          <Route path="events/:slug/agenda" element={<AgendaPage />} />
           <Route
             path="events/:slug/onboarding"
             element={<OrganizerOnboardingPage />}
@@ -659,12 +662,20 @@ function EventPage() {
       <section className="agenda-board">
         <div>
           <div className="eyebrow">Working agenda</div>
-          <h2>Nothing scheduled yet.</h2>
+          <h2>Build a conflict-free program.</h2>
           <p>
-            Your private agenda is ready. Accepted program items and service
-            blocks will land here.
+            Place accepted program items and service blocks. Working conflicts
+            stay visible until you correct and publish them.
           </p>
         </div>
+        {event.data.access !== "reviewer" && (
+          <Link
+            className="primary-button link-button"
+            to={`/events/${slug}/agenda`}
+          >
+            Open working agenda
+          </Link>
+        )}
       </section>
       {event.data.access === "owner" && (
         <EventTeamPanel slug={event.data.slug} />

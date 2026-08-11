@@ -1,4 +1,11 @@
 const timezoneCorrectionAttempts = 3;
+const maximumTimezoneOverlapMinutes = 180;
+const millisecondsPerMinute = 60_000;
+
+export type EventLocalDateTimeResolution =
+  | { status: "resolved"; iso: string }
+  | { status: "invalid" }
+  | { status: "ambiguous" };
 
 /** Resolves event wall time through repeated offset checks so DST changes settle without using the browser timezone. */
 export function eventLocalDateTimeToIso(
@@ -24,6 +31,32 @@ export function eventLocalDateTimeToIso(
     value
     ? new Date(instant).toISOString()
     : undefined;
+}
+
+export function resolveEventLocalDateTime(
+  value: string,
+  timezone: string,
+): EventLocalDateTimeResolution {
+  const resolved = eventLocalDateTimeToIso(value, timezone);
+  if (!resolved) return { status: "invalid" };
+  const resolvedTime = new Date(resolved).getTime();
+  const matchingInstants = new Set<number>();
+  for (
+    let offsetMinutes = -maximumTimezoneOverlapMinutes;
+    offsetMinutes <= maximumTimezoneOverlapMinutes;
+    offsetMinutes += 1
+  ) {
+    const candidate = resolvedTime + offsetMinutes * millisecondsPerMinute;
+    if (
+      isoToEventLocalDateTime(new Date(candidate).toISOString(), timezone) ===
+      value
+    ) {
+      matchingInstants.add(candidate);
+    }
+  }
+  return matchingInstants.size === 1
+    ? { status: "resolved", iso: resolved }
+    : { status: "ambiguous" };
 }
 
 export function isoToEventLocalDateTime(
