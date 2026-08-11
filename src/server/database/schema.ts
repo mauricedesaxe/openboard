@@ -762,23 +762,6 @@ export const taskEvidenceSupersessions = sqliteTable(
   },
 );
 
-export const taskAttachmentSupersessions = sqliteTable(
-  "task_attachment_supersessions",
-  {
-    previousAttachmentId: text("previous_attachment_id")
-      .primaryKey()
-      .references(() => taskAssignmentAttachments.id, { onDelete: "cascade" }),
-    replacementAttachmentId: text("replacement_attachment_id")
-      .notNull()
-      .unique()
-      .references(() => taskAssignmentAttachments.id, { onDelete: "cascade" }),
-    supersededByUserId: text("superseded_by_user_id")
-      .notNull()
-      .references(() => user.id),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-  },
-);
-
 export const taskReminders = sqliteTable(
   "task_reminders",
   {
@@ -829,7 +812,6 @@ export const schema = {
   taskAssignmentAttachments,
   taskAssignmentRevisions,
   taskAssignments,
-  taskAttachmentSupersessions,
   taskDefinitions,
   taskEvidence,
   taskEvidenceRejections,

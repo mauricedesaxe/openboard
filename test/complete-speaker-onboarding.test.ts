@@ -43,7 +43,8 @@ const boardSchema = z.object({
   targets: z.object({
     speakers: z.array(
       z.object({
-        userId: z.string(),
+        key: z.string(),
+        userId: z.string().nullable(),
         relationshipIds: z.array(z.string()),
       }),
     ),
@@ -60,7 +61,8 @@ const boardSchema = z.object({
   readiness: z.object({
     speakers: z.array(
       z.object({
-        userId: z.string(),
+        key: z.string(),
+        userId: z.string().nullable(),
         ready: z.boolean(),
         blockers: z.array(z.object({ requirement: z.string() })),
       }),
@@ -115,9 +117,24 @@ describe("complete speaker onboarding tasks", () => {
         scope: "program_item_speaker",
         submissionSpeakerId: leoRelationship.id,
       },
+      required: true,
+      dueAt: null,
+    });
+    const canceledAssignment = await createAssignment(owner.cookie, {
+      slug,
+      taskDefinitionId: specificDefinition.id,
+      target: {
+        scope: "program_item_speaker",
+        submissionSpeakerId: leoRelationship.id,
+      },
       required: false,
       dueAt: null,
     });
+    await callTrpc(
+      "onboarding.cancelAssignment",
+      { assignmentId: canceledAssignment.id },
+      owner.cookie,
+    );
     expect(
       getResult(
         (await callTrpc("onboarding.mine", undefined, leo.cookie, "query"))
@@ -125,6 +142,16 @@ describe("complete speaker onboarding tasks", () => {
         mineSchema,
       ),
     ).toEqual([]);
+    const preClaimBoard = await getBoard(owner.cookie, slug);
+    expect(
+      preClaimBoard.readiness.speakers.find(
+        (speaker) => speaker.key === leoRelationship.id,
+      ),
+    ).toMatchObject({
+      userId: null,
+      ready: false,
+      blockers: [{ requirement: "Speaker agreement" }],
+    });
     const assignmentsBeforeClaim = await assignmentCount();
     const invitationSecret = await getInvitationSecret(
       "onboarding-leo@example.com",
@@ -145,7 +172,19 @@ describe("complete speaker onboarding tasks", () => {
         mineSchema,
       ).map((assignment) => assignment.id),
     ).toContain(preClaimAssignment.id);
+    expect(
+      getResult(
+        (await callTrpc("onboarding.mine", undefined, leo.cookie, "query"))
+          .body,
+        mineSchema,
+      ).map((assignment) => assignment.id),
+    ).not.toContain(canceledAssignment.id);
     expect(await assignmentCount()).toBe(assignmentsBeforeClaim);
+    await callTrpc(
+      "onboarding.confirmManual",
+      { assignmentId: preClaimAssignment.id },
+      leo.cookie,
+    );
 
     const profileDefinition = await createDefinition(owner.cookie, {
       slug,
@@ -331,6 +370,24 @@ describe("complete speaker onboarding tasks", () => {
     expect(readiness(board, practical.id).ready).toBe(true);
 
     await callTrpc(
+      "onboarding.saveFormDraft",
+      {
+        assignmentId: formAssignment.id,
+        answers: { arrival: "Duplicate accepted answer" },
+      },
+      leo.cookie,
+    );
+    expect(
+      (
+        await callTrpc(
+          "onboarding.submitForm",
+          { assignmentId: formAssignment.id },
+          leo.cookie,
+        )
+      ).status,
+    ).toBe(409);
+
+    await callTrpc(
       "onboarding.rejectEvidence",
       {
         evidenceId: submittedForm.evidenceId,
@@ -372,7 +429,7 @@ describe("complete speaker onboarding tasks", () => {
       owner.cookie,
     );
     await callTrpc(
-      "onboarding.remind",
+      "onboarding.recordReminder",
       { assignmentId: slidesAssignment.id },
       owner.cookie,
     );

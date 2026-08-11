@@ -69,6 +69,7 @@ import {
 import type { Auth } from "./identity/auth";
 import {
   attachTaskFile,
+  cancelTaskAssignment,
   confirmManualTask,
   createTaskAssignment,
   createTaskDefinition,
@@ -998,7 +999,18 @@ export const appRouter = trpc.router({
         if (!result.ok) throwOnboardingWriteError(result.error);
         return result.value;
       }),
-    remind: authenticatedProcedure
+    cancelAssignment: authenticatedProcedure
+      .input(assignmentInputSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await cancelTaskAssignment(
+          ctx.database,
+          ctx.userId,
+          input.assignmentId,
+        );
+        if (!result.ok) throwOnboardingWriteError(result.error);
+        return result.value;
+      }),
+    recordReminder: authenticatedProcedure
       .input(assignmentInputSchema)
       .mutation(async ({ ctx, input }) => {
         const result = await recordTaskReminder(
@@ -1335,7 +1347,11 @@ function throwOnboardingWriteError(error: OnboardingWriteError): never {
       message: "This evidence was already rejected.",
     });
   }
-  if (error === "invalid_assignment" || error === "invalid_mechanism") {
+  if (
+    error === "invalid_assignment" ||
+    error === "invalid_mechanism" ||
+    error === "current_evidence_exists"
+  ) {
     throw new TRPCError({
       code: "CONFLICT",
       message: "This action does not match the current task assignment.",

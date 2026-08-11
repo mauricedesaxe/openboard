@@ -7,7 +7,6 @@ import {
 } from "../../shared/speaker-profiles";
 import type { Database } from "../database/client";
 import { speakerProfiles, submissionSpeakers } from "../database/schema";
-import { syncProfileTaskEvidence } from "../onboarding/repository";
 
 export async function findOwnSpeakerProfile(
   database: Database,
@@ -79,7 +78,6 @@ export async function saveOwnSpeakerProfile(
   }
 
   const profile = await findOwnSpeakerProfile(database, userId);
-  if (profile) await syncProfileTaskEvidence(database, userId);
   return profile
     ? { ok: true, value: profile }
     : { ok: false, error: "persistence_failed" };
