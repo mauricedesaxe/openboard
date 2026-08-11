@@ -661,7 +661,7 @@ describe("claim a proposed-speaker invitation", () => {
     const organizer = await signIn("speaker-profile-organizer@example.com");
     const reviewer = await signIn("speaker-profile-reviewer@example.com");
     const slug = "speaker-profile-2027";
-    await createSubmission({
+    const submission = await createSubmission({
       slug,
       eventOwner: owner,
       submissionOwner: owner,
@@ -669,6 +669,10 @@ describe("claim a proposed-speaker invitation", () => {
         {
           name: "Profile Recipient",
           email: "speaker-profile-recipient@example.com",
+        },
+        {
+          name: "Profile Colleague",
+          email: "speaker-profile-colleague@example.com",
         },
       ],
     });
@@ -786,6 +790,32 @@ describe("claim a proposed-speaker invitation", () => {
         .bind(recipient.userId)
         .first<{ count: number }>(),
     ).toEqual({ count: 1 });
+
+    const removedAt = Date.now();
+    await testEnvironment.DB.batch([
+      testEnvironment.DB.prepare(
+        "UPDATE submissions SET updated_at = ? WHERE id = ?",
+      ).bind(removedAt, submission.id),
+      testEnvironment.DB.prepare(
+        "UPDATE submission_speakers SET removed_at = ?, updated_at = ? WHERE claimed_user_id = ?",
+      ).bind(removedAt, removedAt, recipient.userId),
+    ]);
+    expect(
+      getResult(
+        (
+          await callTrpc(
+            "speakerProfile.getOwn",
+            undefined,
+            recipient.cookie,
+            "query",
+          )
+        ).body,
+        profileStateSchema,
+      ),
+    ).toMatchObject({
+      eligible: false,
+      suggestedDisplayName: null,
+    });
   });
 });
 

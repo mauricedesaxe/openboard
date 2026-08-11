@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 
 import type { UserId } from "../../shared/events";
 import {
@@ -101,7 +101,12 @@ async function findClaimedSpeakerName(
   const [speaker] = await database
     .select({ name: submissionSpeakers.invitedName })
     .from(submissionSpeakers)
-    .where(eq(submissionSpeakers.claimedUserId, userId))
+    .where(
+      and(
+        eq(submissionSpeakers.claimedUserId, userId),
+        isNull(submissionSpeakers.removedAt),
+      ),
+    )
     .orderBy(desc(submissionSpeakers.updatedAt), desc(submissionSpeakers.id))
     .limit(1);
   return speaker?.name ?? null;
