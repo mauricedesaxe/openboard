@@ -116,10 +116,17 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
       await route.continue();
     },
   );
+  const removalResponse = page.waitForResponse(
+    /\/api\/trpc\/submissions\.removeSpeaker(?:\?|$)/,
+  );
   await ownSpeakerRow.getByRole("button", { name: "Remove" }).click();
   await expect(ownSpeakerRow).toBeHidden({ timeout: 500 });
   await expect.poll(() => removalRequestStarted).toBe(true);
   releaseRemovalRequest();
+  expect((await removalResponse).ok()).toBe(true);
+  await page.reload();
+  await expect(ownSpeakerRow).toBeHidden();
+  await expect(page.getByText("Second Browser Speaker")).toBeVisible();
   await expect(
     page.getByText("At least one proposed speaker must remain."),
   ).toBeVisible();
