@@ -1973,7 +1973,9 @@ function SpeakerInvitationPage({
         <section className="invitation-card">
           <div className="eyebrow">Invitation unavailable</div>
           <h1>This invitation can’t be used.</h1>
-          <p>Check the link or ask the proposal owner for a new invitation.</p>
+          <p>
+            Check the link or ask the submission owner for a new invitation.
+          </p>
           <Link className="arrow-link" to="/">
             Open OpenBoard
           </Link>
@@ -2847,15 +2849,21 @@ function SubmissionSpeakerManager({
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [deliveryNotice, setDeliveryNotice] = useState<string>();
   const refresh = () =>
     queryClient.invalidateQueries(
       trpc.submissions.get.queryFilter(submissionInput),
     );
   const add = useMutation(
     trpc.submissions.addSpeaker.mutationOptions({
-      onSuccess: async () => {
+      onSuccess: async (result) => {
         setName("");
         setEmail("");
+        setDeliveryNotice(
+          result.delivery === "failed"
+            ? "The speaker was saved, but the email could not be sent. Send a new invitation from their row."
+            : undefined,
+        );
         await refresh();
       },
     }),
@@ -2865,10 +2873,30 @@ function SubmissionSpeakerManager({
   );
   const replace = useMutation(
     trpc.submissions.replaceSpeakerInvitation.mutationOptions({
-      onSuccess: refresh,
+      onSuccess: async (result) => {
+        setDeliveryNotice(
+          result.delivery === "failed"
+            ? "The new invitation was saved, but the email could not be sent. Try again."
+            : undefined,
+        );
+        await refresh();
+      },
     }),
   );
-  const mutationError = add.error ?? remove.error ?? replace.error;
+  const resend = useMutation(
+    trpc.submissions.resendSpeakerInvitation.mutationOptions({
+      onSuccess: async (result) => {
+        setDeliveryNotice(
+          result.delivery === "failed"
+            ? "The invitation was saved, but the email could not be sent. Try again."
+            : undefined,
+        );
+        await refresh();
+      },
+    }),
+  );
+  const mutationError =
+    add.error ?? remove.error ?? replace.error ?? resend.error;
 
   function invite(event: FormEvent) {
     event.preventDefault();
@@ -2921,6 +2949,23 @@ function SubmissionSpeakerManager({
                     Send new invitation
                   </button>
                 )}
+              {submission.permissions.canManageSpeakers &&
+                !speaker.claimed &&
+                speaker.invitation?.status !== "pending" && (
+                  <button
+                    className="text-button"
+                    disabled={resend.isPending}
+                    onClick={() =>
+                      resend.mutate({
+                        ...submissionInput,
+                        speakerId: speaker.id,
+                      })
+                    }
+                    type="button"
+                  >
+                    Send invitation
+                  </button>
+                )}
               {submission.permissions.canManageSpeakers && (
                 <button
                   className="text-button danger-button"
@@ -2966,6 +3011,11 @@ function SubmissionSpeakerManager({
       {mutationError && (
         <p className="form-error" role="alert">
           {mutationError.message}
+        </p>
+      )}
+      {deliveryNotice && (
+        <p className="invite-notice invite-notice-warning" role="status">
+          {deliveryNotice}
         </p>
       )}
     </section>

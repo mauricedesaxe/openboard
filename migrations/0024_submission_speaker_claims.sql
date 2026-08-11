@@ -1,5 +1,4 @@
 ALTER TABLE submission_speakers ADD COLUMN claimed_user_id TEXT REFERENCES user(id);
-ALTER TABLE submission_speakers ADD COLUMN claimed_at INTEGER;
 
 CREATE UNIQUE INDEX submission_speakers_active_claim_idx
   ON submission_speakers(submission_id, claimed_user_id)
