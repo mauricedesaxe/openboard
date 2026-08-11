@@ -371,7 +371,10 @@ export async function publishAgenda(
       format: snapshot.format,
       track: snapshot.trackName,
       speakers: snapshot.speakers.map((speaker) => speaker.displayName),
-      recipients,
+      recipients: recipients.map(({ destination, name }) => ({
+        destination,
+        name,
+      })),
     });
     if (previous?.fingerprint === fingerprint) return [];
     const sequence = (previous?.sequence ?? -1) + 1;
@@ -918,12 +921,15 @@ function snapshotRecipients(
     ...new Map(
       snapshot.speakers.map((speaker) => {
         const key = speaker.claimedUserId ?? `speaker:${speaker.id}`;
+        const destination = (
+          speaker.claimedEmail ?? speaker.invitedEmail
+        ).toLowerCase();
         return [
-          key,
+          destination,
           {
             key,
             userId: speaker.claimedUserId,
-            destination: speaker.claimedEmail ?? speaker.invitedEmail,
+            destination,
             name: speaker.displayName,
           },
         ] as const;
@@ -982,9 +988,7 @@ function calendarDeliveryRecipients(
   const removed = previous.filter(
     (recipient) =>
       !change.recipients.some(
-        (current) =>
-          current.key === recipient.key &&
-          current.destination === recipient.destination,
+        (current) => current.destination === recipient.destination,
       ),
   );
   return [

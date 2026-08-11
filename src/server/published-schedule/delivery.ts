@@ -3,7 +3,6 @@ import { and, asc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import type { AgendaItemId } from "../../shared/agendas";
 import type { Database } from "../database/client";
 import {
-  agendaDeliveryAttempts,
   agendaDeliveryWork,
   agendaPublications,
   calendarSyncStates,
@@ -81,10 +80,17 @@ export async function processAgendaDeliveryWork(
       .where(
         and(
           eq(agendaDeliveryWork.id, candidate.id),
-          inArray(agendaDeliveryWork.status, ["pending", "failed"]),
+          eq(agendaDeliveryWork.status, candidate.status),
+          eq(agendaDeliveryWork.attemptCount, candidate.attemptCount),
+          candidate.nextAttemptAt
+            ? eq(agendaDeliveryWork.nextAttemptAt, candidate.nextAttemptAt)
+            : isNull(agendaDeliveryWork.nextAttemptAt),
           candidate.claimedAt
             ? eq(agendaDeliveryWork.claimedAt, candidate.claimedAt)
             : isNull(agendaDeliveryWork.claimedAt),
+          candidate.claimToken
+            ? eq(agendaDeliveryWork.claimToken, candidate.claimToken)
+            : isNull(agendaDeliveryWork.claimToken),
         ),
       );
     if (claimed.meta.changes === 0) continue;
@@ -296,34 +302,39 @@ async function finishAttempt(
       : outcome.status === "superseded"
         ? "superseded"
         : "failed";
-  const completed = await database
-    .update(agendaDeliveryWork)
-    .set({
-      status: outcome.status,
-      claimedAt: null,
-      claimToken: null,
-      completedAt: outcome.status === "completed" ? finishedAt : null,
-      supersededAt: outcome.status === "superseded" ? finishedAt : null,
-      nextAttemptAt: outcome.status === "failed" ? outcome.nextAttemptAt : null,
-      lastError: outcome.status === "failed" ? outcome.error : null,
-    })
-    .where(
-      and(
-        eq(agendaDeliveryWork.id, workId),
-        eq(agendaDeliveryWork.claimToken, claimToken),
-        eq(agendaDeliveryWork.attemptCount, attemptNumber),
+  const error = outcome.status === "failed" ? outcome.error : null;
+  const [attempt, completed] = await database.$client.batch([
+    database.$client
+      .prepare(
+        "INSERT INTO agenda_delivery_attempts (id, work_id, attempt_number, started_at, finished_at, latency_ms, result, error) SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM agenda_delivery_work WHERE id = ? AND claim_token = ? AND attempt_count = ?)",
+      )
+      .bind(
+        crypto.randomUUID(),
+        workId,
+        attemptNumber,
+        startedAt.getTime(),
+        finishedAt.getTime(),
+        Math.max(0, finishedAt.getTime() - startedAt.getTime()),
+        result,
+        error,
+        workId,
+        claimToken,
+        attemptNumber,
       ),
-    );
-  if (completed.meta.changes === 0) return false;
-  await database.insert(agendaDeliveryAttempts).values({
-    id: crypto.randomUUID(),
-    workId,
-    attemptNumber,
-    startedAt,
-    finishedAt,
-    latencyMs: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
-    result,
-    error: outcome.status === "failed" ? outcome.error : null,
-  });
-  return true;
+    database.$client
+      .prepare(
+        "UPDATE agenda_delivery_work SET status = ?, claimed_at = NULL, claim_token = NULL, completed_at = ?, superseded_at = ?, next_attempt_at = ?, last_error = ? WHERE id = ? AND claim_token = ? AND attempt_count = ?",
+      )
+      .bind(
+        outcome.status,
+        outcome.status === "completed" ? finishedAt.getTime() : null,
+        outcome.status === "superseded" ? finishedAt.getTime() : null,
+        outcome.status === "failed" ? outcome.nextAttemptAt.getTime() : null,
+        error,
+        workId,
+        claimToken,
+        attemptNumber,
+      ),
+  ]);
+  return attempt?.meta.changes === 1 && completed?.meta.changes === 1;
 }
