@@ -94,9 +94,45 @@ export async function findEventForOrganizer(
   database: Database,
   userId: UserId,
   slug: string,
-): Promise<Event | undefined> {
-  const event = await findEventForUser(database, userId, slug);
-  return event?.access === "reviewer" ? undefined : event;
+): Promise<(Event & { agendaRevision: number }) | undefined> {
+  const access = or(
+    eq(events.ownerUserId, userId),
+    and(eq(eventRoles.userId, userId), isNull(eventRoles.revokedAt)),
+  );
+  const [result] = await database
+    .select({
+      id: events.id,
+      ownerUserId: events.ownerUserId,
+      name: events.name,
+      slug: events.slug,
+      startsOn: events.startsOn,
+      endsOn: events.endsOn,
+      timezone: events.timezone,
+      agendaId: agendas.id,
+      agendaRevision: agendas.revision,
+      role: eventRoles.role,
+    })
+    .from(events)
+    .innerJoin(agendas, eq(agendas.eventId, events.id))
+    .leftJoin(
+      eventRoles,
+      and(eq(eventRoles.eventId, events.id), eq(eventRoles.userId, userId)),
+    )
+    .where(and(access, eq(events.slug, slug)))
+    .limit(1);
+  if (!result) return undefined;
+  const { role, ...event } = result;
+  const eventAccess: EventAccess =
+    event.ownerUserId === userId
+      ? "owner"
+      : role === "organizer"
+        ? "organizer"
+        : "reviewer";
+  return eventAccess === "reviewer"
+    ? undefined
+    : ({ ...event, access: eventAccess } as Event & {
+        agendaRevision: number;
+      });
 }
 
 export async function listOwnedEvents(
