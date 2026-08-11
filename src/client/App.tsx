@@ -890,6 +890,11 @@ function OrganizerOnboardingPage() {
                   setDefinition((current) => ({
                     ...current,
                     scope: event.target.value as typeof current.scope,
+                    completionMechanism:
+                      event.target.value !== "event_speaker" &&
+                      current.completionMechanism === "profile"
+                        ? "manual"
+                        : current.completionMechanism,
                   }))
                 }
                 value={definition.scope}
@@ -909,6 +914,10 @@ function OrganizerOnboardingPage() {
                     ...current,
                     completionMechanism: event.target
                       .value as typeof current.completionMechanism,
+                    scope:
+                      event.target.value === "profile"
+                        ? "event_speaker"
+                        : current.scope,
                   }))
                 }
                 value={definition.completionMechanism}
@@ -1168,7 +1177,14 @@ function OrganizerOnboardingPage() {
               <div className="evidence-row" key={evidence.id}>
                 <span>
                   {evidence.kind}
-                  {evidence.fileName ? ` · ${evidence.fileName}` : ""}
+                  {evidence.fileName && evidence.fileId ? (
+                    <>
+                      {" · "}
+                      <a href={`/api/task-files/${evidence.fileId}`}>
+                        {evidence.fileName}
+                      </a>
+                    </>
+                  ) : null}
                 </span>
                 <span>
                   {evidence.rejectedReason
@@ -1435,7 +1451,14 @@ function SpeakerTasksPage() {
                   {task.evidence.map((evidence) => (
                     <p key={evidence.id}>
                       {evidence.kind}
-                      {evidence.fileName ? ` · ${evidence.fileName}` : ""}
+                      {evidence.fileName && evidence.fileId ? (
+                        <>
+                          {" · "}
+                          <a href={`/api/task-files/${evidence.fileId}`}>
+                            {evidence.fileName}
+                          </a>
+                        </>
+                      ) : null}
                       {evidence.rejectedReason
                         ? ` · Rejected: ${evidence.rejectedReason}`
                         : evidence.supersededBy

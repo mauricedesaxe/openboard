@@ -12,7 +12,8 @@ CREATE TABLE task_definitions (
     (completion_mechanism = 'profile' AND profile_requirement IS NOT NULL AND form_schema_json IS NULL)
     OR (completion_mechanism = 'form' AND profile_requirement IS NULL AND form_schema_json IS NOT NULL)
     OR (completion_mechanism IN ('manual', 'file') AND profile_requirement IS NULL AND form_schema_json IS NULL)
-  )
+  ),
+  CHECK (completion_mechanism <> 'profile' OR scope = 'event_speaker')
 );
 
 CREATE INDEX task_definitions_event_id_idx ON task_definitions(event_id);
@@ -132,19 +133,23 @@ CREATE TABLE task_evidence (
   speaker_profile_id TEXT REFERENCES speaker_profiles(id),
   form_response_id TEXT REFERENCES onboarding_form_responses(id),
   attachment_id TEXT REFERENCES task_assignment_attachments(id),
+  replacement_for_evidence_id TEXT REFERENCES task_evidence(id),
   reason TEXT,
   created_at INTEGER NOT NULL,
   CHECK (
-    (kind = 'profile' AND speaker_profile_id IS NOT NULL AND form_response_id IS NULL AND attachment_id IS NULL AND reason IS NULL)
-    OR (kind = 'form' AND speaker_profile_id IS NULL AND form_response_id IS NOT NULL AND attachment_id IS NULL AND reason IS NULL)
+    (kind = 'profile' AND speaker_profile_id IS NOT NULL AND form_response_id IS NULL AND attachment_id IS NULL AND replacement_for_evidence_id IS NULL AND reason IS NULL)
+    OR (kind = 'form' AND speaker_profile_id IS NULL AND form_response_id IS NOT NULL AND attachment_id IS NULL AND replacement_for_evidence_id IS NULL AND reason IS NULL)
     OR (kind = 'file' AND speaker_profile_id IS NULL AND form_response_id IS NULL AND attachment_id IS NOT NULL AND reason IS NULL)
-    OR (kind = 'manual' AND speaker_profile_id IS NULL AND form_response_id IS NULL AND attachment_id IS NULL AND reason IS NULL)
-    OR (kind IN ('waiver', 'organizer_override') AND speaker_profile_id IS NULL AND form_response_id IS NULL AND attachment_id IS NULL AND length(trim(reason)) > 0)
+    OR (kind = 'manual' AND speaker_profile_id IS NULL AND form_response_id IS NULL AND attachment_id IS NULL AND replacement_for_evidence_id IS NULL AND reason IS NULL)
+    OR (kind IN ('waiver', 'organizer_override') AND speaker_profile_id IS NULL AND form_response_id IS NULL AND attachment_id IS NULL AND replacement_for_evidence_id IS NULL AND length(trim(reason)) > 0)
   )
 );
 
 CREATE INDEX task_evidence_assignment_idx
   ON task_evidence(assignment_id, completion_revision);
+CREATE UNIQUE INDEX task_evidence_one_replacement_idx
+  ON task_evidence(replacement_for_evidence_id)
+  WHERE replacement_for_evidence_id IS NOT NULL;
 CREATE TABLE task_evidence_rejections (
   evidence_id TEXT PRIMARY KEY NOT NULL REFERENCES task_evidence(id) ON DELETE CASCADE,
   rejected_by_user_id TEXT NOT NULL REFERENCES user(id),
@@ -181,7 +186,6 @@ WHEN NEW.kind = 'form'
       ON task_evidence_supersessions.previous_evidence_id = existing.id
     WHERE existing.assignment_id = NEW.assignment_id
       AND existing.completion_revision = NEW.completion_revision
-      AND existing.kind = 'form'
       AND task_evidence_rejections.evidence_id IS NULL
       AND task_evidence_supersessions.previous_evidence_id IS NULL
   )
@@ -201,12 +205,90 @@ WHEN NEW.kind = 'profile'
       ON task_evidence_supersessions.previous_evidence_id = existing.id
     WHERE existing.assignment_id = NEW.assignment_id
       AND existing.completion_revision = NEW.completion_revision
-      AND existing.kind = 'profile'
       AND task_evidence_rejections.evidence_id IS NULL
       AND task_evidence_supersessions.previous_evidence_id IS NULL
   )
 BEGIN
   SELECT RAISE(IGNORE);
+END;
+
+CREATE TRIGGER task_evidence_prevent_duplicate_direct_completion
+BEFORE INSERT ON task_evidence
+WHEN NEW.kind IN ('manual', 'waiver', 'organizer_override')
+  AND EXISTS (
+    SELECT 1
+    FROM task_evidence AS existing
+    LEFT JOIN task_evidence_rejections
+      ON task_evidence_rejections.evidence_id = existing.id
+    LEFT JOIN task_evidence_supersessions
+      ON task_evidence_supersessions.previous_evidence_id = existing.id
+    WHERE existing.assignment_id = NEW.assignment_id
+      AND existing.completion_revision = NEW.completion_revision
+      AND task_evidence_rejections.evidence_id IS NULL
+      AND task_evidence_supersessions.previous_evidence_id IS NULL
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'current_completion_evidence_exists');
+END;
+
+CREATE TRIGGER task_evidence_prevent_duplicate_initial_file
+BEFORE INSERT ON task_evidence
+WHEN NEW.kind = 'file'
+  AND NEW.replacement_for_evidence_id IS NULL
+  AND EXISTS (
+    SELECT 1
+    FROM task_evidence AS existing
+    LEFT JOIN task_evidence_rejections
+      ON task_evidence_rejections.evidence_id = existing.id
+    LEFT JOIN task_evidence_supersessions
+      ON task_evidence_supersessions.previous_evidence_id = existing.id
+    WHERE existing.assignment_id = NEW.assignment_id
+      AND existing.completion_revision = NEW.completion_revision
+      AND task_evidence_rejections.evidence_id IS NULL
+      AND task_evidence_supersessions.previous_evidence_id IS NULL
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'current_file_evidence_exists');
+END;
+
+CREATE TRIGGER task_evidence_prevent_competing_file_replacement
+BEFORE INSERT ON task_evidence
+WHEN NEW.kind = 'file'
+  AND NEW.replacement_for_evidence_id IS NOT NULL
+  AND EXISTS (
+    SELECT 1
+    FROM task_evidence AS existing
+    LEFT JOIN task_evidence_rejections
+      ON task_evidence_rejections.evidence_id = existing.id
+    LEFT JOIN task_evidence_supersessions
+      ON task_evidence_supersessions.previous_evidence_id = existing.id
+    WHERE existing.assignment_id = NEW.assignment_id
+      AND existing.completion_revision = NEW.completion_revision
+      AND existing.id <> NEW.replacement_for_evidence_id
+      AND task_evidence_rejections.evidence_id IS NULL
+      AND task_evidence_supersessions.previous_evidence_id IS NULL
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'current_completion_evidence_exists');
+END;
+
+CREATE TRIGGER task_evidence_require_current_file_replacement
+BEFORE INSERT ON task_evidence
+WHEN NEW.kind = 'file'
+  AND NEW.replacement_for_evidence_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM task_evidence AS existing
+    LEFT JOIN task_evidence_supersessions
+      ON task_evidence_supersessions.previous_evidence_id = existing.id
+    WHERE existing.id = NEW.replacement_for_evidence_id
+      AND existing.assignment_id = NEW.assignment_id
+      AND existing.completion_revision = NEW.completion_revision
+      AND existing.kind = 'file'
+      AND task_evidence_supersessions.previous_evidence_id IS NULL
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'stale_file_replacement');
 END;
 
 CREATE TRIGGER task_assignments_add_existing_profile_evidence
