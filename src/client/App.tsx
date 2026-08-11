@@ -163,16 +163,21 @@ function AuthenticatedApp({ email }: { email: string }) {
 }
 
 function SignInPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const returnTo = safeReturnTo(searchParams.get("returnTo"));
+  const pendingEmail = window.sessionStorage.getItem(
+    pendingSignInKey(returnTo),
+  );
   const invitationSignIn =
     returnTo.startsWith("/invitations/") ||
     returnTo.startsWith("/speaker-invitations/");
   const proposalSignIn = /^\/events\/[^/]+\/cfp$/.test(returnTo);
-  const [email, setEmail] = useState(searchParams.get("email") ?? "");
+  const [email, setEmail] = useState(
+    pendingEmail ?? searchParams.get("email") ?? "",
+  );
   const [code, setCode] = useState("");
   const [step, setStep] = useState<"email" | "code">(
-    searchParams.get("step") === "code" ? "code" : "email",
+    pendingEmail ? "code" : "email",
   );
   const [devCode, setDevCode] = useState<string>();
   const [error, setError] = useState<string>();
@@ -200,15 +205,7 @@ function SignInPage() {
     }
 
     setStep("code");
-    setSearchParams(
-      (current) => {
-        const next = new URLSearchParams(current);
-        next.set("email", email);
-        next.set("step", "code");
-        return next;
-      },
-      { replace: true },
-    );
+    window.sessionStorage.setItem(pendingSignInKey(returnTo), email);
     if (import.meta.env.DEV) {
       const response = await fetch(
         `/api/dev/auth-code?email=${encodeURIComponent(email)}`,
@@ -232,15 +229,7 @@ function SignInPage() {
     setCode("");
     setDevCode(undefined);
     setError(undefined);
-    setSearchParams(
-      (current) => {
-        const next = new URLSearchParams(current);
-        next.delete("email");
-        next.delete("step");
-        return next;
-      },
-      { replace: true },
-    );
+    window.sessionStorage.removeItem(pendingSignInKey(returnTo));
   }
 
   async function verifyCode(event: FormEvent) {
@@ -257,6 +246,8 @@ function SignInPage() {
       );
       return;
     }
+
+    window.sessionStorage.removeItem(pendingSignInKey(returnTo));
   }
 
   return (
@@ -377,6 +368,10 @@ function SignInPage() {
       </section>
     </main>
   );
+}
+
+function pendingSignInKey(returnTo: string): string {
+  return `openboard:pending-sign-in:${returnTo}`;
 }
 
 function EventIndex() {
