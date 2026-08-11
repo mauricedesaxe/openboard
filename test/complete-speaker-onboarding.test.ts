@@ -202,7 +202,7 @@ describe("complete speaker onboarding tasks", () => {
       name: "Complete speaker profile",
       scope: "event_speaker",
       completionMechanism: "profile",
-      profileRequirement: "complete",
+      profileRequirement: "headshot",
     });
     expect(
       (
@@ -340,7 +340,12 @@ describe("complete speaker onboarding tasks", () => {
       {
         displayName: "Maya Speaker",
         bio: "A reusable profile shared across accepted program work.",
-        headshotUrl: null,
+        headshot: {
+          fileName: "maya.png",
+          contentType: "image/png",
+          contentBase64:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        },
       },
       maya.cookie,
     );
@@ -370,7 +375,6 @@ describe("complete speaker onboarding tasks", () => {
       {
         displayName: "Maya Speaker",
         bio: "A corrected reusable profile shared across accepted program work.",
-        headshotUrl: null,
       },
       maya.cookie,
     );

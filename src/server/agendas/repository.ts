@@ -40,6 +40,7 @@ import {
   user,
 } from "../database/schema";
 import { findEventForOrganizer } from "../events/repository";
+import { speakerHeadshotUrl } from "../speaker-profiles/repository";
 
 /** Keep generated inserts below D1's 100-variable statement limit. */
 const agendaPublicationBindingBudget = 80;
@@ -717,6 +718,7 @@ async function loadWorkingAgenda(
             displayName: speakerProfiles.displayName,
             bio: speakerProfiles.bio,
             headshotUrl: speakerProfiles.headshotUrl,
+            headshotStoredFileId: speakerProfiles.headshotStoredFileId,
             position: submissionSpeakers.position,
           })
           .from(agendaItems)
@@ -752,7 +754,7 @@ async function loadWorkingAgenda(
         invitedEmail: speaker.invitedEmail,
         displayName: speaker.displayName ?? speaker.invitedName,
         bio: speaker.bio,
-        headshotUrl: speaker.headshotUrl,
+        headshotUrl: speakerHeadshotUrl(speaker),
         position: speaker.position,
       })),
     conflicts: [] as Array<"room" | "speaker">,

@@ -417,19 +417,6 @@ export const submissionSpeakerInvitations = sqliteTable(
   ],
 );
 
-export const speakerProfiles = sqliteTable("speaker_profiles", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .unique()
-    .references(() => user.id, { onDelete: "cascade" }),
-  displayName: text("display_name").notNull(),
-  bio: text("bio").notNull(),
-  headshotUrl: text("headshot_url"),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
-});
-
 export const formResponses = sqliteTable("form_responses", {
   id: text("id").primaryKey(),
   cfpId: text("cfp_id")
@@ -754,6 +741,22 @@ export const storedFiles = sqliteTable("stored_files", {
     .notNull()
     .references(() => user.id),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const speakerProfiles = sqliteTable("speaker_profiles", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .unique()
+    .references(() => user.id, { onDelete: "cascade" }),
+  displayName: text("display_name").notNull(),
+  bio: text("bio").notNull(),
+  headshotUrl: text("headshot_url"),
+  headshotStoredFileId: text("headshot_stored_file_id").references(
+    () => storedFiles.id,
+  ),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
 export const taskAssignmentAttachments = sqliteTable(

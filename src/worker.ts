@@ -14,8 +14,12 @@ import { processAgendaDeliveryWork } from "./server/published-schedule/delivery"
 import { routePublishedSchedule } from "./server/published-schedule/routes";
 import { sendAgendaCalendarDelivery } from "./server/published-schedule/transport";
 import { repairDecisionCommunicationRecords } from "./server/reviews/repository";
+import { findSpeakerHeadshot } from "./server/speaker-profiles/repository";
 import { appRouter, createTrpcContext } from "./server/trpc";
 import type { UserId } from "./shared/events";
+import { storedFileIdSchema } from "./shared/files";
+
+const IMMUTABLE_CACHE_SECONDS = 365 * 24 * 60 * 60;
 
 export default {
   async fetch(request, environment): Promise<Response> {
@@ -88,6 +92,35 @@ export default {
         "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
         "Content-Type": file.contentType,
         ETag: object.httpEtag,
+      });
+      return new Response(object.body, { headers });
+    }
+
+    const headshotMatch = url.pathname.match(
+      /^\/api\/speaker-headshots\/([^/]+)$/,
+    );
+    if (headshotMatch) {
+      const fileId = storedFileIdSchema.safeParse(headshotMatch[1]);
+      if (!fileId.success) return new Response("Not found", { status: 404 });
+      const file = await findSpeakerHeadshot(database, fileId.data);
+      if (!file) return new Response("Not found", { status: 404 });
+      if (file.access === "owner") {
+        const session = await auth.api.getSession({ headers: request.headers });
+        if (session?.user.id !== file.ownerUserId) {
+          return new Response("Not found", { status: 404 });
+        }
+      }
+      const object = await environment.FILES.get(file.objectKey);
+      if (!object) return new Response("Not found", { status: 404 });
+      const headers = new Headers({
+        "Cache-Control":
+          file.access === "public"
+            ? `public, max-age=${IMMUTABLE_CACHE_SECONDS}, immutable`
+            : "private, no-store",
+        "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+        "Content-Type": file.contentType,
+        ETag: object.httpEtag,
+        "X-Content-Type-Options": "nosniff",
       });
       return new Response(object.body, { headers });
     }

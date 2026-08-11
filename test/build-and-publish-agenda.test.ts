@@ -40,7 +40,12 @@ const publishedAgendaSchema = z.object({
       title: z.string(),
       roomName: z.string().nullable(),
       startsAt: z.string(),
-      speakers: z.array(z.object({ displayName: z.string() })),
+      speakers: z.array(
+        z.object({
+          displayName: z.string(),
+          headshotUrl: z.string().nullable(),
+        }),
+      ),
     }),
   ),
 });
@@ -297,7 +302,9 @@ describe("build and publish an agenda", () => {
       { slug, expectedRevision: working.revision },
       organizer.cookie,
     );
-    expect(firstPublication.status).toBe(200);
+    expect(firstPublication.status, JSON.stringify(firstPublication.body)).toBe(
+      200,
+    );
     let published = await getPublished(slug);
     expect(published.revision).toBe(1);
     expect(published.items.map((item) => item.title)).toEqual([
@@ -307,6 +314,38 @@ describe("build and publish an agenda", () => {
       "Independent systems",
     ]);
     expect(published.items[0]?.speakers[0]?.displayName).toBe("Shared Speaker");
+    const publishedHeadshotUrl = published.items[0]?.speakers[0]?.headshotUrl;
+    expect(publishedHeadshotUrl).toMatch(
+      /^\/api\/speaker-headshots\/[0-9a-f-]+$/,
+    );
+    const replacedProfile = getResult(
+      (
+        await callTrpc(
+          "speakerProfile.saveOwn",
+          {
+            displayName: "Shared Speaker",
+            bio: "Shared bio",
+            headshot: {
+              fileName: "replacement.png",
+              contentType: "image/png",
+              contentBase64:
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            },
+          },
+          sharedSpeaker.cookie,
+        )
+      ).body,
+      z.object({ headshotUrl: z.string() }),
+    );
+    expect(replacedProfile.headshotUrl).not.toBe(publishedHeadshotUrl);
+    expect((await workerFetch(publishedHeadshotUrl ?? "")).status).toBe(200);
+    expect(
+      (
+        await workerFetch(replacedProfile.headshotUrl, {
+          headers: { Cookie: sharedSpeaker.cookie },
+        })
+      ).status,
+    ).toBe(200);
     expect(
       await testEnvironment.DB.prepare(
         "SELECT subject, body FROM agenda_delivery_work WHERE agenda_item_id = ? AND calendar_sequence = 0",
@@ -378,6 +417,13 @@ describe("build and publish an agenda", () => {
     expect(publicSchedule.event.timezone).toBe("Europe/Berlin");
     expect(publicSchedule.items[0]).not.toHaveProperty("programItemId");
     expect(publicSchedule.items[0]).not.toHaveProperty("publicationId");
+    expect(
+      (
+        publicSchedule.items[0] as {
+          speakers: Array<{ headshotUrl: string }>;
+        }
+      ).speakers[0]?.headshotUrl,
+    ).toMatch(/^https?:\/\/[^/]+\/api\/speaker-headshots\/[0-9a-f-]+$/);
 
     const calendarResponse = await workerFetch(
       `/api/v1/events/${slug}/schedule.ics`,
@@ -1078,14 +1124,34 @@ async function seedAcceptedProgram(
     ]);
     seeded.push({ programItemId, submissionId });
   }
+  const sharedHeadshotFileId = crypto.randomUUID();
+  const sharedHeadshotObjectKey = `speaker-headshots/${sharedSpeakerUserId}/${sharedHeadshotFileId}`;
   await testEnvironment.DB.batch([
     testEnvironment.DB.prepare(
-      "INSERT INTO speaker_profiles (id, user_id, display_name, bio, created_at, updated_at) VALUES (?, ?, 'Shared Speaker', 'Shared bio', ?, ?)",
-    ).bind(crypto.randomUUID(), sharedSpeakerUserId, now, now),
+      "INSERT INTO stored_files (id, object_key, file_name, content_type, size_bytes, uploaded_by_user_id, created_at) VALUES (?, ?, 'shared.png', 'image/png', 1, ?, ?)",
+    ).bind(
+      sharedHeadshotFileId,
+      sharedHeadshotObjectKey,
+      sharedSpeakerUserId,
+      now,
+    ),
+    testEnvironment.DB.prepare(
+      "INSERT INTO speaker_profiles (id, user_id, display_name, bio, headshot_stored_file_id, created_at, updated_at) VALUES (?, ?, 'Shared Speaker', 'Shared bio', ?, ?, ?)",
+    ).bind(
+      crypto.randomUUID(),
+      sharedSpeakerUserId,
+      sharedHeadshotFileId,
+      now,
+      now,
+    ),
     testEnvironment.DB.prepare(
       "INSERT INTO speaker_profiles (id, user_id, display_name, bio, created_at, updated_at) VALUES (?, ?, 'Other Speaker', 'Other bio', ?, ?)",
     ).bind(crypto.randomUUID(), otherSpeakerUserId, now, now),
   ]);
+  await testEnvironment.FILES.put(
+    sharedHeadshotObjectKey,
+    Uint8Array.from([0x89, 0x50, 0x4e, 0x47]),
+  );
   return {
     first: seeded[0]?.programItemId ?? "",
     second: seeded[1]?.programItemId ?? "",

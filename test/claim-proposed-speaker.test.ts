@@ -742,7 +742,6 @@ describe("claim a proposed-speaker invitation", () => {
             {
               displayName: "Not a speaker",
               bio: "This user has no claimed speaker relationship.",
-              headshotUrl: null,
             },
             user.cookie,
           )
@@ -756,14 +755,53 @@ describe("claim a proposed-speaker invitation", () => {
           "speakerProfile.saveOwn",
           {
             displayName: "Profile Recipient",
-            bio: "A reusable biography for every event and submission.",
-            headshotUrl: "https://example.com/profile.jpg",
+            headshot: {
+              fileName: "profile.png",
+              contentType: "image/png",
+              contentBase64:
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            },
           },
           recipient.cookie,
         )
       ).body,
       profileSchema,
     );
+    expect(created.bio).toBe("");
+    expect(created.headshotUrl).toMatch(
+      /^\/api\/speaker-headshots\/[0-9a-f-]+$/,
+    );
+    expect((await workerFetch(created.headshotUrl ?? "")).status).toBe(404);
+    const headshot = await workerFetch(created.headshotUrl ?? "", {
+      headers: { Cookie: recipient.cookie },
+    });
+    expect(headshot.status).toBe(200);
+    expect(headshot.headers.get("content-type")).toBe("image/png");
+    expect((await headshot.arrayBuffer()).byteLength).toBeGreaterThan(0);
+    expect(
+      await testEnvironment.DB.prepare(
+        "SELECT headshot_stored_file_id AS fileId FROM speaker_profiles WHERE id = ?",
+      )
+        .bind(created.id)
+        .first<{ fileId: string }>(),
+    ).toEqual({ fileId: created.headshotUrl?.split("/").at(-1) });
+    expect(
+      (
+        await callTrpc(
+          "speakerProfile.saveOwn",
+          {
+            displayName: "Profile Recipient",
+            bio: "",
+            headshot: {
+              fileName: "profile.png",
+              contentType: "image/png",
+              contentBase64: btoa("not a PNG"),
+            },
+          },
+          recipient.cookie,
+        )
+      ).status,
+    ).toBe(400);
     const updated = getResult(
       (
         await callTrpc(
@@ -771,7 +809,6 @@ describe("claim a proposed-speaker invitation", () => {
           {
             displayName: "Riley Profile",
             bio: "An updated biography that keeps the same global profile.",
-            headshotUrl: null,
           },
           recipient.cookie,
         )
@@ -781,8 +818,43 @@ describe("claim a proposed-speaker invitation", () => {
     expect(updated).toMatchObject({
       id: created.id,
       displayName: "Riley Profile",
-      headshotUrl: null,
+      headshotUrl: created.headshotUrl,
     });
+    const replaced = getResult(
+      (
+        await callTrpc(
+          "speakerProfile.saveOwn",
+          {
+            displayName: "Riley Profile",
+            bio: "An updated biography that keeps the same global profile.",
+            headshot: {
+              fileName: "replacement.png",
+              contentType: "image/png",
+              contentBase64:
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            },
+          },
+          recipient.cookie,
+        )
+      ).body,
+      profileSchema,
+    );
+    expect(replaced.headshotUrl).not.toBe(created.headshotUrl);
+    expect((await workerFetch(created.headshotUrl ?? "")).status).toBe(404);
+    expect(
+      (
+        await workerFetch(replaced.headshotUrl ?? "", {
+          headers: { Cookie: recipient.cookie },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      await testEnvironment.DB.prepare(
+        "SELECT COUNT(*) AS count FROM stored_files WHERE uploaded_by_user_id = ? AND object_key LIKE 'speaker-headshots/%'",
+      )
+        .bind(recipient.userId)
+        .first<{ count: number }>(),
+    ).toEqual({ count: 1 });
     expect(
       await testEnvironment.DB.prepare(
         "SELECT COUNT(*) AS count FROM speaker_profiles WHERE user_id = ?",
