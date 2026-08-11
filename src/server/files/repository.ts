@@ -8,7 +8,6 @@ type PutStoredFileResult =
   | {
       ok: true;
       value: {
-        objectKey: string;
         record: {
           id: string;
           objectKey: string;
@@ -27,6 +26,7 @@ export async function putStoredFile(
   uploadedByUserId: UserId,
   directory: string,
   input: StoredFileUpload,
+  isValid: (bytes: Uint8Array, contentType: string) => boolean = () => true,
 ): Promise<PutStoredFileResult> {
   let bytes: Uint8Array;
   try {
@@ -36,7 +36,10 @@ export async function putStoredFile(
   } catch {
     return { ok: false, error: "invalid_file" };
   }
-  if (bytes.byteLength > MAX_STORED_FILE_BYTES) {
+  if (
+    bytes.byteLength > MAX_STORED_FILE_BYTES ||
+    !isValid(bytes, input.contentType)
+  ) {
     return { ok: false, error: "invalid_file" };
   }
 
@@ -54,7 +57,6 @@ export async function putStoredFile(
   return {
     ok: true,
     value: {
-      objectKey,
       record: {
         id,
         objectKey,

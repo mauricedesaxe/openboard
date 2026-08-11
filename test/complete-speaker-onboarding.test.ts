@@ -340,7 +340,6 @@ describe("complete speaker onboarding tasks", () => {
       {
         displayName: "Maya Speaker",
         bio: "A reusable profile shared across accepted program work.",
-        headshotUrl: null,
       },
       maya.cookie,
     );
@@ -370,7 +369,6 @@ describe("complete speaker onboarding tasks", () => {
       {
         displayName: "Maya Speaker",
         bio: "A corrected reusable profile shared across accepted program work.",
-        headshotUrl: null,
       },
       maya.cookie,
     );

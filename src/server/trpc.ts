@@ -36,10 +36,7 @@ import {
   reviewerAssignmentIdSchema,
   saveReviewSchema,
 } from "../shared/reviews";
-import {
-  speakerHeadshotUploadSchema,
-  speakerProfileInputSchema,
-} from "../shared/speaker-profiles";
+import { saveSpeakerProfileSchema } from "../shared/speaker-profiles";
 import {
   addSubmissionSpeakerSchema,
   proposalUpdateSchema,
@@ -133,7 +130,6 @@ import {
 import {
   getOwnSpeakerProfileState,
   saveOwnSpeakerProfile,
-  uploadOwnSpeakerHeadshot,
 } from "./speaker-profiles/repository";
 import { sendSubmissionSpeakerInvitation } from "./submission-speakers/delivery";
 import {
@@ -1136,31 +1132,9 @@ export const appRouter = trpc.router({
       getOwnSpeakerProfileState(ctx.database, ctx.userId),
     ),
     saveOwn: authenticatedProcedure
-      .input(speakerProfileInputSchema)
+      .input(saveSpeakerProfileSchema)
       .mutation(async ({ ctx, input }) => {
         const result = await saveOwnSpeakerProfile(
-          ctx.database,
-          ctx.userId,
-          input,
-        );
-        if (!result.ok) {
-          throw new TRPCError({
-            code:
-              result.error === "not_a_speaker"
-                ? "FORBIDDEN"
-                : "INTERNAL_SERVER_ERROR",
-            message:
-              result.error === "not_a_speaker"
-                ? "Claim a proposed-speaker invitation before creating a profile."
-                : "The speaker profile could not be saved.",
-          });
-        }
-        return result.value;
-      }),
-    uploadHeadshot: authenticatedProcedure
-      .input(speakerHeadshotUploadSchema)
-      .mutation(async ({ ctx, input }) => {
-        const result = await uploadOwnSpeakerHeadshot(
           ctx.database,
           ctx.files,
           ctx.userId,
@@ -1171,18 +1145,15 @@ export const appRouter = trpc.router({
             code:
               result.error === "not_a_speaker"
                 ? "FORBIDDEN"
-                : result.error === "invalid_file" ||
-                    result.error === "profile_required"
+                : result.error === "invalid_file"
                   ? "BAD_REQUEST"
                   : "INTERNAL_SERVER_ERROR",
             message:
               result.error === "not_a_speaker"
-                ? "Claim a proposed-speaker invitation before uploading a headshot."
-                : result.error === "profile_required"
-                  ? "Save the speaker profile before uploading a headshot."
-                  : result.error === "invalid_file"
-                    ? "Choose a JPEG, PNG, or WebP image under 10 MB."
-                    : "The headshot could not be uploaded.",
+                ? "Claim a proposed-speaker invitation before creating a profile."
+                : result.error === "invalid_file"
+                  ? "Choose a valid JPEG, PNG, or WebP image under 10 MB."
+                  : "The speaker profile could not be saved.",
           });
         }
         return result.value;

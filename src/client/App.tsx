@@ -2942,21 +2942,13 @@ function SpeakerProfilePage() {
     contentType: SpeakerHeadshotUpload["contentType"];
   }>();
   const [headshotPreviewUrl, setHeadshotPreviewUrl] = useState<string>();
+  const [savedHeadshotUrl, setSavedHeadshotUrl] = useState<string>();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const save = useMutation(
     trpc.speakerProfile.saveOwn.mutationOptions({
       onSuccess: async (saved) => {
-        setDraft(saved);
-        await queryClient.invalidateQueries(
-          trpc.speakerProfile.getOwn.queryFilter(),
-        );
-      },
-    }),
-  );
-  const uploadHeadshot = useMutation(
-    trpc.speakerProfile.uploadHeadshot.mutationOptions({
-      onSuccess: async (saved) => {
-        setDraft(saved);
+        setDraft({ displayName: saved.displayName, bio: saved.bio });
+        setSavedHeadshotUrl(saved.headshotUrl ?? undefined);
         setHeadshotFile(undefined);
         setHeadshotPreviewUrl(undefined);
         await queryClient.invalidateQueries(
@@ -2995,12 +2987,14 @@ function SpeakerProfilePage() {
     );
   }
 
-  const current = draft ??
-    profileState.data.profile ?? {
-      displayName: "",
-      bio: "",
-      headshotUrl: null,
-    };
+  const current =
+    draft ??
+    (profileState.data.profile
+      ? {
+          displayName: profileState.data.profile.displayName,
+          bio: profileState.data.profile.bio,
+        }
+      : { displayName: "", bio: "" });
   function updateProfile(values: Partial<SpeakerProfileInput>) {
     setDraft({ ...current, ...values });
   }
@@ -3008,12 +3002,17 @@ function SpeakerProfilePage() {
     event.preventDefault();
     setIsSubmitting(true);
     try {
-      await save.mutateAsync(current);
-      if (!headshotFile) return;
-      await uploadHeadshot.mutateAsync({
-        fileName: headshotFile.file.name,
-        contentType: headshotFile.contentType,
-        contentBase64: await browserFileToBase64(headshotFile.file),
+      await save.mutateAsync({
+        ...current,
+        ...(headshotFile
+          ? {
+              headshot: {
+                fileName: headshotFile.file.name,
+                contentType: headshotFile.contentType,
+                contentBase64: await browserFileToBase64(headshotFile.file),
+              },
+            }
+          : {}),
       });
     } catch {
       return;
@@ -3021,8 +3020,11 @@ function SpeakerProfilePage() {
       setIsSubmitting(false);
     }
   }
-  const pending = isSubmitting || save.isPending || uploadHeadshot.isPending;
-  const headshotUrl = headshotPreviewUrl ?? current.headshotUrl;
+  const pending = isSubmitting || save.isPending;
+  const headshotUrl =
+    headshotPreviewUrl ??
+    savedHeadshotUrl ??
+    profileState.data.profile?.headshotUrl;
 
   return (
     <div className="page setup-page">
@@ -3099,9 +3101,9 @@ function SpeakerProfilePage() {
               />
             </Field>
           </fieldset>
-          {(save.error || uploadHeadshot.error) && (
+          {save.error && (
             <p className="form-error" role="alert">
-              {save.error?.message ?? uploadHeadshot.error?.message}
+              {save.error.message}
             </p>
           )}
           <div className="submission-actions">

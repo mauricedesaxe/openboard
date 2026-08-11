@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { storedFileUploadSchema } from "./files";
-import type { speakerProfileInputSchema } from "./speaker-profiles";
+import type { speakerProfileSchema } from "./speaker-profiles";
 
 export type TaskDefinitionId = string & {
   readonly __brand: "TaskDefinitionId";
@@ -133,7 +133,10 @@ export const taskFileUploadSchema = assignmentInputSchema.extend(
 );
 
 export function profileSatisfiesRequirement(
-  profile: z.infer<typeof speakerProfileInputSchema>,
+  profile: Pick<
+    z.infer<typeof speakerProfileSchema>,
+    "bio" | "displayName" | "headshotUrl"
+  >,
   requirement: z.infer<typeof profileRequirementSchema>,
 ): boolean {
   if (requirement === "headshot") return Boolean(profile.headshotUrl);

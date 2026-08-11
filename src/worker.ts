@@ -13,6 +13,8 @@ import { findPublicSpeakerHeadshot } from "./server/speaker-profiles/repository"
 import { appRouter, createTrpcContext } from "./server/trpc";
 import type { UserId } from "./shared/events";
 
+const IMMUTABLE_CACHE_SECONDS = 365 * 24 * 60 * 60;
+
 export default {
   async fetch(request, environment): Promise<Response> {
     const configResult = parseConfig(environment);
@@ -93,7 +95,7 @@ export default {
       const object = await environment.FILES.get(file.objectKey);
       if (!object) return new Response("Not found", { status: 404 });
       const headers = new Headers({
-        "Cache-Control": "public, max-age=31536000, immutable",
+        "Cache-Control": `public, max-age=${IMMUTABLE_CACHE_SECONDS}, immutable`,
         "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
         "Content-Type": file.contentType,
         ETag: object.httpEtag,

@@ -490,7 +490,7 @@ export async function attachTaskFile(
   } catch (error: unknown) {
     await compensateStoredFile(
       files,
-      stored.value.objectKey,
+      stored.value.record.objectKey,
       "task_file_compensation_failed",
     );
     return {
