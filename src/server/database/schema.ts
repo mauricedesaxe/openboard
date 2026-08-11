@@ -728,9 +728,6 @@ export const taskEvidence = sqliteTable(
       table.assignmentId,
       table.completionRevision,
     ),
-    uniqueIndex("task_evidence_profile_once_idx")
-      .on(table.assignmentId, table.completionRevision, table.speakerProfileId)
-      .where(sql`${table.kind} = 'profile'`),
   ],
 );
 

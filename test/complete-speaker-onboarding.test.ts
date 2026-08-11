@@ -38,6 +38,7 @@ const boardSchema = z.object({
       completed: z.boolean(),
       completionRevision: z.number(),
       lastReminderAt: z.string().nullable(),
+      evidence: z.array(z.object({ id: z.string(), kind: z.string() })),
     }),
   ),
   targets: z.object({
@@ -314,6 +315,36 @@ describe("complete speaker onboarding tasks", () => {
       maya.cookie,
     );
     let board = await getBoard(owner.cookie, slug);
+    expect(findAssignment(board, profileAssignment.id).completed).toBe(true);
+    const profileEvidence = findAssignment(
+      board,
+      profileAssignment.id,
+    ).evidence.find((evidence) => evidence.kind === "profile");
+    if (!profileEvidence) throw new Error("Expected profile evidence");
+    expect(
+      (
+        await callTrpc(
+          "onboarding.rejectEvidence",
+          {
+            evidenceId: profileEvidence.id,
+            reason: "The biography needs a correction.",
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(200);
+    board = await getBoard(owner.cookie, slug);
+    expect(findAssignment(board, profileAssignment.id).completed).toBe(false);
+    await callTrpc(
+      "speakerProfile.saveOwn",
+      {
+        displayName: "Maya Speaker",
+        bio: "A corrected reusable profile shared across accepted program work.",
+        headshotUrl: null,
+      },
+      maya.cookie,
+    );
+    board = await getBoard(owner.cookie, slug);
     expect(findAssignment(board, profileAssignment.id).completed).toBe(true);
     expect(readiness(board, evaluating.id)).toMatchObject({ ready: true });
     expect(readiness(board, practical.id)).toMatchObject({
