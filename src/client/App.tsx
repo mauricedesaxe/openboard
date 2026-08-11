@@ -2719,9 +2719,11 @@ function InvitationPage({
   );
   const decline = useMutation(trpc.invitations.decline.mutationOptions());
   const acceptanceKey = `openboard:pending-invitation-acceptance:${secret}`;
+  const acceptanceStarted = useRef(false);
   const acceptAfterSignIn =
     window.sessionStorage.getItem(acceptanceKey) === "true";
   const finishPendingAcceptance = useEffectEvent(() => {
+    acceptanceStarted.current = true;
     window.sessionStorage.removeItem(acceptanceKey);
     accept.mutate({ secret });
   });
@@ -2732,7 +2734,8 @@ function InvitationPage({
       signedIn &&
       invitation.data &&
       email === invitation.data.email &&
-      accept.isIdle
+      accept.isIdle &&
+      !acceptanceStarted.current
     ) {
       finishPendingAcceptance();
     }
