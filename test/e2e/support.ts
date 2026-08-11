@@ -17,3 +17,17 @@ export async function requestSignInCode(
   expect(code).toMatch(/^\d{6}$/);
   return code ?? "";
 }
+
+export async function signIn(
+  page: Page,
+  email: string,
+  buttonName: string,
+): Promise<void> {
+  const code = await requestSignInCode(page, email);
+  await page.getByRole("textbox", { name: "Sign-in code" }).fill(code);
+  await Promise.all([
+    page.waitForURL((url) => !url.pathname.startsWith("/sign-in")),
+    page.getByRole("button", { name: buttonName }).click(),
+  ]);
+  await page.waitForLoadState("networkidle");
+}

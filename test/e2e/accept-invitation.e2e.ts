@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { requestSignInCode } from "./support";
+import { requestSignInCode, signIn } from "./support";
 
 test("accepts an event invitation after sign-in without a second click", async ({
   page,
@@ -47,15 +47,6 @@ test("accepts an event invitation after sign-in without a second click", async (
     page.getByRole("heading", { name: "Browser Invitation Conference" }),
   ).toBeVisible();
 });
-
-async function signIn(page: Page, email: string, buttonName: string) {
-  const code = await requestSignInCode(page, email);
-  await page.getByRole("textbox", { name: "Sign-in code" }).fill(code);
-  await Promise.all([
-    page.waitForURL((url) => !url.pathname.startsWith("/sign-in")),
-    page.getByRole("button", { name: buttonName }).click(),
-  ]);
-}
 
 async function mutate(page: Page, path: string, input: unknown) {
   const response = await page.request.post(`/api/trpc/${path}`, {
