@@ -34,7 +34,6 @@ export function renderPublishedScheduleCalendar(
     "PRODID:-//OpenBoard//Published Schedule 1.0//EN",
     "VERSION:2.0",
     "CALSCALE:GREGORIAN",
-    "METHOD:PUBLISH",
     `X-WR-CALNAME:${escapeText(schedule.event.name)}`,
     `X-WR-TIMEZONE:${escapeText(schedule.event.timezone)}`,
     `X-OPENBOARD-REVISION:${schedule.revision}`,
@@ -141,21 +140,27 @@ function calendarDateTime(value: string): string {
 }
 
 function escapeText(value: string): string {
-  return value
+  return sanitizeCalendarValue(value)
     .replaceAll("\\", "\\\\")
-    .replaceAll("\r\n", "\\n")
     .replaceAll("\n", "\\n")
     .replaceAll(",", "\\,")
     .replaceAll(";", "\\;");
 }
 
 function escapeParameter(value: string): string {
-  return `"${value
+  return `"${sanitizeCalendarValue(value)
     .replaceAll("^", "^^")
-    .replaceAll("\r\n", "^n")
-    .replaceAll("\r", "^n")
     .replaceAll("\n", "^n")
     .replaceAll('"', "^'")}"`;
+}
+
+function sanitizeCalendarValue(value: string): string {
+  return [...value.replaceAll("\r\n", "\n").replaceAll("\r", "\n")]
+    .filter((character) => {
+      const code = character.charCodeAt(0);
+      return code === 9 || code === 10 || (code >= 32 && code !== 127);
+    })
+    .join("");
 }
 
 function foldLine(line: string): string[] {

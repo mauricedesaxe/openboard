@@ -23,7 +23,7 @@ export async function sendAgendaCalendarDelivery(
         disposition: "attachment",
         filename: "openboard-session.ics",
         type: `text/calendar; method=${delivery.method}; charset=utf-8`,
-        content: delivery.calendar,
+        content: new TextEncoder().encode(delivery.calendar),
       },
     ],
   });

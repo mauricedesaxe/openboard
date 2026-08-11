@@ -59,6 +59,7 @@ describe("published schedule", () => {
     const unfolded = calendar.replaceAll("\r\n ", "");
 
     expect(calendar).toContain("X-OPENBOARD-REVISION:7\r\n");
+    expect(calendar).not.toContain("METHOD:PUBLISH");
     expect(calendar).toContain("X-WR-TIMEZONE:Europe/Berlin\r\n");
     expect(calendar).toContain("UID:agenda-1@openboard\r\n");
     expect(calendar).toContain("SEQUENCE:3\r\n");
@@ -86,7 +87,7 @@ describe("published schedule", () => {
       sequence: 4,
       item: {
         title: "APIs and calendars",
-        abstract: "Calendar details",
+        abstract: "Calendar\rdetails\u0001",
         trackName: "Engineering",
         roomName: "Main hall",
         startsAt: "2028-08-10T08:00:00.000Z",
@@ -104,5 +105,7 @@ describe("published schedule", () => {
       'ATTENDEE;CN="A^^^\'B^nC":mailto:speaker@example.com\r\n',
     );
     expect(message.calendar).toContain("STATUS:CANCELLED\r\n");
+    expect(message.calendar).toContain("DESCRIPTION:Calendar\\ndetails");
+    expect(message.calendar).not.toContain("\u0001");
   });
 });
