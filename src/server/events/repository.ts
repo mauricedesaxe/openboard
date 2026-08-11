@@ -95,9 +95,13 @@ export async function findEventForOrganizer(
   userId: UserId,
   slug: string,
 ): Promise<(Event & { agendaRevision: number }) | undefined> {
-  const access = or(
+  const organizerAccess = or(
     eq(events.ownerUserId, userId),
-    and(eq(eventRoles.userId, userId), isNull(eventRoles.revokedAt)),
+    and(
+      eq(eventRoles.userId, userId),
+      eq(eventRoles.role, "organizer"),
+      isNull(eventRoles.revokedAt),
+    ),
   );
   const [result] = await database
     .select({
@@ -110,7 +114,6 @@ export async function findEventForOrganizer(
       timezone: events.timezone,
       agendaId: agendas.id,
       agendaRevision: agendas.revision,
-      role: eventRoles.role,
     })
     .from(events)
     .innerJoin(agendas, eq(agendas.eventId, events.id))
@@ -118,21 +121,14 @@ export async function findEventForOrganizer(
       eventRoles,
       and(eq(eventRoles.eventId, events.id), eq(eventRoles.userId, userId)),
     )
-    .where(and(access, eq(events.slug, slug)))
+    .where(and(organizerAccess, eq(events.slug, slug)))
     .limit(1);
   if (!result) return undefined;
-  const { role, ...event } = result;
   const eventAccess: EventAccess =
-    event.ownerUserId === userId
-      ? "owner"
-      : role === "organizer"
-        ? "organizer"
-        : "reviewer";
-  return eventAccess === "reviewer"
-    ? undefined
-    : ({ ...event, access: eventAccess } as Event & {
-        agendaRevision: number;
-      });
+    result.ownerUserId === userId ? "owner" : "organizer";
+  return { ...result, access: eventAccess } as Event & {
+    agendaRevision: number;
+  };
 }
 
 export async function listOwnedEvents(
