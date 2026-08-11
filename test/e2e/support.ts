@@ -17,12 +17,30 @@ export async function requestSignInCode(
   expect(code).toMatch(/^\d{6}$/);
   return code ?? "";
 }
+
 export async function signIn(
   page: Page,
   email: string,
   buttonName: string,
 ): Promise<void> {
   const code = await requestSignInCode(page, email);
+  await submitSignInCode(page, code, buttonName);
+}
+
+export async function completeSignIn(
+  page: Page,
+  buttonName: string,
+): Promise<void> {
+  const code = await page.locator(".dev-code strong").textContent();
+  expect(code).toMatch(/^\d{6}$/);
+  await submitSignInCode(page, code ?? "", buttonName);
+}
+
+async function submitSignInCode(
+  page: Page,
+  code: string,
+  buttonName: string,
+): Promise<void> {
   await page.getByRole("textbox", { name: "Sign-in code" }).fill(code);
   await Promise.all([
     page.waitForURL((url) => !url.pathname.startsWith("/sign-in")),
