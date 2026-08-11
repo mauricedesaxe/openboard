@@ -132,6 +132,7 @@ export const invitations = sqliteTable(
       .notNull()
       .references(() => user.id),
     replacementForInvitationId: text("replacement_for_invitation_id"),
+    replacementToken: text("replacement_token"),
     acceptedByUserId: text("accepted_by_user_id").references(() => user.id),
     expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
     resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
@@ -334,6 +335,8 @@ export const submissions = sqliteTable(
     abstract: text("abstract").notNull(),
     format: text("format").notNull(),
     status: text("status", { enum: ["active", "withdrawn"] }).notNull(),
+    revision: integer("revision").notNull().default(1),
+    writeToken: text("write_token").notNull().default(""),
     withdrawnAt: integer("withdrawn_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
@@ -436,6 +439,7 @@ export const formResponses = sqliteTable("form_responses", {
     .unique()
     .references(() => submissions.id, { onDelete: "cascade" }),
   answersJson: text("answers_json").notNull(),
+  writeToken: text("write_token").notNull().default(""),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });

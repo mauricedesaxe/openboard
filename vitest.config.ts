@@ -10,12 +10,20 @@ export default defineConfig(async () => {
   const migrations = await readD1Migrations(
     path.join(import.meta.dirname, "migrations"),
   );
+  const replacementGuardMigration = migrations.filter(({ name }) =>
+    name.startsWith("0025_"),
+  );
 
   return {
     plugins: [
       cloudflareTest({
         wrangler: { configPath: "./wrangler.test.jsonc" },
-        miniflare: { bindings: { TEST_MIGRATIONS: migrations } },
+        miniflare: {
+          bindings: {
+            REPLACEMENT_GUARD_MIGRATION: replacementGuardMigration,
+            TEST_MIGRATIONS: migrations,
+          },
+        },
       }),
     ],
     test: {

@@ -2670,6 +2670,7 @@ function SubmissionPage() {
   const [editState, setEditState] = useState<{
     submissionId: string;
     content: ProposalContent;
+    revision: number;
   }>();
   const update = useMutation(
     trpc.submissions.updateOwn.mutationOptions({
@@ -2677,11 +2678,24 @@ function SubmissionPage() {
         setEditState({
           submissionId: saved.id,
           content: submissionContent(saved),
+          revision: saved.revision,
         });
         await queryClient.invalidateQueries(
           trpc.submissions.get.queryFilter(submissionInput),
         );
       },
+      onError: async (error) => {
+        if (error.data?.code !== "CONFLICT") return;
+        const latest = await queryClient.fetchQuery(
+          trpc.submissions.get.queryOptions(submissionInput),
+        );
+        setEditState({
+          submissionId: latest.id,
+          content: submissionContent(latest),
+          revision: latest.revision,
+        });
+      },
+      retry: false,
     }),
   );
   const withdraw = useMutation(
@@ -2719,6 +2733,10 @@ function SubmissionPage() {
   ) {
     setEditState((current) => ({
       submissionId: loadedSubmission.id,
+      revision:
+        current?.submissionId === loadedSubmission.id
+          ? current.revision
+          : loadedSubmission.revision,
       content: update(
         current?.submissionId === loadedSubmission.id
           ? current.content
@@ -2731,6 +2749,10 @@ function SubmissionPage() {
     event.preventDefault();
     update.mutate({
       submissionId: submissionInput.submissionId,
+      expectedRevision:
+        editState?.submissionId === loadedSubmission.id
+          ? editState.revision
+          : loadedSubmission.revision,
       ...currentContent,
     });
   }
