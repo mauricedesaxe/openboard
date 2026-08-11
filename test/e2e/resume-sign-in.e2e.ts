@@ -1,4 +1,6 @@
-import { devices, expect, test, type Page } from "@playwright/test";
+import { devices, expect, test } from "@playwright/test";
+
+import { requestSignInCode } from "./support";
 
 test.use({ ...devices["Pixel 7"] });
 
@@ -6,7 +8,8 @@ test("keeps the issued sign-in code available after the browser resumes", async 
   page,
 }) => {
   const email = `mobile-resume-${Date.now()}@example.com`;
-  const code = await startSignIn(page, email);
+  await page.goto("/sign-in?returnTo=%2Fevents%2Fnew");
+  const code = await requestSignInCode(page, email);
 
   const resumedSession = page.waitForResponse(
     (response) =>
@@ -49,7 +52,8 @@ test("keeps recovery available when a sign-in code becomes stale", async ({
   page,
 }) => {
   const email = `mobile-stale-${Date.now()}@example.com`;
-  const code = await startSignIn(page, email);
+  await page.goto("/sign-in?returnTo=%2Fevents%2Fnew");
+  const code = await requestSignInCode(page, email);
   const codeOutput = page.locator(".dev-code strong");
 
   await page.getByRole("button", { name: "Resend code" }).click();
@@ -74,19 +78,3 @@ test("keeps recovery available when a sign-in code becomes stale", async ({
     page.getByRole("button", { name: "Open my board" }).click(),
   ]);
 });
-
-async function startSignIn(page: Page, email: string): Promise<string> {
-  const addressSuffix = [...email]
-    .reduce((hash, character) => (hash * 31 + character.charCodeAt(0)) >>> 0, 0)
-    .toString(16)
-    .padStart(8, "0");
-  await page.setExtraHTTPHeaders({
-    "CF-Connecting-IP": `2001:db8:${addressSuffix.slice(0, 4)}:${addressSuffix.slice(4)}::1`,
-  });
-  await page.goto("/sign-in?returnTo=%2Fevents%2Fnew");
-  await page.getByRole("textbox", { name: "Work email" }).fill(email);
-  await page.getByRole("button", { name: "Send sign-in code" }).click();
-  const code = await page.locator(".dev-code strong").textContent();
-  expect(code).toMatch(/^\d{6}$/);
-  return code ?? "";
-}
