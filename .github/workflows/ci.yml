@@ -55,7 +55,7 @@ jobs:
             const current = pull.state === "open" && pull.head.sha === eventHead;
             core.setOutput("current", String(current));
             if (!current) core.notice("Skipping stale preview event.");
-      - name: Create or reuse the per-PR preview D1
+      - name: Recreate the per-PR preview D1
         id: preview-d1
         if: steps.current-pr.outputs.current == 'true'
         env:
@@ -64,13 +64,14 @@ jobs:
           DB_NAME: openboard-pr-${{ github.event.pull_request.number }}
         run: |
           db_id=$(pnpm exec wrangler d1 list --json | jq -r --arg name "$DB_NAME" '.[] | select(.name == $name) | .uuid' | head -n1)
-          if [ -z "$db_id" ]; then
-            create_output=$(pnpm exec wrangler d1 create "$DB_NAME" 2>&1)
-            echo "$create_output"
-            db_id=$(echo "$create_output" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -n1 || true)
+          if [ -n "$db_id" ]; then
+            pnpm exec wrangler d1 delete "$DB_NAME" --skip-confirmation
           fi
+          create_output=$(pnpm exec wrangler d1 create "$DB_NAME" 2>&1)
+          echo "$create_output"
+          db_id=$(echo "$create_output" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -n1 || true)
           if [ -z "$db_id" ]; then
-            echo "Could not create or find the preview D1 $DB_NAME"
+            echo "Could not create the preview D1 $DB_NAME"
             exit 1
           fi
           echo "id=$db_id" >> "$GITHUB_OUTPUT"
