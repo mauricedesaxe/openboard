@@ -1,5 +1,29 @@
 import type { PublishedSchedule } from "../../shared/published-schedule";
 
+export type AgendaCalendarMessageInput = {
+  eventName: string;
+  timezone: string;
+  publishedAt: string;
+  destination: string;
+  recipientName: string;
+  action: "publish" | "update" | "cancel" | "restore";
+  uid: string;
+  sequence: number;
+  item: {
+    title: string;
+    abstract: string | null;
+    format: string | null;
+    trackName: string | null;
+    roomName: string | null;
+    startsAt: string;
+    endsAt: string;
+    speakers: string[];
+  };
+};
+
+/** RFC 5545 limits content lines to 75 UTF-8 octets before folding. */
+const icalContentLineOctetLimit = 75;
+
 export function renderPublishedScheduleCalendar(
   schedule: PublishedSchedule,
 ): string {
@@ -53,6 +77,60 @@ export function renderPublishedScheduleCalendar(
   return `${lines.flatMap(foldLine).join("\r\n")}\r\n`;
 }
 
+export function renderAgendaCalendarMessage(input: AgendaCalendarMessageInput) {
+  const canceled = input.action === "cancel";
+  const method: "CANCEL" | "REQUEST" = canceled ? "CANCEL" : "REQUEST";
+  const description = [
+    input.item.abstract,
+    input.item.speakers.length > 0
+      ? `Speakers: ${input.item.speakers.join(", ")}`
+      : undefined,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join("\n");
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "PRODID:-//OpenBoard//Agenda Delivery 1.0//EN",
+    "VERSION:2.0",
+    "CALSCALE:GREGORIAN",
+    `METHOD:${method}`,
+    `X-WR-TIMEZONE:${escapeText(input.timezone)}`,
+    "BEGIN:VEVENT",
+    `UID:${escapeText(input.uid)}`,
+    `SEQUENCE:${input.sequence}`,
+    `DTSTAMP:${calendarDateTime(input.publishedAt)}`,
+    `DTSTART:${calendarDateTime(input.item.startsAt)}`,
+    `DTEND:${calendarDateTime(input.item.endsAt)}`,
+    `SUMMARY:${escapeText(input.item.title)}`,
+    `ATTENDEE;CN=${escapeParameter(input.recipientName)}:mailto:${input.destination}`,
+  ];
+  if (input.item.roomName) {
+    lines.push(`LOCATION:${escapeText(input.item.roomName)}`);
+  }
+  if (description) lines.push(`DESCRIPTION:${escapeText(description)}`);
+  if (input.item.trackName) {
+    lines.push(`CATEGORIES:${escapeText(input.item.trackName)}`);
+  }
+  lines.push(
+    `STATUS:${canceled ? "CANCELLED" : "CONFIRMED"}`,
+    "END:VEVENT",
+    "END:VCALENDAR",
+  );
+  const calendar = `${lines.flatMap(foldLine).join("\r\n")}\r\n`;
+  const action =
+    input.action === "publish"
+      ? "Invitation"
+      : input.action === "cancel"
+        ? "Canceled"
+        : "Updated";
+  return {
+    method,
+    subject: `${action}: ${input.item.title} at ${input.eventName}`,
+    text: `${input.recipientName}, your calendar entry for ${input.item.title} at ${input.eventName} is ${canceled ? "canceled" : "attached"}.`,
+    calendar,
+  };
+}
+
 function calendarDateTime(value: string): string {
   return new Date(value)
     .toISOString()
@@ -70,10 +148,14 @@ function escapeText(value: string): string {
     .replaceAll(";", "\\;");
 }
 
+function escapeParameter(value: string): string {
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
 function foldLine(line: string): string[] {
   const folded: string[] = [];
   let current = "";
-  let limit = 75;
+  let limit = icalContentLineOctetLimit;
   for (const character of line) {
     const candidate = `${current}${character}`;
     if (
@@ -82,7 +164,7 @@ function foldLine(line: string): string[] {
     ) {
       folded.push(current);
       current = ` ${character}`;
-      limit = 75;
+      limit = icalContentLineOctetLimit;
     } else {
       current = candidate;
     }

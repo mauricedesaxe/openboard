@@ -28,14 +28,14 @@ export async function routePublishedSchedule(
   if (request.method === "OPTIONS") return corsPreflight();
   if (request.method !== "GET") return methodNotAllowed();
 
-  const slug = decodeURIComponent(match[1] ?? "");
-  const schedule = await findPublishedSchedule(database, slug);
-  if (!schedule) {
-    return Response.json(
-      { code: "SCHEDULE_NOT_FOUND", message: "Published schedule not found." },
-      { status: 404, headers: publicHeaders() },
-    );
+  let slug: string;
+  try {
+    slug = decodeURIComponent(match[1] ?? "");
+  } catch {
+    return scheduleNotFound();
   }
+  const schedule = await findPublishedSchedule(database, slug);
+  if (!schedule) return scheduleNotFound();
   const calendar = Boolean(match[2]);
   return publicResponse(
     request,
@@ -46,6 +46,13 @@ export async function routePublishedSchedule(
       ? "text/calendar; charset=utf-8"
       : "application/json; charset=utf-8",
     calendar ? `${slug}.ics` : undefined,
+  );
+}
+
+function scheduleNotFound(): Response {
+  return Response.json(
+    { code: "SCHEDULE_NOT_FOUND", message: "Published schedule not found." },
+    { status: 404, headers: publicHeaders() },
   );
 }
 

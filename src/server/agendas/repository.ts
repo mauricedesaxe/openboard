@@ -34,22 +34,26 @@ import {
   submissions,
   submissionSpeakers,
   tracks,
+  user,
 } from "../database/schema";
 import { findEventForOrganizer } from "../events/repository";
 
-const d1BindingsPerStatement = 80;
+/** Keep generated inserts below D1's 100-variable statement limit. */
+const agendaPublicationBindingBudget = 80;
 const publishedItemBindingsPerRow = 19;
 const publishedSpeakerBindingsPerRow = 8;
 const calendarChangeBindingsPerRow = 7;
 const publishedItemInsertSize = Math.floor(
-  d1BindingsPerStatement / publishedItemBindingsPerRow,
+  agendaPublicationBindingBudget / publishedItemBindingsPerRow,
 );
 const publishedSpeakerInsertSize = Math.floor(
-  d1BindingsPerStatement / publishedSpeakerBindingsPerRow,
+  agendaPublicationBindingBudget / publishedSpeakerBindingsPerRow,
 );
 const calendarChangeInsertSize = Math.floor(
-  d1BindingsPerStatement / calendarChangeBindingsPerRow,
+  agendaPublicationBindingBudget / calendarChangeBindingsPerRow,
 );
+/** Five recipients per insert stays below both D1 statement and batch limits. */
+const calendarDeliveryInsertSize = 5;
 
 export type AgendaWriteError =
   | "agenda_changed"
@@ -462,17 +466,34 @@ export async function publishAgenda(
         },
       }),
   );
-  const deliveryStatements = chunks(
-    calendarChanges.map((change) => ({
+  const deliveryValues = calendarChanges.flatMap((change) =>
+    [
+      ...new Map(
+        change.snapshot.speakers.map(
+          (speaker) =>
+            [
+              speaker.claimedUserId ?? `speaker:${speaker.id}`,
+              speaker,
+            ] as const,
+        ),
+      ).values(),
+    ].map((speaker) => ({
       id: crypto.randomUUID(),
       publicationId,
       agendaItemId: change.snapshot.agendaItemId,
+      recipientKey: speaker.claimedUserId ?? `speaker:${speaker.id}`,
+      recipientUserId: speaker.claimedUserId,
+      destination: speaker.claimedEmail ?? speaker.invitedEmail,
+      recipientName: speaker.displayName,
       action: change.action,
       calendarUid: change.uid,
       calendarSequence: change.sequence,
       createdAt: now,
     })),
-    calendarChangeInsertSize,
+  );
+  const deliveryStatements = chunks(
+    deliveryValues,
+    calendarDeliveryInsertSize,
   ).map((values) => database.insert(agendaDeliveryWork).values(values));
   const finalizationStatement = database
     .update(agendaPublications)
@@ -507,7 +528,7 @@ export async function publishAgenda(
   }
   return {
     ok: true,
-    value: { revision, deliveryWork: calendarChanges.length },
+    value: { revision, deliveryWork: deliveryValues.length },
   };
 }
 
@@ -638,6 +659,8 @@ async function loadWorkingAgenda(
             agendaItemId: agendaItems.id,
             id: submissionSpeakers.id,
             claimedUserId: submissionSpeakers.claimedUserId,
+            claimedEmail: user.email,
+            invitedEmail: submissionSpeakers.invitedEmail,
             invitedName: submissionSpeakers.invitedName,
             displayName: speakerProfiles.displayName,
             bio: speakerProfiles.bio,
@@ -657,6 +680,7 @@ async function loadWorkingAgenda(
             speakerProfiles,
             eq(speakerProfiles.userId, submissionSpeakers.claimedUserId),
           )
+          .leftJoin(user, eq(user.id, submissionSpeakers.claimedUserId))
           .where(
             and(
               eq(agendaItems.agendaId, event.agendaId),
@@ -672,6 +696,8 @@ async function loadWorkingAgenda(
       .map((speaker) => ({
         id: speaker.id,
         claimedUserId: speaker.claimedUserId,
+        claimedEmail: speaker.claimedEmail,
+        invitedEmail: speaker.invitedEmail,
         displayName: speaker.displayName ?? speaker.invitedName,
         bio: speaker.bio,
         headshotUrl: speaker.headshotUrl,

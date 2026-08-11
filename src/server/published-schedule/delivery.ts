@@ -1,19 +1,37 @@
 import { and, asc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 
+import type { AgendaItemId } from "../../shared/agendas";
 import type { Database } from "../database/client";
 import {
   agendaDeliveryAttempts,
   agendaDeliveryWork,
+  agendaPublications,
   calendarSyncStates,
+  publishedAgendaItems,
+  publishedAgendaSpeakers,
 } from "../database/schema";
+
+import { renderAgendaCalendarMessage } from "./ical";
+
+const deliveryClaimTimeoutMs = 5 * 60_000;
+const defaultDeliveryBatchSize = 25;
+const deliveryRetryBaseDelayMs = 30_000;
+const deliveryRetryMaximumDelayMs = 60 * 60_000;
 
 export type AgendaCalendarDelivery = {
   workId: string;
   publicationId: string;
-  agendaItemId: string;
+  agendaItemId: AgendaItemId;
+  recipientKey: string;
+  recipientUserId: string | null;
+  destination: string;
   action: "publish" | "update" | "cancel" | "restore";
   uid: string;
   sequence: number;
+  method: "REQUEST" | "CANCEL";
+  subject: string;
+  text: string;
+  calendar: string;
 };
 
 export async function processAgendaDeliveryWork(
@@ -22,7 +40,7 @@ export async function processAgendaDeliveryWork(
   options: { now?: Date; limit?: number } = {},
 ): Promise<{ delivered: number; failed: number; superseded: number }> {
   const now = options.now ?? new Date();
-  const staleClaim = new Date(now.getTime() - 5 * 60_000);
+  const staleClaim = new Date(now.getTime() - deliveryClaimTimeoutMs);
   const work = await database
     .select()
     .from(agendaDeliveryWork)
@@ -40,7 +58,7 @@ export async function processAgendaDeliveryWork(
       ),
     )
     .orderBy(asc(agendaDeliveryWork.createdAt), asc(agendaDeliveryWork.id))
-    .limit(options.limit ?? 25);
+    .limit(options.limit ?? defaultDeliveryBatchSize);
 
   const result = { delivered: 0, failed: 0, superseded: 0 };
   for (const candidate of work) {
@@ -70,14 +88,17 @@ export async function processAgendaDeliveryWork(
       .limit(1);
     if (
       current[0]?.uid !== candidate.calendarUid ||
-      current[0]?.sequence !== candidate.calendarSequence
+      current[0]?.sequence !== candidate.calendarSequence ||
+      !candidate.recipientKey ||
+      !candidate.destination ||
+      !candidate.recipientName
     ) {
       await finishAttempt(
         database,
         candidate.id,
         attemptNumber,
         startedAt,
-        now,
+        currentTime(options),
         {
           status: "superseded",
         },
@@ -87,20 +108,17 @@ export async function processAgendaDeliveryWork(
     }
 
     try {
-      await deliver({
-        workId: candidate.id,
-        publicationId: candidate.publicationId,
-        agendaItemId: candidate.agendaItemId,
-        action: candidate.action,
-        uid: candidate.calendarUid,
-        sequence: candidate.calendarSequence,
-      });
+      const delivery = await createAgendaCalendarDelivery(database, candidate);
+      if (!delivery)
+        throw new Error("Calendar publication snapshot is missing");
+      await deliver(delivery);
+      const finishedAt = currentTime(options);
       await finishAttempt(
         database,
         candidate.id,
         attemptNumber,
         startedAt,
-        now,
+        finishedAt,
         {
           status: "completed",
         },
@@ -109,24 +127,120 @@ export async function processAgendaDeliveryWork(
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : "Unknown delivery failure";
+      const finishedAt = currentTime(options);
       await finishAttempt(
         database,
         candidate.id,
         attemptNumber,
         startedAt,
-        now,
+        finishedAt,
         {
           status: "failed",
           error: message,
-          nextAttemptAt: new Date(
-            now.getTime() + Math.min(60 * 60_000, 2 ** attemptNumber * 30_000),
-          ),
+          nextAttemptAt: nextDeliveryAttemptAt(finishedAt, attemptNumber),
         },
       );
       result.failed += 1;
     }
   }
   return result;
+}
+
+async function createAgendaCalendarDelivery(
+  database: Database,
+  candidate: typeof agendaDeliveryWork.$inferSelect,
+): Promise<AgendaCalendarDelivery | undefined> {
+  if (
+    !candidate.recipientKey ||
+    !candidate.destination ||
+    !candidate.recipientName
+  ) {
+    return undefined;
+  }
+  const [snapshot] = await database
+    .select({
+      publishedAt: agendaPublications.createdAt,
+      eventName: agendaPublications.eventName,
+      timezone: agendaPublications.timezone,
+      publishedAgendaItemId: publishedAgendaItems.id,
+      title: publishedAgendaItems.title,
+      abstract: publishedAgendaItems.abstract,
+      format: publishedAgendaItems.format,
+      trackName: publishedAgendaItems.trackName,
+      roomName: publishedAgendaItems.roomName,
+      startsAt: publishedAgendaItems.startsAt,
+      endsAt: publishedAgendaItems.endsAt,
+    })
+    .from(publishedAgendaItems)
+    .innerJoin(
+      agendaPublications,
+      eq(agendaPublications.id, publishedAgendaItems.publicationId),
+    )
+    .where(
+      and(
+        eq(publishedAgendaItems.publicationId, candidate.publicationId),
+        eq(publishedAgendaItems.agendaItemId, candidate.agendaItemId),
+      ),
+    )
+    .limit(1);
+  if (!snapshot) return undefined;
+  const speakers = await database
+    .select({ displayName: publishedAgendaSpeakers.displayName })
+    .from(publishedAgendaSpeakers)
+    .where(
+      eq(
+        publishedAgendaSpeakers.publishedAgendaItemId,
+        snapshot.publishedAgendaItemId,
+      ),
+    )
+    .orderBy(
+      asc(publishedAgendaSpeakers.position),
+      asc(publishedAgendaSpeakers.submissionSpeakerId),
+    );
+  const message = renderAgendaCalendarMessage({
+    eventName: snapshot.eventName,
+    timezone: snapshot.timezone,
+    publishedAt: snapshot.publishedAt.toISOString(),
+    destination: candidate.destination,
+    recipientName: candidate.recipientName,
+    action: candidate.action,
+    uid: candidate.calendarUid,
+    sequence: candidate.calendarSequence,
+    item: {
+      title: snapshot.title,
+      abstract: snapshot.abstract,
+      format: snapshot.format,
+      trackName: snapshot.trackName,
+      roomName: snapshot.roomName,
+      startsAt: snapshot.startsAt,
+      endsAt: snapshot.endsAt,
+      speakers: speakers.map((speaker) => speaker.displayName),
+    },
+  });
+  return {
+    workId: candidate.id,
+    publicationId: candidate.publicationId,
+    agendaItemId: candidate.agendaItemId as AgendaItemId,
+    recipientKey: candidate.recipientKey,
+    recipientUserId: candidate.recipientUserId,
+    destination: candidate.destination,
+    action: candidate.action,
+    uid: candidate.calendarUid,
+    sequence: candidate.calendarSequence,
+    ...message,
+  };
+}
+
+function currentTime(options: { now?: Date }): Date {
+  return options.now ?? new Date();
+}
+
+function nextDeliveryAttemptAt(finishedAt: Date, attemptNumber: number): Date {
+  const delay = Math.min(
+    deliveryRetryMaximumDelayMs,
+    2 ** attemptNumber * deliveryRetryBaseDelayMs,
+  );
+  return new Date(finishedAt.getTime() + delay);
 }
 
 async function finishAttempt(

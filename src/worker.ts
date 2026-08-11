@@ -9,7 +9,9 @@ import {
   getCapturedAuthenticationCode,
 } from "./server/identity/auth";
 import { findAccessibleTaskFile } from "./server/onboarding/repository";
+import { processAgendaDeliveryWork } from "./server/published-schedule/delivery";
 import { routePublishedSchedule } from "./server/published-schedule/routes";
+import { sendAgendaCalendarDelivery } from "./server/published-schedule/transport";
 import { appRouter, createTrpcContext } from "./server/trpc";
 import type { UserId } from "./shared/events";
 
@@ -106,4 +108,29 @@ export default {
 
     return environment.ASSETS.fetch(request);
   },
+  scheduled(_controller, environment, context): void {
+    context.waitUntil(deliverPendingAgendaCalendars(environment));
+  },
 } satisfies ExportedHandler<Environment>;
+
+async function deliverPendingAgendaCalendars(
+  environment: Environment,
+): Promise<void> {
+  const configResult = parseConfig(environment);
+  if (!configResult.ok) {
+    console.error(
+      JSON.stringify({
+        event: "agenda_calendar_worker_configuration_invalid",
+        issues: configResult.issues,
+      }),
+    );
+    return;
+  }
+  const result = await processAgendaDeliveryWork(
+    createDatabase(environment.DB),
+    (delivery) => sendAgendaCalendarDelivery(configResult.value, delivery),
+  );
+  console.log(
+    JSON.stringify({ event: "agenda_calendar_worker_completed", ...result }),
+  );
+}
