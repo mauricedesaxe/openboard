@@ -78,6 +78,7 @@ export async function saveOwnSpeakerProfile(
       id: speakerProfiles.id,
       headshotStoredFileId: speakerProfiles.headshotStoredFileId,
       headshotObjectKey: storedFiles.objectKey,
+      updatedAt: speakerProfiles.updatedAt,
     })
     .from(speakerProfiles)
     .leftJoin(
@@ -131,6 +132,7 @@ export async function saveOwnSpeakerProfile(
                       existing.headshotStoredFileId,
                     )
                   : isNull(speakerProfiles.headshotStoredFileId),
+                eq(speakerProfiles.updatedAt, existing.updatedAt),
               )
             : eq(speakerProfiles.id, existing.id),
         );

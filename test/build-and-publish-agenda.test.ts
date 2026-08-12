@@ -1,8 +1,10 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 
 import { createDatabase } from "../src/server/database/client";
 import { processAgendaDeliveryWork } from "../src/server/published-schedule/delivery";
+import { saveOwnSpeakerProfile } from "../src/server/speaker-profiles/repository";
+import type { UserId } from "../src/shared/events";
 
 import {
   callTrpc,
@@ -355,6 +357,55 @@ describe("build and publish an agenda", () => {
     ).toEqual({
       subject: "Calendar: Opening systems",
       body: "Hello Shared Speaker, Opening systems is at OpenBoard Live.",
+    });
+
+    const concurrentUpdatedAt = new Date("2028-01-01T00:00:00.000Z");
+    const putFile = testEnvironment.FILES.put.bind(testEnvironment.FILES);
+    const putFileSpy = vi
+      .spyOn(testEnvironment.FILES, "put")
+      .mockImplementationOnce(async (...arguments_) => {
+        const result = await putFile(...arguments_);
+        await testEnvironment.DB.prepare(
+          "UPDATE speaker_profiles SET display_name = ?, bio = ?, updated_at = ? WHERE user_id = ?",
+        )
+          .bind(
+            "Concurrent Speaker",
+            "Saved while the headshot uploaded.",
+            concurrentUpdatedAt.getTime(),
+            sharedSpeaker.userId,
+          )
+          .run();
+        return result;
+      });
+    const conflictingProfileSave = await saveOwnSpeakerProfile(
+      createDatabase(testEnvironment.DB),
+      testEnvironment.FILES,
+      sharedSpeaker.userId as UserId,
+      {
+        displayName: "Stale Speaker",
+        bio: "This edit started before the concurrent save.",
+        headshot: {
+          fileName: "racing.png",
+          contentType: "image/png",
+          contentBase64:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        },
+      },
+    );
+    putFileSpy.mockRestore();
+    expect(conflictingProfileSave).toEqual({
+      ok: false,
+      error: "headshot_conflict",
+    });
+    expect(
+      await testEnvironment.DB.prepare(
+        "SELECT display_name AS displayName, bio FROM speaker_profiles WHERE user_id = ?",
+      )
+        .bind(sharedSpeaker.userId)
+        .first(),
+    ).toEqual({
+      displayName: "Concurrent Speaker",
+      bio: "Saved while the headshot uploaded.",
     });
 
     const failedDelivery = await processAgendaDeliveryWork(
