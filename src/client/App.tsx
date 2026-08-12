@@ -569,9 +569,18 @@ function CreateEventPage() {
   });
   const [validationError, setValidationError] = useState<string>();
   const [slugEdited, setSlugEdited] = useState(false);
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: input.timezone,
+  }).format(new Date());
 
   function update<K extends keyof EventInput>(field: K, value: EventInput[K]) {
-    setInput((current) => ({ ...current, [field]: value }));
+    setInput((current) => ({
+      ...current,
+      [field]: value,
+      ...(field === "startsOn" && current.endsOn === ""
+        ? { endsOn: value }
+        : {}),
+    }));
   }
 
   function updateName(name: string) {
@@ -642,6 +651,7 @@ function CreateEventPage() {
             <Field label="Starts" name="startsOn">
               <input
                 id="startsOn"
+                min={today}
                 onChange={(event) => update("startsOn", event.target.value)}
                 type="date"
                 value={input.startsOn}
@@ -650,6 +660,7 @@ function CreateEventPage() {
             <Field label="Ends" name="endsOn">
               <input
                 id="endsOn"
+                min={input.startsOn || today}
                 onChange={(event) => update("endsOn", event.target.value)}
                 type="date"
                 value={input.endsOn}
@@ -1122,6 +1133,7 @@ function OrganizerOnboardingPage() {
   const targetOptions = selectedDefinition
     ? onboardingTargetOptions(board.data.targets, selectedDefinition.scope)
     : [];
+  const eventWindow = board.data.event;
 
   function addDefinition(event: FormEvent) {
     event.preventDefault();
@@ -1162,12 +1174,19 @@ function OrganizerOnboardingPage() {
               scope: "program_item_speaker",
               submissionSpeakerId: id,
             } as const);
+    const dueAt = assignment.dueAt
+      ? eventLocalDateTimeToIso({
+          localDateTime: assignment.dueAt,
+          timezone: eventWindow.timezone,
+        })
+      : null;
+    if (assignment.dueAt && !dueAt) return;
     createAssignment.mutate({
       slug,
       taskDefinitionId: selectedDefinition.id,
       target,
       required: assignment.required,
-      dueAt: assignment.dueAt ? new Date(assignment.dueAt).toISOString() : null,
+      dueAt: dueAt ?? null,
     });
   }
 
@@ -1360,7 +1379,11 @@ function OrganizerOnboardingPage() {
               ))}
             </select>
           </Field>
-          <Field label="Due date and time" name="assignment-due">
+          <Field
+            hint={`Event runs ${formatEventDateRange(eventWindow.startsOn, eventWindow.endsOn)} · ${eventWindow.timezone}`}
+            label="Due date and time"
+            name="assignment-due"
+          >
             <input
               id="assignment-due"
               onChange={(event) =>
@@ -1372,6 +1395,11 @@ function OrganizerOnboardingPage() {
               type="datetime-local"
               value={assignment.dueAt}
             />
+            {assignment.dueAt.slice(0, 10) > eventWindow.endsOn && (
+              <span className="form-warning" role="status">
+                The due date is after the event ends. Check this is intentional.
+              </span>
+            )}
           </Field>
           <label className="publication-selection">
             <input
@@ -1786,7 +1814,7 @@ function SpeakerTasksPage() {
                 <h2>{task.name}</h2>
                 <p>
                   {task.dueAt
-                    ? `Due ${new Date(task.dueAt).toLocaleString()}`
+                    ? `Due ${formatDeadline(task.dueAt, task.eventTimezone)}`
                     : "No due date"}
                 </p>
               </div>
@@ -3971,7 +3999,13 @@ function CfpBuilder({
       setValidationError(cfpValidationError(parsed.error.issues[0]));
       return undefined;
     }
-    if (instantFallsAfterLocalDate(parsed.data.deadline, endsOn, timezone)) {
+    if (
+      instantFallsAfterLocalDate({
+        instant: parsed.data.deadline,
+        localDate: endsOn,
+        timezone,
+      })
+    ) {
       setValidationError({
         message: "Choose a deadline on or before the event end date.",
         path: ["deadline"],
@@ -4025,7 +4059,11 @@ function CfpBuilder({
 
   const deadlineBeforeStart =
     definition.deadline !== "" &&
-    instantFallsBeforeLocalDate(definition.deadline, startsOn, timezone);
+    instantFallsBeforeLocalDate({
+      instant: definition.deadline,
+      localDate: startsOn,
+      timezone,
+    });
   return (
     <section className="cfp-builder">
       <div className="builder-title">
@@ -4068,12 +4106,15 @@ function CfpBuilder({
               <input
                 id={`cfp-deadline-${formId}`}
                 type="datetime-local"
-                value={isoToEventLocalDateTime(definition.deadline, timezone)}
+                value={isoToEventLocalDateTime({
+                  instant: definition.deadline,
+                  timezone,
+                })}
                 onChange={(event) => {
-                  const deadline = eventLocalDateTimeToIso(
-                    event.target.value,
+                  const deadline = eventLocalDateTimeToIso({
+                    localDateTime: event.target.value,
                     timezone,
-                  );
+                  });
                   setDefinition((current) => ({
                     ...current,
                     deadline: deadline ?? "",
@@ -5207,6 +5248,13 @@ function PublicCfpPage() {
           <strong>
             {formatDeadline(cfp.data.deadline, cfp.data.event.timezone)}
           </strong>
+          <small>
+            Event{" "}
+            {formatEventDateRange(
+              cfp.data.event.startsOn,
+              cfp.data.event.endsOn,
+            )}
+          </small>
         </div>
       </header>
       <div className="public-form-shell">
@@ -5501,7 +5549,7 @@ function emptyCfpDefinition(
 ): CfpDefinitionInput {
   return {
     name: "",
-    deadline: defaultCfpDeadline(startsOn, timezone),
+    deadline: defaultCfpDeadline({ startsOn, timezone }),
     formats: ["Talk", "Workshop"],
     customFields: [],
   };

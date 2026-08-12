@@ -358,7 +358,13 @@ describe("build and open a conditional CFP", () => {
     expect(publicResponse.status).toBe(200);
     const publicForm = getResult(publicResponse.body, cfpFormContractSchema);
     expect(publicForm).toMatchObject({
-      event: { name: eventInput.name, slug },
+      event: {
+        name: eventInput.name,
+        slug,
+        startsOn: eventInput.startsOn,
+        endsOn: eventInput.endsOn,
+        timezone: eventInput.timezone,
+      },
       name: "Ignored repeat",
       deadline: draftInput.deadline,
       coreFields: {

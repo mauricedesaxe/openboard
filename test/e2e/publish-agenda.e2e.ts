@@ -132,6 +132,14 @@ test("publishes a working placement to every public agenda view", async ({
     "2028-08-13T10:00",
   );
   await expect(placementForm.getByText(/Europe\/Berlin/)).toBeVisible();
+  await expect(placementForm.getByLabel("Starts")).toHaveAttribute(
+    "min",
+    "2028-08-13T00:00",
+  );
+  await expect(placementForm.getByLabel("Ends")).toHaveAttribute(
+    "max",
+    "2028-08-18T23:59",
+  );
   await placementForm
     .getByLabel("Program item")
     .selectOption({ label: "A browser-built agenda · Web systems" });
@@ -164,6 +172,14 @@ test("publishes a working placement to every public agenda view", async ({
   await secondWorkingItem
     .getByLabel("Room")
     .selectOption(secondRoom.id as string);
+  await expect(secondWorkingItem.getByText(/Europe\/Berlin/)).toBeVisible();
+  await secondWorkingItem.getByLabel("Starts").fill("2028-08-12T10:00");
+  await secondWorkingItem.getByLabel("Ends").fill("2028-08-12T11:00");
+  await secondWorkingItem.getByRole("button", { name: "Save move" }).click();
+  await expect(secondWorkingItem.getByLabel("Starts")).toHaveValue(
+    "2028-08-12T10:00",
+  );
+  await expect(page.getByText("Placement moved")).toHaveCount(0);
   await secondWorkingItem.getByLabel("Starts").fill("2028-08-14T10:00");
   await secondWorkingItem.getByLabel("Ends").fill("2028-08-14T11:00");
   await secondWorkingItem.getByRole("button", { name: "Save move" }).click();

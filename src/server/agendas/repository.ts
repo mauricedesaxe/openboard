@@ -886,8 +886,14 @@ function validateForPublication(
         return { ok: false, error: "archived_reference" };
       }
     }
-    const start = resolveEventLocalDateTime(item.startsAtLocal, event.timezone);
-    const end = resolveEventLocalDateTime(item.endsAtLocal, event.timezone);
+    const start = resolveEventLocalDateTime({
+      localDateTime: item.startsAtLocal,
+      timezone: event.timezone,
+    });
+    const end = resolveEventLocalDateTime({
+      localDateTime: item.endsAtLocal,
+      timezone: event.timezone,
+    });
     if (start.status === "ambiguous" || end.status === "ambiguous") {
       return { ok: false, error: "timezone_ambiguous" };
     }

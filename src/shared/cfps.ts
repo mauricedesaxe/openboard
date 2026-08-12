@@ -177,7 +177,13 @@ export const cfpSchema = cfpDefinitionInputSchema.extend({
 export type Cfp = z.infer<typeof cfpSchema>;
 
 export const cfpFormContractSchema = z.object({
-  event: z.object({ name: z.string(), slug: z.string(), timezone: z.string() }),
+  event: z.object({
+    name: z.string(),
+    slug: z.string(),
+    startsOn: z.iso.date(),
+    endsOn: z.iso.date(),
+    timezone: z.string(),
+  }),
   cfpId: z.string().transform((value) => value as CfpId),
   name: z.string(),
   deadline: z.iso.datetime({ offset: true }),

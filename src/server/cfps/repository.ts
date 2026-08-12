@@ -58,7 +58,11 @@ export async function createDraftCfp(
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
   if (
-    instantFallsAfterLocalDate(input.deadline, event.endsOn, event.timezone)
+    instantFallsAfterLocalDate({
+      instant: input.deadline,
+      localDate: event.endsOn,
+      timezone: event.timezone,
+    })
   ) {
     return { ok: false, error: "deadline_after_event" };
   }
@@ -124,7 +128,11 @@ export async function updateDraftCfp(
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
   if (
-    instantFallsAfterLocalDate(input.deadline, event.endsOn, event.timezone)
+    instantFallsAfterLocalDate({
+      instant: input.deadline,
+      localDate: event.endsOn,
+      timezone: event.timezone,
+    })
   ) {
     return { ok: false, error: "deadline_after_event" };
   }
@@ -234,7 +242,11 @@ export async function saveAndOpenCfp(
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
   if (
-    instantFallsAfterLocalDate(input.deadline, event.endsOn, event.timezone)
+    instantFallsAfterLocalDate({
+      instant: input.deadline,
+      localDate: event.endsOn,
+      timezone: event.timezone,
+    })
   ) {
     return { ok: false, error: "deadline_after_event" };
   }
@@ -343,6 +355,8 @@ export async function findPublicCfp(
       eventId: events.id,
       eventName: events.name,
       eventSlug: events.slug,
+      startsOn: events.startsOn,
+      endsOn: events.endsOn,
       timezone: events.timezone,
     })
     .from(cfps)
@@ -362,6 +376,8 @@ export async function findPublicCfp(
     event: {
       name: row.eventName,
       slug: row.eventSlug,
+      startsOn: row.startsOn,
+      endsOn: row.endsOn,
       timezone: row.timezone,
     },
     cfpId: row.cfpId,
