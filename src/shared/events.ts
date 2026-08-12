@@ -13,22 +13,13 @@ const supportedTimezones = new Set([
   ...Intl.supportedValuesOf("timeZone"),
 ]);
 
-export const eventInputSchema = z
+const eventDetailsSchema = z
   .object({
     name: z
       .string()
       .trim()
       .min(2, "Enter at least 2 characters.")
       .max(120, "Enter no more than 120 characters."),
-    slug: z
-      .string()
-      .trim()
-      .min(3, "Enter at least 3 characters.")
-      .max(48, "Enter no more than 48 characters.")
-      .regex(
-        /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
-        "Use lowercase letters, numbers, and hyphens.",
-      ),
     startsOn: z.iso.date({ error: "Choose a start date." }),
     endsOn: z.iso.date({ error: "Choose an end date." }),
     timezone: z
@@ -38,7 +29,29 @@ export const eventInputSchema = z
         "Choose an IANA timezone.",
       ),
   })
-  .superRefine(({ startsOn, endsOn, timezone }, context) => {
+  .superRefine(({ startsOn, endsOn }, context) => {
+    if (startsOn > endsOn) {
+      context.addIssue({
+        code: "custom",
+        message: "The end date must be on or after the start date.",
+        path: ["endsOn"],
+      });
+    }
+  });
+
+const eventSlugSchema = z
+  .string()
+  .trim()
+  .min(3, "Enter at least 3 characters.")
+  .max(48, "Enter no more than 48 characters.")
+  .regex(
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+    "Use lowercase letters, numbers, and hyphens.",
+  );
+
+export const eventInputSchema = eventDetailsSchema
+  .safeExtend({ slug: eventSlugSchema })
+  .superRefine(({ startsOn, timezone }, context) => {
     if (
       supportedTimezones.has(timezone) &&
       startsOn < dateInTimezone(new Date(), timezone)
@@ -49,15 +62,11 @@ export const eventInputSchema = z
         path: ["startsOn"],
       });
     }
-
-    if (startsOn > endsOn) {
-      context.addIssue({
-        code: "custom",
-        message: "The end date must be on or after the start date.",
-        path: ["endsOn"],
-      });
-    }
   });
+
+export const eventSettingsInputSchema = eventDetailsSchema.safeExtend({
+  slug: eventSlugSchema,
+});
 
 export function slugifyEventName(name: string) {
   return name
@@ -71,8 +80,9 @@ export function slugifyEventName(name: string) {
 }
 
 export type EventInput = z.infer<typeof eventInputSchema>;
+export type EventSettingsInput = z.infer<typeof eventSettingsInputSchema>;
 
-export const eventSchema = eventInputSchema.extend({
+export const eventSchema = eventSettingsInputSchema.extend({
   id: z.string().transform((value) => value as EventId),
   ownerUserId: z.string().transform((value) => value as UserId),
   agendaId: z.string(),
