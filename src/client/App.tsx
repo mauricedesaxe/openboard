@@ -1,5 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+} from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
   Link,
@@ -53,7 +60,6 @@ import {
   type SubmissionId,
 } from "../shared/submissions";
 
-import { AgendaPage, PublicAgendaPage } from "./AgendaPage";
 import { MutationStatus } from "./MutationStatus";
 import { authClient } from "./auth";
 import {
@@ -66,6 +72,14 @@ import { useTRPC } from "./trpc";
 
 const ONBOARDING_REFETCH_INTERVAL_MS = 15_000;
 const FILE_ENCODING_CHUNK_BYTES = 32_768;
+const AgendaPage = lazy(() =>
+  import("./AgendaPage").then((module) => ({ default: module.AgendaPage })),
+);
+const PublicAgendaPage = lazy(() =>
+  import("./AgendaPage").then((module) => ({
+    default: module.PublicAgendaPage,
+  })),
+);
 
 function pluralize(count: number, singular: string) {
   return count === 1 ? singular : `${singular}s`;
@@ -78,11 +92,13 @@ export function App() {
   }, [location.pathname]);
 
   return (
-    <Routes>
-      <Route path="/events/:slug/cfp" element={<PublicCfpPage />} />
-      <Route path="/events/:slug/schedule" element={<PublicAgendaPage />} />
-      <Route path="/*" element={<SessionApp />} />
-    </Routes>
+    <Suspense fallback={<FullPageStatus label="Opening agenda" />}>
+      <Routes>
+        <Route path="/events/:slug/cfp" element={<PublicCfpPage />} />
+        <Route path="/events/:slug/schedule" element={<PublicAgendaPage />} />
+        <Route path="/*" element={<SessionApp />} />
+      </Routes>
+    </Suspense>
   );
 }
 

@@ -7,6 +7,7 @@ import {
   placeProgramItemSchema,
   placeServiceBlockSchema,
   publishAgendaSchema,
+  updateServiceBlockSchema,
 } from "../shared/agendas";
 import {
   cfpDefinitionInputSchema,
@@ -60,6 +61,8 @@ import {
   publishAgenda,
   removeServiceBlock,
   setProgramPlacementCanceled,
+  unplaceProgramItem,
+  updateServiceBlock,
   type AgendaWriteError,
 } from "./agendas/repository";
 import {
@@ -294,6 +297,29 @@ export const appRouter = trpc.router({
       .input(moveAgendaItemSchema)
       .mutation(async ({ ctx, input }) => {
         const result = await moveAgendaItem(ctx.database, ctx.userId, input);
+        if (!result.ok) throwAgendaWriteError(result.error);
+        return result.value;
+      }),
+    updateService: authenticatedProcedure
+      .input(updateServiceBlockSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await updateServiceBlock(
+          ctx.database,
+          ctx.userId,
+          input,
+        );
+        if (!result.ok) throwAgendaWriteError(result.error);
+        return result.value;
+      }),
+    unplaceProgram: authenticatedProcedure
+      .input(agendaItemActionSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await unplaceProgramItem(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+          input.agendaItemId,
+        );
         if (!result.ok) throwAgendaWriteError(result.error);
         return result.value;
       }),

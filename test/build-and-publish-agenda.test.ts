@@ -17,7 +17,13 @@ import {
 const idSchema = z.object({ id: z.string() });
 const workingAgendaSchema = z.object({
   revision: z.number(),
-  rooms: z.array(z.object({ id: z.string(), name: z.string() })),
+  rooms: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      archived: z.boolean(),
+    }),
+  ),
   unplacedProgramItems: z.array(
     z.object({ id: z.string(), title: z.string() }),
   ),
@@ -953,6 +959,12 @@ describe("build and publish an agenda", () => {
       { slug, roomId: fixture.roomId },
       owner.cookie,
     );
+    expect((await getWorking(owner.cookie, slug)).rooms).toContainEqual(
+      expect.objectContaining({
+        id: fixture.roomId,
+        archived: true,
+      }),
+    );
     await expectOk(
       "agendas.cancel",
       { slug, agendaItemId: firstPlacement.id },
@@ -1018,6 +1030,78 @@ describe("build and publish an agenda", () => {
       .bind(neverPublishedPlacement.id)
       .first<{ action: string; sequence: number }>();
     expect(initialDelivery).toEqual({ action: "publish", sequence: 0 });
+  });
+
+  test("edits service blocks and returns program items to the palette", async () => {
+    const slug = "agenda-editor-2028";
+    const owner = await signIn("agenda-editor-owner@example.com");
+    const fixture = await seedAgendaFixture(slug, owner, 1, 1);
+    const programPlacement = getResult(
+      (
+        await callTrpc(
+          "agendas.placeProgram",
+          {
+            slug,
+            programItemId: fixture.programItemIds[0],
+            roomId: fixture.roomId,
+            startsAtLocal: "2028-08-10T09:00",
+            endsAtLocal: "2028-08-10T10:00",
+          },
+          owner.cookie,
+        )
+      ).body,
+      idSchema,
+    );
+    const service = getResult(
+      (
+        await callTrpc(
+          "agendas.placeService",
+          {
+            slug,
+            title: "New service block",
+            scope: { type: "event" },
+            startsAtLocal: "2028-08-10T10:00",
+            endsAtLocal: "2028-08-10T11:00",
+          },
+          owner.cookie,
+        )
+      ).body,
+      idSchema,
+    );
+
+    await expectOk(
+      "agendas.updateService",
+      {
+        slug,
+        agendaItemId: service.id,
+        title: "Coffee break",
+        scope: { type: "room", roomId: fixture.roomId },
+        startsAtLocal: "2028-08-10T10:15",
+        endsAtLocal: "2028-08-10T10:45",
+      },
+      owner.cookie,
+    );
+    let working = await getWorking(owner.cookie, slug);
+    expect(working.items).toContainEqual(
+      expect.objectContaining({
+        id: service.id,
+        serviceTitle: "Coffee break",
+        roomName: "Room",
+      }),
+    );
+
+    await expectOk(
+      "agendas.unplaceProgram",
+      { slug, agendaItemId: programPlacement.id },
+      owner.cookie,
+    );
+    working = await getWorking(owner.cookie, slug);
+    expect(working.items.some((item) => item.id === programPlacement.id)).toBe(
+      false,
+    );
+    expect(working.unplacedProgramItems).toContainEqual(
+      expect.objectContaining({ id: fixture.programItemIds[0] }),
+    );
   });
 
   test("rejects every invalid active placement from authoritative state", async () => {

@@ -15,6 +15,7 @@ import type {
   PlaceProgramItemInput,
   PlaceServiceBlockInput,
   PublishAgendaInput,
+  UpdateServiceBlockInput,
 } from "../../shared/agendas";
 import type { CommunicationPurpose } from "../../shared/communications";
 import { resolveEventLocalDateTime } from "../../shared/date-time";
@@ -209,6 +210,61 @@ export async function moveAgendaItem(
   } catch (error: unknown) {
     return { ok: false, error: agendaItemPersistenceError(error) };
   }
+}
+
+export async function updateServiceBlock(
+  database: Database,
+  actorUserId: UserId,
+  input: UpdateServiceBlockInput,
+): Promise<AgendaWriteResult<{ updated: true }>> {
+  const event = await findEventForOrganizer(database, actorUserId, input.slug);
+  if (!event) return { ok: false, error: "not_found" };
+  try {
+    const result = await database
+      .update(agendaItems)
+      .set({
+        serviceTitle: input.title,
+        serviceScope: input.scope.type,
+        roomId: input.scope.type === "room" ? input.scope.roomId : null,
+        startsAtLocal: input.startsAtLocal,
+        endsAtLocal: input.endsAtLocal,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(agendaItems.id, input.agendaItemId),
+          eq(agendaItems.agendaId, event.agendaId),
+          eq(agendaItems.kind, "service"),
+        ),
+      );
+    return result.meta.changes > 0
+      ? { ok: true, value: { updated: true } }
+      : { ok: false, error: "agenda_item_not_found" };
+  } catch (error: unknown) {
+    return { ok: false, error: agendaItemPersistenceError(error) };
+  }
+}
+
+export async function unplaceProgramItem(
+  database: Database,
+  actorUserId: UserId,
+  slug: string,
+  agendaItemId: AgendaItemId,
+): Promise<AgendaWriteResult<{ unplaced: true }>> {
+  const event = await findEventForOrganizer(database, actorUserId, slug);
+  if (!event) return { ok: false, error: "not_found" };
+  const result = await database
+    .delete(agendaItems)
+    .where(
+      and(
+        eq(agendaItems.id, agendaItemId),
+        eq(agendaItems.agendaId, event.agendaId),
+        eq(agendaItems.kind, "program"),
+      ),
+    );
+  return result.meta.changes > 0
+    ? { ok: true, value: { unplaced: true } }
+    : { ok: false, error: "agenda_item_not_found" };
 }
 
 export async function setProgramPlacementCanceled(
@@ -791,12 +847,31 @@ async function loadWorkingAgenda(
         .where(and(eq(rooms.eventId, event.id), isNull(rooms.archivedAt)))
         .orderBy(asc(rooms.position))
     : [];
+  const referencedArchivedRooms = rows.flatMap((row) =>
+    row.roomId && row.roomName && row.roomArchivedAt
+      ? [
+          {
+            id: row.roomId,
+            name: row.roomName,
+            position: row.roomPosition ?? Number.MAX_SAFE_INTEGER,
+            archived: true,
+          },
+        ]
+      : [],
+  );
+  const agendaRooms = [
+    ...activeRooms.map((room) => ({ ...room, archived: false })),
+    ...referencedArchivedRooms.filter(
+      (room, index, all) =>
+        all.findIndex((candidate) => candidate.id === room.id) === index,
+    ),
+  ].sort((left, right) => left.position - right.position);
   return {
     revision: event.agendaRevision,
     timezone: event.timezone,
     startsOn: event.startsOn,
     endsOn: event.endsOn,
-    rooms: activeRooms,
+    rooms: agendaRooms,
     unplacedProgramItems: unplaced,
     items,
   };
