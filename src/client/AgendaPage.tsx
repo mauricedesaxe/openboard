@@ -32,6 +32,7 @@ type WorkingAgenda = {
 type WorkingItem = {
   id: string;
   kind: "program" | "service";
+  programItemId: string | null;
   title: string | null;
   serviceTitle: string | null;
   serviceScope: "event" | "room" | null;
@@ -283,7 +284,19 @@ export function AgendaPage() {
         startsAtLocal,
         endsAtLocal,
       },
-      { onSuccess: (created) => updateUrl({ item: created.id }) },
+      {
+        onSuccess: (created) => {
+          updateUrl({ item: created.id });
+          setUndo({
+            label: "Program item placed",
+            run: () =>
+              unplace.mutate(
+                { slug, agendaItemId: created.id },
+                { onSuccess: () => void refresh() },
+              ),
+          });
+        },
+      },
     );
   }
 
@@ -353,7 +366,7 @@ export function AgendaPage() {
           </div>
           <button
             className="primary-button"
-            disabled={publish.isPending || conflicts > 0}
+            disabled={pending || publish.isPending || conflicts > 0}
             onClick={() =>
               publish.mutate({ slug, expectedRevision: data.revision })
             }
@@ -469,6 +482,50 @@ export function AgendaPage() {
                 {
                   onSuccess: () => {
                     updateUrl({ item: null });
+                    setUndo({
+                      label:
+                        selected.kind === "program"
+                          ? "Program item returned to unplaced"
+                          : "Service block deleted",
+                      run: () => {
+                        if (
+                          selected.kind === "program" &&
+                          selected.programItemId
+                        ) {
+                          placeProgram.mutate(
+                            {
+                              slug,
+                              programItemId: selected.programItemId,
+                              roomId: selected.roomId,
+                              startsAtLocal: selected.startsAtLocal,
+                              endsAtLocal: selected.endsAtLocal,
+                            },
+                            { onSuccess: () => void refresh() },
+                          );
+                          return;
+                        }
+                        if (selected.kind === "service") {
+                          placeService.mutate(
+                            {
+                              slug,
+                              title:
+                                selected.serviceTitle ?? "New service block",
+                              scope:
+                                selected.serviceScope === "room" &&
+                                selected.roomId
+                                  ? {
+                                      type: "room",
+                                      roomId: selected.roomId,
+                                    }
+                                  : { type: "event" },
+                              startsAtLocal: selected.startsAtLocal,
+                              endsAtLocal: selected.endsAtLocal,
+                            },
+                            { onSuccess: () => void refresh() },
+                          );
+                        }
+                      },
+                    });
                     void refresh();
                   },
                 },
@@ -613,26 +670,40 @@ function WorkingInspector({
   const [start, setStart] = useState(item.startsAtLocal);
   const [end, setEnd] = useState(item.endsAtLocal);
   const [revision, setRevision] = useState(item.revision);
-  function saveService() {
+  function saveService(overrides: Partial<ServiceBlockDraft> = {}) {
     if (item.kind !== "service" || !title.trim()) return;
-    if (scope === "room" && !roomId) return;
+    const draftScope =
+      overrides.scope ??
+      (scope === "event"
+        ? { type: "event" as const }
+        : { type: "room" as const, roomId });
+    if (draftScope.type === "room" && !draftScope.roomId) return;
     onUpdateService(
       {
-        title,
-        scope: scope === "event" ? { type: "event" } : { type: "room", roomId },
-        startsAtLocal: start,
-        endsAtLocal: end,
+        title: overrides.title ?? title,
+        scope: draftScope,
+        startsAtLocal: overrides.startsAtLocal ?? start,
+        endsAtLocal: overrides.endsAtLocal ?? end,
       },
       revision,
       setRevision,
     );
   }
-  const saveServiceAfterDelay = useEffectEvent(saveService);
+  function saveDraft() {
+    if (item.kind === "service") saveService();
+    else onMove(start, end, roomId || null);
+  }
+  const saveDraftAfterDelay = useEffectEvent(saveDraft);
   useEffect(() => {
-    if (item.kind !== "service" || title === item.serviceTitle) return;
-    const timer = window.setTimeout(saveServiceAfterDelay, 500);
+    const scopeChanged = item.kind === "service" && scope !== item.serviceScope;
+    const roomChanged = roomId !== (item.roomId ?? "");
+    const titleChanged = item.kind === "service" && title !== item.serviceTitle;
+    const timeChanged =
+      start !== item.startsAtLocal || end !== item.endsAtLocal;
+    if (!scopeChanged && !roomChanged && !titleChanged && !timeChanged) return;
+    const timer = window.setTimeout(saveDraftAfterDelay, 300);
     return () => window.clearTimeout(timer);
-  }, [item.kind, item.serviceTitle, title]);
+  }, [end, item, roomId, scope, start, title]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -662,6 +733,7 @@ function WorkingInspector({
             <label>
               Title
               <input
+                disabled={busy}
                 maxLength={160}
                 onChange={(event) => setTitle(event.target.value)}
                 value={title}
@@ -670,9 +742,11 @@ function WorkingInspector({
             <label>
               Scope
               <select
-                onChange={(event) =>
-                  setScope(event.target.value as "event" | "room")
-                }
+                disabled={busy}
+                onChange={(event) => {
+                  const nextScope = event.target.value as "event" | "room";
+                  setScope(nextScope);
+                }}
                 value={scope}
               >
                 <option value="event">All rooms</option>
@@ -685,7 +759,10 @@ function WorkingInspector({
           <label>
             Room
             <select
-              onChange={(event) => setRoomId(event.target.value)}
+              disabled={busy}
+              onChange={(event) => {
+                setRoomId(event.target.value);
+              }}
               value={roomId}
             >
               <option value="">Unassigned</option>
@@ -701,6 +778,7 @@ function WorkingInspector({
         <label>
           Starts
           <input
+            disabled={busy}
             onChange={(event) => setStart(event.target.value)}
             step={900}
             type="datetime-local"
@@ -710,6 +788,7 @@ function WorkingInspector({
         <label>
           Ends
           <input
+            disabled={busy}
             onChange={(event) => setEnd(event.target.value)}
             step={900}
             type="datetime-local"
