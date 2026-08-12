@@ -122,7 +122,17 @@ export async function getOrganizerReviewBoard(
 
   return {
     round: { id: round.id, name: round.name, status: round.status },
-    reviewers: activeReviewers,
+    reviewers: activeReviewers.map((reviewer) => {
+      const assignments = assignmentRows.filter(
+        (assignment) => assignment.reviewerUserId === reviewer.id,
+      );
+      return {
+        ...reviewer,
+        assigned: assignments.length,
+        completed: assignments.filter((assignment) => assignment.score !== null)
+          .length,
+      };
+    }),
     submissions: submissionRows.map((submission) => {
       const assignments = assignmentRows.filter(
         (assignment) => assignment.submissionId === submission.id,

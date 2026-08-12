@@ -2637,6 +2637,7 @@ async function browserFileToBase64(file: File): Promise<string> {
 }
 
 type ReviewPageMode = "overview" | "assignments" | "decisions" | "my-reviews";
+type ReviewSort = "original" | "average-desc" | "average-asc";
 
 function ReviewPage() {
   const { slug = "" } = useParams();
@@ -2922,6 +2923,7 @@ function OrganizerReviewBoard({
   const [reviewerBySubmission, setReviewerBySubmission] = useState<
     Record<string, string>
   >({});
+  const [reviewSort, setReviewSort] = useState<ReviewSort>("original");
 
   if (board.isPending) return <FullPageStatus label="Opening review board" />;
   if (board.isError) {
@@ -2947,6 +2949,10 @@ function OrganizerReviewBoard({
     (submission) =>
       submission.status === "active" &&
       submission.review.completed < submission.review.assigned,
+  );
+  const submissions = sortReviewSubmissions(
+    board.data.submissions,
+    mode === "overview" ? reviewSort : "original",
   );
 
   function closeWithConfirmation() {
@@ -2991,9 +2997,17 @@ function OrganizerReviewBoard({
         </div>
         {mode === "overview" && (
           <div className="round-control">
-            <span className={`status-chip status-${board.data.round.status}`}>
-              {board.data.round.status}
-            </span>
+            <div className="round-state">
+              <span className={`status-chip status-${board.data.round.status}`}>
+                {board.data.round.status}
+              </span>
+              {board.data.round.status === "draft" && (
+                <span>Reviewing has not opened.</span>
+              )}
+              {board.data.round.status === "closed" && (
+                <span>Reviewing is closed.</span>
+              )}
+            </div>
             {board.data.round.status === "draft" && (
               <button
                 className="primary-button"
@@ -3028,6 +3042,36 @@ function OrganizerReviewBoard({
         )}
       </section>
       <ReviewLocalNavigation permissions={permissions} slug={slug} />
+      {mode === "overview" && board.data.submissions.length > 1 && (
+        <label className="review-sort">
+          Sort proposals
+          <select
+            onChange={(event) =>
+              setReviewSort(event.target.value as ReviewSort)
+            }
+            value={reviewSort}
+          >
+            <option value="original">Submission order</option>
+            <option value="average-desc">Average, high to low</option>
+            <option value="average-asc">Average, low to high</option>
+          </select>
+        </label>
+      )}
+      {mode === "assignments" && board.data.reviewers.length > 0 && (
+        <section aria-label="Reviewer progress" className="reviewer-progress">
+          <div className="eyebrow">Reviewer progress</div>
+          <div className="reviewer-progress-list">
+            {board.data.reviewers.map((reviewer) => (
+              <div className="reviewer-progress-row" key={reviewer.id}>
+                <span>{reviewer.name || reviewer.email}</span>
+                <strong>
+                  {reviewer.completed}/{reviewer.assigned} reviewed
+                </strong>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
       {mode === "decisions" &&
         communicationFailures.data?.some((failure) =>
           failure.purpose.startsWith("decision_"),
@@ -3049,7 +3093,7 @@ function OrganizerReviewBoard({
         />
       )}
       <div className="review-list">
-        {board.data.submissions.map((submission) => {
+        {submissions.map((submission) => {
           const hasPublishedDecision =
             submission.decision.status === "accepted" ||
             submission.decision.status === "declined";
@@ -3074,6 +3118,32 @@ function OrganizerReviewBoard({
                   </span>
                   <span>{submission.status}</span>
                 </div>
+                {mode === "overview" &&
+                  submission.review.assignments.some(
+                    (assignment) => assignment.score !== null,
+                  ) && (
+                    <div className="saved-reviews">
+                      <div className="eyebrow">Saved reviews</div>
+                      {submission.review.assignments.flatMap((assignment) =>
+                        assignment.score === null ? (
+                          []
+                        ) : (
+                          <blockquote key={assignment.id}>
+                            <div>
+                              <strong>
+                                {assignment.reviewerName ||
+                                  assignment.reviewerEmail}
+                              </strong>
+                              <span>Score {assignment.score}</span>
+                            </div>
+                            <p>
+                              {assignment.comment || "No comment provided."}
+                            </p>
+                          </blockquote>
+                        ),
+                      )}
+                    </div>
+                  )}
               </div>
               {mode !== "overview" && (
                 <div className="review-controls">
@@ -3272,6 +3342,26 @@ function OrganizerReviewBoard({
   );
 }
 
+function sortReviewSubmissions<
+  Submission extends { review: { average: number | null } },
+>(submissions: Submission[], sort: ReviewSort): Submission[] {
+  if (sort === "original") return submissions;
+  const direction = sort === "average-asc" ? 1 : -1;
+  return submissions
+    .map((submission, index) => ({ submission, index }))
+    .toSorted((left, right) => {
+      const leftAverage = left.submission.review.average;
+      const rightAverage = right.submission.review.average;
+      if (leftAverage === null)
+        return rightAverage === null ? left.index - right.index : 1;
+      if (rightAverage === null) return -1;
+      return (
+        (leftAverage - rightAverage) * direction || left.index - right.index
+      );
+    })
+    .map(({ submission }) => submission);
+}
+
 function reviewSummary(
   mode: Exclude<ReviewPageMode, "my-reviews">,
   proposals: number,
@@ -3378,6 +3468,11 @@ function ReviewAssignmentCard({
     }),
   );
   const editable = assignment.roundStatus === "open";
+  const saveMessage = save.isPending
+    ? "Saving review…"
+    : save.isSuccess
+      ? "Review saved"
+      : undefined;
 
   return (
     <article className="review-proposal reviewer-card">
@@ -3436,6 +3531,15 @@ function ReviewAssignmentCard({
               ? "Update review"
               : "Save review"}
         </button>
+        {save.isError ? (
+          <p className="review-save-status review-save-error" role="alert">
+            {save.error.message}
+          </p>
+        ) : saveMessage ? (
+          <p className="review-save-status" role="status">
+            {saveMessage}
+          </p>
+        ) : null}
       </form>
     </article>
   );

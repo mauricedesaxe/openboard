@@ -17,7 +17,13 @@ const boardSchema = z.object({
     status: z.enum(["draft", "open", "closed"]),
   }),
   reviewers: z.array(
-    z.object({ id: z.string(), name: z.string(), email: z.string() }),
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      email: z.string(),
+      assigned: z.number().int(),
+      completed: z.number().int(),
+    }),
   ),
   submissions: z.array(
     z.object({
@@ -227,6 +233,16 @@ describe("review submissions and publish decisions", () => {
       reviewerEmail,
       secondReviewerEmail,
     ]);
+    expect(
+      board.reviewers.map(({ assigned, completed, email }) => ({
+        assigned,
+        completed,
+        email,
+      })),
+    ).toEqual([
+      { assigned: 0, completed: 0, email: reviewerEmail },
+      { assigned: 0, completed: 0, email: secondReviewerEmail },
+    ]);
     const firstAssignment = getResult(
       (
         await callTrpc(
@@ -354,6 +370,28 @@ describe("review submissions and publish decisions", () => {
       assigned: 1,
       completed: 1,
       average: 5,
+    });
+    expect(board.reviewers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          email: reviewerEmail,
+          assigned: 1,
+          completed: 1,
+        }),
+        expect.objectContaining({
+          email: secondReviewerEmail,
+          assigned: 1,
+          completed: 0,
+        }),
+      ]),
+    );
+    expect(
+      board.submissions.find((submission) => submission.id === first.id)?.review
+        .assignments[0],
+    ).toMatchObject({
+      reviewerEmail,
+      score: 5,
+      comment: "Ready to accept.",
     });
 
     expect(

@@ -1608,6 +1608,15 @@ a {
   justify-content: flex-end;
   gap: 18px;
 }
+.round-state {
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+}
+.round-state > span:last-child:not(.status-chip) {
+  color: rgba(27, 39, 36, 0.62);
+  font-size: 12px;
+}
 .status-draft {
   background: var(--paper);
 }
@@ -1618,6 +1627,42 @@ a {
 .review-list {
   display: grid;
   gap: 18px;
+}
+.review-sort {
+  width: min(280px, 100%);
+  display: grid;
+  gap: 8px;
+  margin: 0 0 24px auto;
+  font: 11px "DM Mono";
+  text-transform: uppercase;
+}
+.review-sort select {
+  border: 1px solid var(--ink);
+  padding: 11px 12px;
+  background: var(--paper);
+}
+.reviewer-progress {
+  margin-bottom: 32px;
+  border: 1px solid var(--ink);
+  padding: 22px 24px;
+  background: var(--acid);
+}
+.reviewer-progress-list {
+  margin-top: 14px;
+  border-top: 1px solid var(--ink);
+}
+.reviewer-progress-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(27, 39, 36, 0.35);
+  font-size: 12px;
+}
+.reviewer-progress-row strong {
+  font-family: "DM Mono";
+  font-size: 11px;
+  text-transform: uppercase;
 }
 .review-proposal {
   display: grid;
@@ -1660,6 +1705,30 @@ a {
   padding: 7px 9px;
   font: 10px "DM Mono";
   text-transform: uppercase;
+}
+.saved-reviews {
+  margin-top: 32px;
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+}
+.saved-reviews blockquote {
+  margin: 14px 0 0;
+  border-left: 3px solid var(--acid);
+  padding: 4px 0 4px 18px;
+}
+.saved-reviews blockquote > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+}
+.saved-reviews blockquote span {
+  font: 11px "DM Mono";
+  text-transform: uppercase;
+}
+.saved-reviews blockquote p {
+  margin: 9px 0 0;
+  color: rgba(27, 39, 36, 0.7);
+  white-space: pre-wrap;
 }
 .assignment-control {
   display: flex;
@@ -1721,6 +1790,14 @@ a {
 }
 .reviewer-card .review-controls textarea {
   min-height: 100px;
+}
+.review-save-status {
+  margin: 4px 0 0;
+  color: #185f43;
+  font-size: 12px;
+}
+.review-save-error {
+  color: #a22d18;
 }
 .setup-page > .arrow-link {
   display: inline-block;
@@ -2386,6 +2463,15 @@ a {
   .publication-bar {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .round-state {
+    justify-items: start;
+  }
+  .reviewer-progress-row,
+  .saved-reviews blockquote > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
   }
   .review-proposal {
     grid-template-columns: 1fr;
