@@ -661,6 +661,30 @@ function EventPage() {
   const trpc = useTRPC();
   const event = useQuery(trpc.events.get.queryOptions({ slug }));
 
+  const isOrganizer = event.data?.access !== "reviewer";
+  const enabled = isOrganizer ? {} : { enabled: false };
+
+  const reviewBoard = useQuery(
+    trpc.reviews.organizerBoard.queryOptions({ slug }, enabled),
+  );
+  const onboardingBoard = useQuery(
+    trpc.onboarding.organizerBoard.queryOptions({ slug }, enabled),
+  );
+  const cfpSetup = useQuery(trpc.cfps.getSetup.queryOptions({ slug }, enabled));
+  const commsFailures = useQuery(
+    trpc.communications.failures.queryOptions({ slug }, enabled),
+  );
+  const workingAgenda = useQuery(
+    trpc.agendas.working.queryOptions({ slug }, enabled),
+  );
+  const team = useQuery(trpc.eventTeam.list.queryOptions({ slug }, enabled));
+  const reviewerAssignments = useQuery(
+    trpc.reviews.mine.queryOptions(
+      { slug },
+      isOrganizer ? { enabled: false } : {},
+    ),
+  );
+
   if (event.isPending) return <FullPageStatus label="Opening event" />;
   if (event.isError)
     return (
@@ -669,118 +693,466 @@ function EventPage() {
       </div>
     );
 
+  if (!isOrganizer) {
+    return (
+      <ReviewerEventDashboard
+        slug={slug}
+        eventName={event.data.name}
+        startsOn={event.data.startsOn}
+        endsOn={event.data.endsOn}
+        timezone={event.data.timezone}
+        assignments={reviewerAssignments}
+      />
+    );
+  }
+
+  const cfpState = cfpSetup.data
+    ? cfpStateSummary(cfpSetup.data, event.data.timezone)
+    : undefined;
+  const reviewState = reviewBoard.data
+    ? reviewStateSummary(reviewBoard.data)
+    : undefined;
+  const readinessState = onboardingBoard.data
+    ? readinessStateSummary(onboardingBoard.data)
+    : undefined;
+  const agendaState = workingAgenda.data
+    ? agendaStateSummary(workingAgenda.data)
+    : undefined;
+  const commsState = commsFailures.data
+    ? { failures: commsFailures.data.length }
+    : undefined;
+  const teamState = team.data ? teamStateSummary(team.data) : undefined;
+
   return (
-    <div className="page event-page">
+    <div className="page event-page event-dashboard">
       <Link className="arrow-link" to="/">
         ← All events
       </Link>
-      <div className="event-title-block">
-        <div className="eyebrow">Working event</div>
-        <h1>{event.data.name}</h1>
+      <header className="dash-header">
+        <div className="dash-header-title">
+          <div className="eyebrow">Working event</div>
+          <h1>{event.data.name}</h1>
+        </div>
         <div className="event-meta">
           <span>{formatDateRange(event.data.startsOn, event.data.endsOn)}</span>
           <span>{event.data.timezone}</span>
           <span>Private</span>
         </div>
-      </div>
-      <section className="agenda-board">
-        <div>
-          <div className="eyebrow">Working agenda</div>
-          <h2>Build a conflict-free program.</h2>
-          <p>
-            Place accepted program items and service blocks. Working conflicts
-            stay visible until you correct and publish them.
-          </p>
-        </div>
-        {event.data.access !== "reviewer" && (
-          <Link
-            className="primary-button link-button"
-            to={`/events/${slug}/agenda`}
-          >
-            Open working agenda
-          </Link>
-        )}
+      </header>
+
+      <section className="dash-kpis">
+        <KpiCell
+          label="Proposals"
+          value={reviewState?.proposals}
+          hint={cfpState?.hint ?? ""}
+          tone={undefined}
+        />
+        <KpiCell
+          label="Reviews due"
+          value={reviewState?.reviewsDue}
+          hint={undefined}
+          tone={reviewState?.reviewsDue ? "alert" : undefined}
+        />
+        <KpiCell
+          label="Readiness blockers"
+          value={readinessState?.blockers}
+          hint={undefined}
+          tone={readinessState?.blockers ? "alert" : undefined}
+        />
+        <KpiCell
+          label="Agenda conflicts"
+          value={agendaState?.conflicts}
+          hint={undefined}
+          tone={agendaState?.conflicts ? "alert" : undefined}
+        />
+        <KpiCell
+          label="Team"
+          value={teamState?.members}
+          hint={undefined}
+          tone={undefined}
+        />
       </section>
+
+      <section className="dash-grid">
+        <DashboardCard
+          tone="dark"
+          eyebrow="Working agenda"
+          status={agendaState?.status ?? "—"}
+          statusTone={
+            agendaState?.conflicts
+              ? "alert"
+              : agendaState?.placed
+                ? "ok"
+                : "muted"
+          }
+          metric={agendaState?.placed ?? 0}
+          metricLabel="placed items"
+          state={
+            agendaState
+              ? agendaState.unplaced
+                ? `${agendaState.unplaced} unplaced program item${agendaState.unplaced === 1 ? "" : "s"}`
+                : "Every accepted item is placed."
+              : "Loading the working agenda."
+          }
+          cta={
+            <Link className="arrow-link dash-cta" to={`/events/${slug}/agenda`}>
+              Open working agenda
+            </Link>
+          }
+        />
+        <DashboardCard
+          tone="acid"
+          eyebrow="Call for proposals"
+          status={cfpState?.status ?? "—"}
+          statusTone={cfpState?.statusTone ?? "muted"}
+          metric={cfpState?.metric ?? 0}
+          metricLabel={cfpState?.metricLabel ?? "configured"}
+          state={cfpState?.hint ?? "Loading the CFP setup."}
+          cta={
+            <Link
+              className="arrow-link dash-cta"
+              to={`/events/${slug}/cfp/setup`}
+            >
+              Configure CFP
+            </Link>
+          }
+        />
+        <DashboardCard
+          tone="orange"
+          eyebrow="Review and decisions"
+          status={reviewState?.status ?? "—"}
+          statusTone={reviewState?.statusTone ?? "muted"}
+          metric={reviewState?.reviewsDue ?? 0}
+          metricLabel="reviews outstanding"
+          state={
+            reviewState
+              ? `${reviewState.proposals} proposals · ${reviewState.queued} queued for publication`
+              : "Loading the review board."
+          }
+          cta={
+            <Link className="arrow-link dash-cta" to={`/events/${slug}/review`}>
+              Open review board
+            </Link>
+          }
+        />
+        <DashboardCard
+          eyebrow="Speaker readiness"
+          status={readinessState?.status ?? "—"}
+          statusTone={readinessState?.statusTone ?? "muted"}
+          metric={readinessState?.readySpeakers ?? 0}
+          metricLabel={`of ${readinessState?.speakers ?? 0} speakers ready`}
+          state={
+            readinessState
+              ? readinessState.blockers
+                ? `${readinessState.blockers} open blocker${readinessState.blockers === 1 ? "" : "s"} across the program.`
+                : "No outstanding readiness blockers."
+              : "Loading readiness."
+          }
+          cta={
+            <Link
+              className="arrow-link dash-cta"
+              to={`/events/${slug}/onboarding`}
+            >
+              Open readiness
+            </Link>
+          }
+        />
+        <DashboardCard
+          eyebrow="Team"
+          status={teamState?.status ?? "—"}
+          statusTone={teamState?.statusTone ?? "muted"}
+          metric={teamState?.members ?? 0}
+          metricLabel={`member${teamState?.members === 1 ? "" : "s"}`}
+          state={
+            teamState
+              ? teamState.pending
+                ? `${teamState.pending} invitation${teamState.pending === 1 ? "" : "s"} pending`
+                : "All invitations resolved."
+              : "Loading the team."
+          }
+          cta={
+            <a
+              className="arrow-link dash-cta"
+              href="#team"
+              aria-label="Jump to team and invitations"
+            >
+              Jump to team
+            </a>
+          }
+        />
+        <DashboardCard
+          eyebrow="Communications"
+          status={commsState?.failures ? "Delivery failures" : "Templates"}
+          statusTone={commsState?.failures ? "alert" : "muted"}
+          metric={commsState?.failures ?? 0}
+          metricLabel="failed deliveries"
+          state={
+            commsState
+              ? commsState.failures
+                ? "Retry failed delivery without changing domain state."
+                : "Edit message templates for each workflow."
+              : "Loading communications."
+          }
+          cta={
+            <Link
+              className="arrow-link dash-cta"
+              to={`/events/${slug}/communications`}
+            >
+              Open communications
+            </Link>
+          }
+        />
+      </section>
+
       {event.data.access === "owner" && (
-        <EventTeamPanel slug={event.data.slug} />
-      )}
-      {event.data.access !== "reviewer" && (
-        <section className="setup-callout">
-          <div>
-            <div className="eyebrow">Call for proposals</div>
-            <h2>Shape what speakers send you.</h2>
-            <p>
-              Configure tracks, rooms, formats, and conditional proposal fields
-              before you open the public form.
-            </p>
-          </div>
-          <Link
-            className="primary-button link-button"
-            to={`/events/${slug}/cfp/setup`}
-          >
-            Configure CFP
-          </Link>
-        </section>
-      )}
-      <section className="setup-callout review-callout">
-        <div>
-          <div className="eyebrow">Review and decisions</div>
-          <h2>
-            {event.data.access === "reviewer"
-              ? "Score your assigned proposals."
-              : "Move proposals into the program."}
-          </h2>
-          <p>
-            {event.data.access === "reviewer"
-              ? "Your assignments stay blinded and editable while the round is open."
-              : "Assign reviewers, watch progress, queue outcomes, and publish them together."}
-          </p>
+        <div id="team" className="dash-team-anchor">
+          <EventTeamPanel slug={event.data.slug} />
         </div>
-        <Link
-          className="primary-button link-button"
-          to={`/events/${slug}/review`}
-        >
-          Open review board
-        </Link>
-      </section>
-      {event.data.access !== "reviewer" && (
-        <section className="setup-callout onboarding-callout">
-          <div>
-            <div className="eyebrow">Speaker readiness</div>
-            <h2>Turn accepted work into a ready program.</h2>
-            <p>
-              Assign onboarding requirements, review evidence, and see every
-              current blocker without maintaining a separate status field.
-            </p>
-          </div>
-          <Link
-            className="primary-button link-button"
-            to={`/events/${slug}/onboarding`}
-          >
-            Open readiness
-          </Link>
-        </section>
-      )}
-      {event.data.access !== "reviewer" && (
-        <section className="setup-callout">
-          <div>
-            <div className="eyebrow">Communications</div>
-            <h2>Control what each workflow sends.</h2>
-            <p>
-              Edit message templates and retry failed delivery without changing
-              domain state.
-            </p>
-          </div>
-          <Link
-            className="primary-button link-button"
-            to={`/events/${slug}/communications`}
-          >
-            Open communications
-          </Link>
-        </section>
       )}
     </div>
   );
+}
+
+type QueryLike<T> = {
+  isPending: boolean;
+  isError: boolean;
+  data: T | undefined;
+};
+
+function ReviewerEventDashboard({
+  slug,
+  eventName,
+  startsOn,
+  endsOn,
+  timezone,
+  assignments,
+}: {
+  slug: string;
+  eventName: string;
+  startsOn: string;
+  endsOn: string;
+  timezone: string;
+  assignments: QueryLike<
+    {
+      review: { score: number; comment: string | null } | null;
+      roundStatus: string;
+    }[]
+  >;
+}) {
+  const list = assignments.data ?? [];
+  const outstanding = list.filter((row) => row.review === null);
+  const roundOpen = list.some((row) => row.roundStatus === "open");
+  return (
+    <div className="page event-page event-dashboard">
+      <Link className="arrow-link" to="/">
+        ← All events
+      </Link>
+      <header className="dash-header">
+        <div className="dash-header-title">
+          <div className="eyebrow">Reviewer assignment</div>
+          <h1>{eventName}</h1>
+        </div>
+        <div className="event-meta">
+          <span>{formatDateRange(startsOn, endsOn)}</span>
+          <span>{timezone}</span>
+          <span>Reviewer</span>
+        </div>
+      </header>
+      <section className="dash-grid dash-grid-reviewer">
+        <DashboardCard
+          tone="orange"
+          eyebrow="Your review queue"
+          status={roundOpen ? "Round open" : "Round closed"}
+          statusTone={roundOpen ? "ok" : "muted"}
+          metric={outstanding.length}
+          metricLabel={`of ${list.length} assignment${list.length === 1 ? "" : "s"} left to score`}
+          state={
+            assignments.isPending
+              ? "Loading your assignments."
+              : list.length === 0
+                ? "You have no active assignments yet."
+                : outstanding.length === 0
+                  ? "Every assigned proposal is scored."
+                  : "Your assignments stay blinded and editable while the round is open."
+          }
+          cta={
+            <Link className="arrow-link dash-cta" to={`/events/${slug}/review`}>
+              Open review board
+            </Link>
+          }
+        />
+      </section>
+    </div>
+  );
+}
+
+type KpiCellProps = {
+  label: string;
+  value: number | undefined;
+  hint: string | undefined;
+  tone: "alert" | undefined;
+};
+
+function KpiCell({ label, value, hint, tone }: KpiCellProps) {
+  return (
+    <div className={`kpi-cell${tone === "alert" ? " kpi-alert" : ""}`}>
+      <div className="eyebrow">{label}</div>
+      <div className="kpi-value">{value === undefined ? "—" : value}</div>
+      {hint ? <div className="kpi-hint">{hint}</div> : null}
+    </div>
+  );
+}
+
+function DashboardCard({
+  eyebrow,
+  status,
+  statusTone = "muted",
+  metric,
+  metricLabel,
+  state,
+  cta,
+  tone,
+}: {
+  eyebrow: string;
+  status: string;
+  statusTone?: "ok" | "alert" | "muted";
+  metric: number;
+  metricLabel: string;
+  state: string;
+  cta: React.ReactNode;
+  tone?: "dark" | "acid" | "orange";
+}) {
+  return (
+    <article className={`dash-card${tone ? ` dash-card-${tone}` : ""}`}>
+      <header className="dash-card-top">
+        <div className="eyebrow">{eyebrow}</div>
+        <span className={`dash-pill dash-pill-${statusTone}`}>{status}</span>
+      </header>
+      <div className="dash-metric">{metric}</div>
+      <div className="dash-metric-label">{metricLabel}</div>
+      <p className="dash-state">{state}</p>
+      <div className="dash-card-cta">{cta}</div>
+    </article>
+  );
+}
+
+type StatusTone = "ok" | "alert" | "muted";
+
+function cfpStateSummary(
+  data: {
+    draft: { name: string; deadline: string } | null;
+    open: { name: string; deadline: string } | null;
+  },
+  timezone: string,
+) {
+  if (data.open) {
+    return {
+      status: "Open",
+      statusTone: "ok" as StatusTone,
+      metric: 0,
+      metricLabel: "submissions",
+      hint: `Open · ${formatDeadline(data.open.deadline, timezone)}`,
+    };
+  }
+  if (data.draft) {
+    return {
+      status: "Draft",
+      statusTone: "muted" as StatusTone,
+      metric: 0,
+      metricLabel: "draft saved",
+      hint: `Draft · ${formatDeadline(data.draft.deadline, timezone)}`,
+    };
+  }
+  return {
+    status: "Not configured",
+    statusTone: "muted" as StatusTone,
+    metric: 0,
+    metricLabel: "no CFP yet",
+    hint: undefined,
+  };
+}
+
+function reviewStateSummary(data: {
+  round: { status: string };
+  submissions: {
+    status: string;
+    decision: { status: string };
+    review: { assigned: number; completed: number };
+  }[];
+}) {
+  const active = data.submissions.filter((row) => row.status === "active");
+  const due = active.reduce(
+    (sum, row) => sum + (row.review.assigned - row.review.completed),
+    0,
+  );
+  const queued = data.submissions.filter(
+    (row) =>
+      row.decision.status === "accept_queued" ||
+      row.decision.status === "decline_queued",
+  ).length;
+  const statusLabel =
+    data.round.status === "open"
+      ? "Round open"
+      : data.round.status === "closed"
+        ? "Round closed"
+        : "Draft round";
+  return {
+    status: statusLabel,
+    statusTone: (due > 0 ? "alert" : "ok") as StatusTone,
+    proposals: active.length,
+    reviewsDue: due,
+    queued,
+  };
+}
+
+function readinessStateSummary(data: {
+  readiness: {
+    speakers: { ready: boolean }[];
+  };
+  assignments: { required: boolean; completed: boolean }[];
+}) {
+  const speakers = data.readiness?.speakers ?? [];
+  const readySpeakers = speakers.filter((row) => row.ready).length;
+  const blockers = (data.assignments ?? []).filter(
+    (row) => row.required && !row.completed,
+  ).length;
+  return {
+    status: blockers ? "Needs attention" : "On track",
+    statusTone: (blockers ? "alert" : "ok") as StatusTone,
+    speakers: speakers.length,
+    readySpeakers,
+    blockers,
+  };
+}
+
+function agendaStateSummary(data: {
+  items: { canceled: boolean; conflicts: string[] }[];
+  unplacedProgramItems: unknown[];
+}) {
+  const active = data.items.filter((row) => !row.canceled);
+  const conflicts = active.reduce((sum, row) => sum + row.conflicts.length, 0);
+  return {
+    status: conflicts ? "Has conflicts" : active.length ? "On track" : "Empty",
+    statusTone: conflicts ? "alert" : active.length ? "ok" : "muted",
+    placed: active.length,
+    unplaced: data.unplacedProgramItems.length,
+    conflicts,
+  };
+}
+
+function teamStateSummary(data: {
+  roles?: unknown[];
+  invitations?: { status: string }[];
+}) {
+  const members = (data.roles?.length ?? 0) + 1;
+  const pending =
+    data.invitations?.filter((row) => row.status === "pending").length ?? 0;
+  return {
+    status: pending ? "Invitations pending" : "Confirmed",
+    statusTone: (pending ? "alert" : "ok") as StatusTone,
+    members,
+    pending,
+  };
 }
 
 function CommunicationSettingsPage() {
