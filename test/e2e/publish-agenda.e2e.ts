@@ -164,11 +164,14 @@ test("publishes a working placement to every public agenda view", async ({
     page.getByRole("button", { name: "Publish agenda" }),
   ).toBeDisabled();
 
-  await page.getByText("A second browser session", { exact: true }).click();
   const inspector = page.locator(".agenda-inspector");
+  await page.getByText("A browser-built agenda", { exact: true }).click();
+  await expect(inspector.getByLabel("Starts")).toHaveValue("2028-08-13T09:00");
+  await page.getByText("A second browser session", { exact: true }).click();
   await expect(
     inspector.getByRole("heading", { name: "A second browser session" }),
   ).toBeVisible();
+  await expect(inspector.getByLabel("Starts")).toHaveValue("2028-08-13T09:30");
   await inspector.getByLabel("Room").selectOption(secondRoom.id as string);
   await inspector.getByLabel("Starts").fill("2028-08-14T10:00");
   await inspector.getByLabel("Ends").fill("2028-08-14T11:00");
@@ -186,7 +189,10 @@ test("publishes a working placement to every public agenda view", async ({
   await expect(
     page.getByText("A browser-built agenda", { exact: true }),
   ).toBeVisible();
-  await page.getByLabel("Room").selectOption(secondRoom.id as string);
+  await page
+    .locator(".public-agenda-controls")
+    .getByLabel("Room")
+    .selectOption(secondRoom.id as string);
   await expect(
     page.getByText("A second browser session", { exact: true }),
   ).toBeVisible();
@@ -195,6 +201,7 @@ test("publishes a working placement to every public agenda view", async ({
   ).toHaveCount(0);
   await expect(page.getByText("Lunch", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "list", exact: true }).click();
+  await expect(page.locator(".fc-list")).toBeVisible();
   await expect(
     page.getByText("A second browser session", { exact: true }),
   ).toBeVisible();
@@ -202,6 +209,11 @@ test("publishes a working placement to every public agenda view", async ({
   await expect(
     page.getByRole("button", { name: "list", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
+  await page.goto(`/events/${slug}/schedule?view=calendar&start=2028-08-14`);
+  await expect(page.locator(".fc-timegrid")).toBeVisible();
+  await expect(
+    page.locator('.fc-col-header-cell[data-date="2028-08-14"]'),
+  ).toBeVisible();
 
   await page.goto(`/events/${slug}/agenda?item=${String(firstPlacement.id)}`);
   await inspector.getByRole("button", { name: "Cancel placement" }).click();
@@ -224,6 +236,31 @@ test("publishes a working placement to every public agenda view", async ({
   await expect(
     page.getByText("A browser-built agenda", { exact: true }),
   ).toBeVisible();
+  await page.goto(`/events/${slug}/agenda`);
+  const serviceTemplate = page.getByRole("button", {
+    name: /New service block/,
+  });
+  await serviceTemplate.focus();
+  await serviceTemplate.press("Enter");
+  await expect(
+    inspector.getByRole("heading", { name: "New service block" }),
+  ).toBeVisible();
+  let failServiceSave = true;
+  await page.route("**/api/trpc/agendas.updateService**", async (route) => {
+    if (failServiceSave) {
+      failServiceSave = false;
+      await route.abort("failed");
+      return;
+    }
+    await route.continue();
+  });
+  await inspector.getByLabel("Starts").fill("2028-08-13T10:00");
+  await inspector.getByLabel("Ends").fill("2028-08-13T11:00");
+  await inspector.getByRole("button", { name: "Save changes" }).click();
+  await expect(inspector.getByRole("button", { name: "Retry" })).toBeVisible();
+  await inspector.getByRole("button", { name: "Retry" }).click();
+  await expect(inspector.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await page.unroute("**/api/trpc/agendas.updateService**");
   expect(firstPlacement.id).toBeTruthy();
 });
 

@@ -62,6 +62,7 @@ const calendarDeliveryInsertSize = 5;
 
 export type AgendaWriteError =
   | "agenda_changed"
+  | "agenda_item_changed"
   | "agenda_item_not_found"
   | "archived_reference"
   | "invalid_agenda_item"
@@ -99,16 +100,33 @@ export async function placeProgramItem(
   const event = await findEventForOrganizer(database, actorUserId, input.slug);
   if (!event) return { ok: false, error: "not_found" };
   const [existingPlacement] = await database
-    .select({ id: agendaItems.id })
+    .select({ id: agendaItems.id, placed: agendaItems.placed })
     .from(agendaItems)
     .where(eq(agendaItems.programItemId, input.programItemId))
     .limit(1);
-  if (existingPlacement) {
+  if (existingPlacement?.placed) {
     return { ok: false, error: "program_item_unavailable" };
   }
-  const id = crypto.randomUUID() as AgendaItemId;
+  const id = (existingPlacement?.id ?? crypto.randomUUID()) as AgendaItemId;
   const now = new Date();
   try {
+    if (existingPlacement) {
+      const result = await database
+        .update(agendaItems)
+        .set({
+          placed: true,
+          roomId: input.roomId,
+          startsAtLocal: input.startsAtLocal,
+          endsAtLocal: input.endsAtLocal,
+          canceledAt: null,
+          revision: sql`${agendaItems.revision} + 1`,
+          updatedAt: now,
+        })
+        .where(and(eq(agendaItems.id, id), eq(agendaItems.placed, false)));
+      return result.meta.changes > 0
+        ? { ok: true, value: { id } }
+        : { ok: false, error: "program_item_unavailable" };
+    }
     await database.insert(agendaItems).values({
       id,
       agendaId: event.agendaId,
@@ -170,6 +188,7 @@ export async function moveAgendaItem(
       and(
         eq(agendaItems.id, input.agendaItemId),
         eq(agendaItems.agendaId, event.agendaId),
+        eq(agendaItems.placed, true),
       ),
     )
     .limit(1);
@@ -196,6 +215,7 @@ export async function moveAgendaItem(
         roomId: input.roomId,
         startsAtLocal: input.startsAtLocal,
         endsAtLocal: input.endsAtLocal,
+        revision: sql`${agendaItems.revision} + 1`,
         updatedAt: now,
       })
       .where(
@@ -216,7 +236,7 @@ export async function updateServiceBlock(
   database: Database,
   actorUserId: UserId,
   input: UpdateServiceBlockInput,
-): Promise<AgendaWriteResult<{ updated: true }>> {
+): Promise<AgendaWriteResult<{ revision: number }>> {
   const event = await findEventForOrganizer(database, actorUserId, input.slug);
   if (!event) return { ok: false, error: "not_found" };
   try {
@@ -228,6 +248,7 @@ export async function updateServiceBlock(
         roomId: input.scope.type === "room" ? input.scope.roomId : null,
         startsAtLocal: input.startsAtLocal,
         endsAtLocal: input.endsAtLocal,
+        revision: sql`${agendaItems.revision} + 1`,
         updatedAt: new Date(),
       })
       .where(
@@ -235,10 +256,27 @@ export async function updateServiceBlock(
           eq(agendaItems.id, input.agendaItemId),
           eq(agendaItems.agendaId, event.agendaId),
           eq(agendaItems.kind, "service"),
+          eq(agendaItems.placed, true),
+          eq(agendaItems.revision, input.expectedRevision),
         ),
       );
-    return result.meta.changes > 0
-      ? { ok: true, value: { updated: true } }
+    if (result.meta.changes > 0) {
+      return { ok: true, value: { revision: input.expectedRevision + 1 } };
+    }
+    const [current] = await database
+      .select({ revision: agendaItems.revision })
+      .from(agendaItems)
+      .where(
+        and(
+          eq(agendaItems.id, input.agendaItemId),
+          eq(agendaItems.agendaId, event.agendaId),
+          eq(agendaItems.kind, "service"),
+          eq(agendaItems.placed, true),
+        ),
+      )
+      .limit(1);
+    return current
+      ? { ok: false, error: "agenda_item_changed" }
       : { ok: false, error: "agenda_item_not_found" };
   } catch (error: unknown) {
     return { ok: false, error: agendaItemPersistenceError(error) };
@@ -254,12 +292,19 @@ export async function unplaceProgramItem(
   const event = await findEventForOrganizer(database, actorUserId, slug);
   if (!event) return { ok: false, error: "not_found" };
   const result = await database
-    .delete(agendaItems)
+    .update(agendaItems)
+    .set({
+      placed: false,
+      canceledAt: null,
+      revision: sql`${agendaItems.revision} + 1`,
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(agendaItems.id, agendaItemId),
         eq(agendaItems.agendaId, event.agendaId),
         eq(agendaItems.kind, "program"),
+        eq(agendaItems.placed, true),
       ),
     );
   return result.meta.changes > 0
@@ -285,6 +330,7 @@ export async function setProgramPlacementCanceled(
         eq(agendaItems.id, agendaItemId),
         eq(agendaItems.agendaId, event.agendaId),
         eq(agendaItems.kind, "program"),
+        eq(agendaItems.placed, true),
         canceled
           ? isNull(agendaItems.canceledAt)
           : isNotNull(agendaItems.canceledAt),
@@ -299,6 +345,7 @@ export async function setProgramPlacementCanceled(
         eq(agendaItems.id, agendaItemId),
         eq(agendaItems.agendaId, event.agendaId),
         eq(agendaItems.kind, "program"),
+        eq(agendaItems.placed, true),
       ),
     )
     .limit(1);
@@ -322,6 +369,7 @@ export async function removeServiceBlock(
         eq(agendaItems.id, agendaItemId),
         eq(agendaItems.agendaId, event.agendaId),
         eq(agendaItems.kind, "service"),
+        eq(agendaItems.placed, true),
       ),
     );
   return result.meta.changes > 0
@@ -741,6 +789,7 @@ async function loadWorkingAgenda(
       startsAtLocal: agendaItems.startsAtLocal,
       endsAtLocal: agendaItems.endsAtLocal,
       canceledAt: agendaItems.canceledAt,
+      revision: agendaItems.revision,
       submissionId: submissions.id,
       title: submissions.title,
       abstract: submissions.abstract,
@@ -758,7 +807,12 @@ async function loadWorkingAgenda(
     .leftJoin(decisions, eq(decisions.submissionId, submissions.id))
     .leftJoin(tracks, eq(tracks.id, submissions.trackId))
     .leftJoin(rooms, eq(rooms.id, agendaItems.roomId))
-    .where(eq(agendaItems.agendaId, event.agendaId))
+    .where(
+      and(
+        eq(agendaItems.agendaId, event.agendaId),
+        eq(agendaItems.placed, true),
+      ),
+    )
     .orderBy(asc(agendaItems.startsAtLocal), asc(rooms.position));
   const speakerRows =
     rows.length === 0
@@ -794,6 +848,7 @@ async function loadWorkingAgenda(
           .where(
             and(
               eq(agendaItems.agendaId, event.agendaId),
+              eq(agendaItems.placed, true),
               isNull(submissionSpeakers.removedAt),
             ),
           )
@@ -829,7 +884,13 @@ async function loadWorkingAgenda(
         .innerJoin(submissions, eq(submissions.id, programItems.submissionId))
         .innerJoin(decisions, eq(decisions.submissionId, submissions.id))
         .innerJoin(tracks, eq(tracks.id, submissions.trackId))
-        .leftJoin(agendaItems, eq(agendaItems.programItemId, programItems.id))
+        .leftJoin(
+          agendaItems,
+          and(
+            eq(agendaItems.programItemId, programItems.id),
+            eq(agendaItems.placed, true),
+          ),
+        )
         .where(
           and(
             eq(programItems.eventId, event.id),

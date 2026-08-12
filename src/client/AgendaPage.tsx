@@ -40,6 +40,7 @@ type WorkingItem = {
   roomArchivedAt: Date | null;
   startsAtLocal: string;
   endsAtLocal: string;
+  revision: number;
   canceled: boolean;
   trackName: string | null;
   conflicts: Array<"room" | "speaker">;
@@ -47,6 +48,13 @@ type WorkingItem = {
 };
 
 type UndoAction = { label: string; run: () => void };
+
+type ServiceBlockDraft = {
+  title: string;
+  scope: { type: "event" } | { type: "room"; roomId: string };
+  startsAtLocal: string;
+  endsAtLocal: string;
+};
 
 export function AgendaPage() {
   const { slug = "" } = useParams();
@@ -153,7 +161,7 @@ export function AgendaPage() {
     room: string | null,
     revert?: () => void,
   ) {
-    if (saveError?.itemId === item.id) return;
+    if (saveError?.itemId === item.id) setSaveError(undefined);
     const previous = {
       startsAtLocal: item.startsAtLocal,
       endsAtLocal: item.endsAtLocal,
@@ -186,8 +194,18 @@ export function AgendaPage() {
         setSaveError({
           itemId: item.id,
           message: error.message,
-          retry: () => saveMove(item, startsAtLocal, endsAtLocal, room, revert),
-          ...(revert ? { revert } : {}),
+          retry: () => {
+            setSaveError(undefined);
+            saveMove(item, startsAtLocal, endsAtLocal, room, revert);
+          },
+          ...(revert
+            ? {
+                revert: () => {
+                  revert();
+                  setSaveError(undefined);
+                },
+              }
+            : {}),
         });
       },
     });
@@ -218,6 +236,36 @@ export function AgendaPage() {
     );
   }
 
+  function saveService(
+    item: WorkingItem,
+    input: ServiceBlockDraft,
+    expectedRevision: number,
+    onSaved: (revision: number) => void,
+  ) {
+    if (saveError?.itemId === item.id) setSaveError(undefined);
+    updateService.mutate(
+      {
+        slug,
+        agendaItemId: item.id,
+        expectedRevision,
+        ...input,
+      },
+      {
+        onSuccess: (saved) => {
+          setSaveError(undefined);
+          onSaved(saved.revision);
+          void refresh();
+        },
+        onError: (error) =>
+          setSaveError({
+            itemId: item.id,
+            message: error.message,
+            retry: () => saveService(item, input, expectedRevision, onSaved),
+          }),
+      },
+    );
+  }
+
   function dropPaletteItem(
     paletteId: string,
     startsAtLocal: string,
@@ -237,6 +285,12 @@ export function AgendaPage() {
       },
       { onSuccess: (created) => updateUrl({ item: created.id }) },
     );
+  }
+
+  function placePaletteItem(paletteId: string) {
+    const start = `${visibleStart}T09:00`;
+    dropPaletteItem(paletteId, start, addLocalMinutes(start, 60));
+    setPaletteOpen(false);
   }
 
   return (
@@ -347,6 +401,7 @@ export function AgendaPage() {
         <AgendaPalette
           items={paletteItems}
           onClose={() => setPaletteOpen(false)}
+          onPlace={placePaletteItem}
           open={paletteOpen}
           search={search}
           setSearch={setSearch}
@@ -377,6 +432,7 @@ export function AgendaPage() {
         />
         {selected && (
           <WorkingInspector
+            key={selected.id}
             busy={pending}
             {...(saveError?.itemId === selected.id ? { error: saveError } : {})}
             item={selected}
@@ -418,20 +474,9 @@ export function AgendaPage() {
                 },
               );
             }}
-            onUpdateService={(input) => {
-              updateService.mutate(
-                { slug, agendaItemId: selected.id, ...input },
-                {
-                  onSuccess: () => void refresh(),
-                  onError: (error) =>
-                    setSaveError({
-                      itemId: selected.id,
-                      message: error.message,
-                      retry: () => undefined,
-                    }),
-                },
-              );
-            }}
+            onUpdateService={(input, expectedRevision, onSaved) =>
+              saveService(selected, input, expectedRevision, onSaved)
+            }
             rooms={data.rooms}
           />
         )}
@@ -443,6 +488,7 @@ export function AgendaPage() {
 function AgendaPalette({
   items,
   onClose,
+  onPlace,
   open,
   search,
   setSearch,
@@ -452,6 +498,7 @@ function AgendaPalette({
 }: {
   items: WorkingAgenda["unplacedProgramItems"];
   onClose: () => void;
+  onPlace: (paletteId: string) => void;
   open: boolean;
   search: string;
   setSearch: (value: string) => void;
@@ -506,10 +553,11 @@ function AgendaPalette({
         className="agenda-palette-item service-template"
         data-palette-id="new-service"
         data-title="New service block"
+        onClick={() => onPlace("new-service")}
         type="button"
       >
         <strong>New service block</strong>
-        <span>Drag or click an empty slot</span>
+        <span>Drag, or press Enter to place at 09:00</span>
       </button>
       <div className="agenda-palette-items">
         {items.map((item) => (
@@ -518,6 +566,7 @@ function AgendaPalette({
             data-palette-id={item.id}
             data-title={item.title}
             key={item.id}
+            onClick={() => onPlace(item.id)}
             type="button"
           >
             <strong>{item.title}</strong>
@@ -549,12 +598,11 @@ function WorkingInspector({
   onClose: () => void;
   onMove: (start: string, end: string, room: string | null) => void;
   onRemove: () => void;
-  onUpdateService: (input: {
-    title: string;
-    scope: { type: "event" } | { type: "room"; roomId: string };
-    startsAtLocal: string;
-    endsAtLocal: string;
-  }) => void;
+  onUpdateService: (
+    input: ServiceBlockDraft,
+    expectedRevision: number,
+    onSaved: (revision: number) => void,
+  ) => void;
   rooms: WorkingAgenda["rooms"];
 }) {
   const [title, setTitle] = useState(item.serviceTitle ?? "");
@@ -564,15 +612,20 @@ function WorkingInspector({
   const [roomId, setRoomId] = useState(item.roomId ?? "");
   const [start, setStart] = useState(item.startsAtLocal);
   const [end, setEnd] = useState(item.endsAtLocal);
+  const [revision, setRevision] = useState(item.revision);
   function saveService() {
     if (item.kind !== "service" || !title.trim()) return;
     if (scope === "room" && !roomId) return;
-    onUpdateService({
-      title,
-      scope: scope === "event" ? { type: "event" } : { type: "room", roomId },
-      startsAtLocal: start,
-      endsAtLocal: end,
-    });
+    onUpdateService(
+      {
+        title,
+        scope: scope === "event" ? { type: "event" } : { type: "room", roomId },
+        startsAtLocal: start,
+        endsAtLocal: end,
+      },
+      revision,
+      setRevision,
+    );
   }
   const saveServiceAfterDelay = useEffectEvent(saveService);
   useEffect(() => {
@@ -930,6 +983,12 @@ function formatAgendaRange(
     timeZone: timezone,
   });
   return `${formatter.format(new Date(start))} – ${formatter.format(new Date(end))}`;
+}
+
+function addLocalMinutes(value: string, minutes: number): string {
+  const date = new Date(`${value}:00Z`);
+  date.setUTCMinutes(date.getUTCMinutes() + minutes);
+  return date.toISOString().slice(0, 16);
 }
 
 function AgendaStatus({ label, detail }: { label: string; detail?: string }) {

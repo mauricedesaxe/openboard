@@ -902,6 +902,8 @@ export const agendaItems = sqliteTable(
     startsAtLocal: text("starts_at_local").notNull(),
     endsAtLocal: text("ends_at_local").notNull(),
     canceledAt: integer("canceled_at", { mode: "timestamp_ms" }),
+    placed: integer("placed", { mode: "boolean" }).notNull().default(true),
+    revision: integer("revision").notNull().default(1),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },

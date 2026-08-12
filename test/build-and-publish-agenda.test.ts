@@ -35,6 +35,7 @@ const workingAgendaSchema = z.object({
       serviceTitle: z.string().nullable(),
       canceled: z.boolean(),
       roomName: z.string().nullable(),
+      revision: z.number(),
       conflicts: z.array(z.enum(["room", "speaker"])),
     }),
   ),
@@ -1068,12 +1069,18 @@ describe("build and publish an agenda", () => {
       ).body,
       idSchema,
     );
+    let working = await getWorking(owner.cookie, slug);
+    const serviceRevision = working.items.find(
+      (item) => item.id === service.id,
+    )?.revision;
+    expect(serviceRevision).toBe(1);
 
     await expectOk(
       "agendas.updateService",
       {
         slug,
         agendaItemId: service.id,
+        expectedRevision: serviceRevision,
         title: "Coffee break",
         scope: { type: "room", roomId: fixture.roomId },
         startsAtLocal: "2028-08-10T10:15",
@@ -1081,7 +1088,21 @@ describe("build and publish an agenda", () => {
       },
       owner.cookie,
     );
-    let working = await getWorking(owner.cookie, slug);
+    const staleUpdate = await callTrpc(
+      "agendas.updateService",
+      {
+        slug,
+        agendaItemId: service.id,
+        expectedRevision: serviceRevision,
+        title: "Stale break",
+        scope: { type: "event" },
+        startsAtLocal: "2028-08-10T10:30",
+        endsAtLocal: "2028-08-10T11:00",
+      },
+      owner.cookie,
+    );
+    expect(staleUpdate.status).toBe(409);
+    working = await getWorking(owner.cookie, slug);
     expect(working.items).toContainEqual(
       expect.objectContaining({
         id: service.id,
@@ -1089,6 +1110,21 @@ describe("build and publish an agenda", () => {
         roomName: "Room",
       }),
     );
+
+    await expectOk(
+      "agendas.publish",
+      { slug, expectedRevision: working.revision },
+      owner.cookie,
+    );
+    const syncStateBeforeUnplace = await testEnvironment.DB.prepare(
+      "SELECT uid, sequence FROM calendar_sync_states WHERE agenda_item_id = ?",
+    )
+      .bind(programPlacement.id)
+      .first<{ uid: string; sequence: number }>();
+    expect(syncStateBeforeUnplace).toEqual({
+      uid: `${programPlacement.id}@openboard`,
+      sequence: 0,
+    });
 
     await expectOk(
       "agendas.unplaceProgram",
@@ -1102,6 +1138,31 @@ describe("build and publish an agenda", () => {
     expect(working.unplacedProgramItems).toContainEqual(
       expect.objectContaining({ id: fixture.programItemIds[0] }),
     );
+    expect(
+      await testEnvironment.DB.prepare(
+        "SELECT uid, sequence FROM calendar_sync_states WHERE agenda_item_id = ?",
+      )
+        .bind(programPlacement.id)
+        .first(),
+    ).toEqual(syncStateBeforeUnplace);
+
+    const replaced = getResult(
+      (
+        await callTrpc(
+          "agendas.placeProgram",
+          {
+            slug,
+            programItemId: fixture.programItemIds[0],
+            roomId: fixture.roomId,
+            startsAtLocal: "2028-08-10T11:00",
+            endsAtLocal: "2028-08-10T12:00",
+          },
+          owner.cookie,
+        )
+      ).body,
+      idSchema,
+    );
+    expect(replaced.id).toBe(programPlacement.id);
   });
 
   test("rejects every invalid active placement from authoritative state", async () => {

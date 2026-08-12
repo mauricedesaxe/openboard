@@ -44,6 +44,7 @@ export const moveAgendaItemSchema = agendaTimeRangeSchema.extend({
 export const updateServiceBlockSchema = agendaTimeRangeSchema.extend({
   slug: eventInputSchema.shape.slug,
   agendaItemId: agendaItemIdSchema,
+  expectedRevision: z.number().int().positive(),
   title: z.string().trim().min(1).max(160),
   scope: z.discriminatedUnion("type", [
     z.object({ type: z.literal("event") }),
