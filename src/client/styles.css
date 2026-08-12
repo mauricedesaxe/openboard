@@ -2114,6 +2114,24 @@ a {
   display: inline-block;
   margin-bottom: 54px;
 }
+.readiness-navigation {
+  display: flex;
+  gap: 30px;
+  margin-top: 34px;
+  border-bottom: 1px solid var(--ink);
+}
+.readiness-navigation a {
+  padding: 14px 0 12px;
+  border-bottom: 3px solid transparent;
+  color: rgba(27, 39, 36, 0.62);
+  font: 11px "DM Mono";
+  text-decoration: none;
+  text-transform: uppercase;
+}
+.readiness-navigation a.active {
+  border-bottom-color: var(--orange);
+  color: var(--ink);
+}
 .onboarding-builders {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2122,6 +2140,31 @@ a {
 }
 .onboarding-builders .form-board {
   box-shadow: 7px 7px 0 var(--acid);
+}
+.readiness-definition-layout,
+.readiness-assignment-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
+}
+.readiness-assignment-layout .form-board {
+  grid-column: 1 / -1;
+}
+.definition-list h2 {
+  margin: 12px 0 28px;
+  font:
+    600 32px/1 "Newsreader",
+    serif;
+  letter-spacing: -0.035em;
+}
+.definition-row {
+  display: grid;
+  gap: 6px;
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+}
+.definition-row span {
+  color: rgba(27, 39, 36, 0.62);
+  font: 11px "DM Mono";
+  text-transform: uppercase;
 }
 .onboarding-builders h2,
 .readiness-section h2,
@@ -2271,6 +2314,13 @@ a {
   }
   .onboarding-builders {
     grid-template-columns: 1fr;
+  }
+  .readiness-navigation {
+    gap: 18px;
+    overflow-x: auto;
+  }
+  .readiness-navigation a {
+    flex: 0 0 auto;
   }
   .readiness-row {
     grid-template-columns: 1fr auto;
