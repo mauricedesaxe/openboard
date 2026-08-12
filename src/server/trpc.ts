@@ -462,13 +462,22 @@ export const appRouter = trpc.router({
     updateSettings: authenticatedProcedure
       .input(eventSettingsInputSchema)
       .mutation(async ({ ctx, input }) => {
-        const event = await updateEventSettings(
+        const result = await updateEventSettings(
           ctx.database,
           ctx.userId,
           input,
         );
-        if (!event) throwEventNotFound();
-        return event;
+        if (!result.ok) {
+          if (result.error === "not_found") throwEventNotFound();
+          throw new TRPCError({
+            code: "CONFLICT",
+            message:
+              result.error === "revision_conflict"
+                ? "These event settings changed elsewhere. Reload and try again."
+                : "Move agenda items inside the event dates before changing these settings. The timezone cannot change after agenda placement starts.",
+          });
+        }
+        return result.value;
       }),
   }),
   eventTeam: trpc.router({
