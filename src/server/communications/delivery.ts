@@ -18,7 +18,7 @@ export async function processCommunicationDeliveryWork(
   config: AppConfig,
   options: { now?: Date; limit?: number } = {},
 ) {
-  const now = options.now ?? new Date();
+  const now = currentTime(options);
   const staleClaim = new Date(now.getTime() - claimTimeoutMs);
   const candidates = await database
     .select({ work: communicationDeliveryWork, communication: communications })
@@ -70,11 +70,12 @@ export async function processCommunicationDeliveryWork(
     }
     const token = crypto.randomUUID();
     const attemptNumber = candidate.work.attemptCount + 1;
+    const claimedAt = currentTime(options);
     const claim = await database
       .update(communicationDeliveryWork)
       .set({
         claimToken: token,
-        claimedAt: now,
+        claimedAt,
         attemptCount: attemptNumber,
       })
       .where(
@@ -103,7 +104,7 @@ export async function processCommunicationDeliveryWork(
         ),
       );
     if (claim.meta.changes === 0) continue;
-    const startedAt = options.now ?? new Date();
+    const startedAt = claimedAt;
     let status: "completed" | "failed" | "terminal" = "completed";
     let result: "delivered" | "retryable_failure" | "terminal_failure" =
       "delivered";
@@ -132,7 +133,7 @@ export async function processCommunicationDeliveryWork(
       errorMessage =
         error instanceof Error ? error.message : "Email delivery failed";
     }
-    const finishedAt = options.now ?? new Date();
+    const finishedAt = currentTime(options);
     const nextAttemptAt =
       status === "failed"
         ? new Date(
@@ -160,6 +161,10 @@ export async function processCommunicationDeliveryWork(
     }
   }
   return summary;
+}
+
+function currentTime(options: { now?: Date }): Date {
+  return options.now ?? new Date();
 }
 
 async function finishCommunicationAttempt(

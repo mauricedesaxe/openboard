@@ -46,7 +46,7 @@ export async function processAgendaDeliveryWork(
   deliver: (delivery: AgendaCalendarDelivery) => Promise<void>,
   options: AgendaDeliveryOptions,
 ): Promise<{ delivered: number; failed: number; superseded: number }> {
-  const now = options.now ?? new Date();
+  const now = currentTime(options);
   const staleClaim = new Date(now.getTime() - deliveryClaimTimeoutMs);
   const work = await database
     .select()
@@ -95,10 +95,11 @@ export async function processAgendaDeliveryWork(
     }
     const claimToken = crypto.randomUUID();
     const attemptNumber = candidate.attemptCount + 1;
+    const claimedAt = currentTime(options);
     const claimed = await database
       .update(agendaDeliveryWork)
       .set({
-        claimedAt: now,
+        claimedAt,
         claimToken,
         attemptCount: attemptNumber,
       })
@@ -120,7 +121,7 @@ export async function processAgendaDeliveryWork(
       );
     if (claimed.meta.changes === 0) continue;
 
-    const startedAt = now;
+    const startedAt = claimedAt;
     const current = await database
       .select({
         uid: calendarSyncStates.uid,
