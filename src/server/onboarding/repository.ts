@@ -172,6 +172,7 @@ export async function getOrganizerOnboardingBoard(
   const assignmentStates = await Promise.all(
     assignments.map(async (assignment) => ({
       ...presentAssignment(assignment),
+      eventTimezone: event.timezone,
       completed: await assignmentIsComplete(database, assignment),
       evidence: await listAssignmentEvidence(database, assignment.id),
       lastReminderAt: await findLastReminder(database, assignment.id),
@@ -207,6 +208,11 @@ export async function getOrganizerOnboardingBoard(
   });
 
   return {
+    event: {
+      startsOn: event.startsOn,
+      endsOn: event.endsOn,
+      timezone: event.timezone,
+    },
     definitions: definitions.map((definition) => ({
       id: definition.id,
       name: definition.name,
@@ -881,12 +887,14 @@ async function listEventAssignments(database: Database, eventId: string) {
       required: taskAssignments.required,
       dueAt: taskAssignments.dueAt,
       completionRevision: taskAssignments.completionRevision,
+      eventTimezone: events.timezone,
     })
     .from(taskAssignments)
     .innerJoin(
       taskDefinitions,
       eq(taskDefinitions.id, taskAssignments.taskDefinitionId),
     )
+    .innerJoin(events, eq(events.id, taskAssignments.eventId))
     .where(
       and(
         eq(taskAssignments.eventId, eventId),
@@ -936,12 +944,14 @@ async function listAccessibleAssignments(database: Database, userId: UserId) {
       required: taskAssignments.required,
       dueAt: taskAssignments.dueAt,
       completionRevision: taskAssignments.completionRevision,
+      eventTimezone: events.timezone,
     })
     .from(taskAssignments)
     .innerJoin(
       taskDefinitions,
       eq(taskDefinitions.id, taskAssignments.taskDefinitionId),
     )
+    .innerJoin(events, eq(events.id, taskAssignments.eventId))
     .where(
       and(
         isNull(taskAssignments.canceledAt),
@@ -984,12 +994,14 @@ async function findAssignment(database: Database, assignmentId: string) {
       required: taskAssignments.required,
       dueAt: taskAssignments.dueAt,
       completionRevision: taskAssignments.completionRevision,
+      eventTimezone: events.timezone,
     })
     .from(taskAssignments)
     .innerJoin(
       taskDefinitions,
       eq(taskDefinitions.id, taskAssignments.taskDefinitionId),
     )
+    .innerJoin(events, eq(events.id, taskAssignments.eventId))
     .where(
       and(
         eq(taskAssignments.id, assignmentId),
@@ -1337,6 +1349,7 @@ function presentAssignment(assignment: NonNullable<AssignmentRow>) {
     required: assignment.required,
     dueAt: assignment.dueAt,
     completionRevision: assignment.completionRevision,
+    eventTimezone: assignment.eventTimezone,
   };
 }
 

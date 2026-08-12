@@ -8,10 +8,11 @@ export type EventLocalDateTimeResolution =
   | { status: "ambiguous" };
 
 /** Resolves event wall time through repeated offset checks so DST changes settle without using the browser timezone. */
-export function eventLocalDateTimeToIso(
-  value: string,
-  timezone: string,
-): string | undefined {
+export function eventLocalDateTimeToIso(input: {
+  localDateTime: string;
+  timezone: string;
+}): string | undefined {
+  const { localDateTime: value, timezone } = input;
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
   if (!match) return undefined;
 
@@ -27,17 +28,20 @@ export function eventLocalDateTimeToIso(
     instant += desired - datePartsAsUtc(new Date(instant), timezone);
   }
 
-  return isoToEventLocalDateTime(new Date(instant).toISOString(), timezone) ===
-    value
+  return isoToEventLocalDateTime({
+    instant: new Date(instant).toISOString(),
+    timezone,
+  }) === value
     ? new Date(instant).toISOString()
     : undefined;
 }
 
-export function resolveEventLocalDateTime(
-  value: string,
-  timezone: string,
-): EventLocalDateTimeResolution {
-  const resolved = eventLocalDateTimeToIso(value, timezone);
+export function resolveEventLocalDateTime(input: {
+  localDateTime: string;
+  timezone: string;
+}): EventLocalDateTimeResolution {
+  const { localDateTime: value, timezone } = input;
+  const resolved = eventLocalDateTimeToIso(input);
   if (!resolved) return { status: "invalid" };
   const resolvedTime = new Date(resolved).getTime();
   const matchingInstants = new Set<number>();
@@ -48,8 +52,10 @@ export function resolveEventLocalDateTime(
   ) {
     const candidate = resolvedTime + offsetMinutes * millisecondsPerMinute;
     if (
-      isoToEventLocalDateTime(new Date(candidate).toISOString(), timezone) ===
-      value
+      isoToEventLocalDateTime({
+        instant: new Date(candidate).toISOString(),
+        timezone,
+      }) === value
     ) {
       matchingInstants.add(candidate);
     }
@@ -59,36 +65,51 @@ export function resolveEventLocalDateTime(
     : { status: "ambiguous" };
 }
 
-export function isoToEventLocalDateTime(
-  value: string,
-  timezone: string,
-): string {
+export function isoToEventLocalDateTime(input: {
+  instant: string;
+  timezone: string;
+}): string {
+  const { instant: value, timezone } = input;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   const parts = dateTimeParts(date, timezone);
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
-export function instantFallsAfterLocalDate(
-  instant: string,
-  localDate: string,
-  timezone: string,
-): boolean {
-  return isoToEventLocalDateTime(instant, timezone).slice(0, 10) > localDate;
+export function instantFallsAfterLocalDate(input: {
+  instant: string;
+  localDate: string;
+  timezone: string;
+}): boolean {
+  return isoToEventLocalDateTime(input).slice(0, 10) > input.localDate;
 }
 
-export function instantFallsBeforeLocalDate(
-  instant: string,
-  localDate: string,
-  timezone: string,
-): boolean {
-  return isoToEventLocalDateTime(instant, timezone).slice(0, 10) < localDate;
+export function instantFallsBeforeLocalDate(input: {
+  instant: string;
+  localDate: string;
+  timezone: string;
+}): boolean {
+  return isoToEventLocalDateTime(input).slice(0, 10) < input.localDate;
 }
 
-export function defaultCfpDeadline(startsOn: string, timezone: string): string {
+export function defaultCfpDeadline(input: {
+  startsOn: string;
+  timezone: string;
+  now?: Date;
+}): string {
+  const now = input.now ?? new Date();
+  const nowLocal = isoToEventLocalDateTime({
+    instant: now.toISOString(),
+    timezone: input.timezone,
+  });
+  const defaultLocal = `${input.startsOn}T17:00`;
+  const localDateTime =
+    nowLocal.slice(0, 10) === input.startsOn && nowLocal >= defaultLocal
+      ? `${input.startsOn}T23:59`
+      : defaultLocal;
   return (
-    eventLocalDateTimeToIso(`${startsOn}T00:00`, timezone) ??
-    `${startsOn}T00:00:00.000Z`
+    eventLocalDateTimeToIso({ localDateTime, timezone: input.timezone }) ??
+    `${input.startsOn}T17:00:00.000Z`
   );
 }
 

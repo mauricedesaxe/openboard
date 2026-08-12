@@ -731,7 +731,8 @@ function AgendaEventContext({
 }) {
   return (
     <p className="agenda-event-context">
-      Event {formatEventDateRange(eventTimeWindow.startsOn, eventTimeWindow.endsOn)} ·{" "}
+      Event{" "}
+      {formatEventDateRange(eventTimeWindow.startsOn, eventTimeWindow.endsOn)} ·{" "}
       {eventTimeWindow.timezone}
     </p>
   );

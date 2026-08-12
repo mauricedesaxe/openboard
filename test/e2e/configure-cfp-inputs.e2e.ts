@@ -17,13 +17,6 @@ test("refreshes the public CFP after its definition changes", async ({
   await page.getByRole("button", { name: "Add" }).first().click();
   await expect(page.getByText("Track created", { exact: true })).toBeVisible();
 
-  const deadline = page.getByLabel("Deadline");
-  await expect(deadline).toHaveValue("2028-08-10T00:00");
-  await deadline.fill("2028-07-01T09:00");
-  await expect(
-    page.getByText("The deadline is before the event starts."),
-  ).toBeVisible();
-
   const formats = page.getByRole("textbox", { name: "Formats" });
   await formats.fill("");
   await formats.pressSequentially("Talk, Lightning talk");
@@ -64,6 +57,25 @@ test("refreshes the public CFP after its definition changes", async ({
   await openCfp.getByRole("link", { name: "View public form →" }).click();
   await expect(
     page.getByRole("heading", { name: "Updated Browser CFP" }),
+  ).toBeVisible();
+});
+
+test("defaults and explains the CFP deadline in event time", async ({
+  page,
+}) => {
+  const suffix = `${Date.now()}`;
+  const slug = `browser-cfp-deadline-${suffix}`;
+  await page.goto("/");
+  await signIn(page, `browser-cfp-deadline-owner-${suffix}@example.com`);
+  await createEvent(page, slug);
+  await page.goto(`/events/${slug}/cfp/setup`);
+
+  const deadline = page.getByLabel("Deadline");
+  await expect(deadline).toHaveValue("2028-08-10T17:00");
+  await expect(page.getByText(/Aug 10, 2028.*Aug 12, 2028/)).toBeVisible();
+  await deadline.fill("2028-07-01T09:00");
+  await expect(
+    page.getByText("The deadline is before the event starts."),
   ).toBeVisible();
 });
 
