@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import type { FormEvent } from "react";
+import type { CSSProperties, FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
 import { useTRPC } from "./trpc";
@@ -45,6 +45,7 @@ export function AgendaPage() {
   const [serviceRoomId, setServiceRoomId] = useState("");
   const [serviceStart, setServiceStart] = useState("");
   const [serviceEnd, setServiceEnd] = useState("");
+  const [showBoard, setShowBoard] = useState(false);
 
   if (agenda.isPending) return <AgendaStatus label="Opening working agenda" />;
   if (agenda.isError) {
@@ -243,8 +244,27 @@ export function AgendaPage() {
               {agenda.data.items.length === 1 ? "" : "s"}
             </h2>
           </div>
-          <span>{agenda.data.timezone}</span>
+          <div className="agenda-list-meta">
+            <span>{agenda.data.timezone}</span>
+            <button
+              aria-pressed={showBoard}
+              className="agenda-view-toggle"
+              onClick={() => setShowBoard((current) => !current)}
+              type="button"
+            >
+              {showBoard ? "Hide timeline" : "Show timeline"}
+            </button>
+          </div>
         </div>
+        {showBoard && (
+          <WorkingAgendaTimeline
+            items={agenda.data.items}
+            rooms={agenda.data.rooms}
+            startsOn={agenda.data.startsOn}
+            endsOn={agenda.data.endsOn}
+            timezone={agenda.data.timezone}
+          />
+        )}
         {agenda.data.items.length === 0 ? (
           <p className="empty-copy">
             Accepted program items and service blocks appear here.
@@ -432,6 +452,297 @@ export function PublicAgendaPage() {
         )}
       </div>
     </main>
+  );
+}
+
+type TimelineItem = {
+  id: string;
+  kind: "program" | "service";
+  title: string | null;
+  serviceTitle: string | null;
+  serviceScope: "event" | "room" | null;
+  roomId: string | null;
+  roomName: string | null;
+  startsAtLocal: string;
+  endsAtLocal: string;
+  canceled: boolean;
+  conflicts: Array<"room" | "speaker">;
+  speakers: Array<{ displayName: string }>;
+};
+
+type TimelineRoom = { id: string; name: string };
+
+const TIMELINE_MIN_HOUR = 8;
+const TIMELINE_MAX_HOUR = 22;
+const TIMELINE_PIXELS_PER_MINUTE = 1.5;
+const TIMELINE_ROW_HEIGHT = 78;
+
+function readLocalMinutes(value: string): { date: string; minutes: number } {
+  const [date, time] = value.split("T");
+  const [hour, minute] = (time ?? "").split(":").map(Number);
+  return { date: date ?? "", minutes: (hour ?? 0) * 60 + (minute ?? 0) };
+}
+
+function timelineDays(startsOn: string, endsOn: string): string[] {
+  const days: string[] = [];
+  const [startYear, startMonth, startDay] = startsOn.split("-").map(Number);
+  const [endYear, endMonth, endDay] = endsOn.split("-").map(Number);
+  if (!startYear || !endYear) return days;
+  const cursor = new Date(
+    Date.UTC(startYear, (startMonth ?? 1) - 1, startDay ?? 1),
+  );
+  const limit = new Date(Date.UTC(endYear, (endMonth ?? 1) - 1, endDay ?? 1));
+  while (cursor.getTime() <= limit.getTime()) {
+    days.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return days;
+}
+
+function timelineHourRange(items: TimelineItem[]): {
+  startHour: number;
+  endHour: number;
+} {
+  let earliest = TIMELINE_MIN_HOUR * 60;
+  let latest = TIMELINE_MAX_HOUR * 60;
+  for (const item of items) {
+    if (item.canceled) continue;
+    const start = readLocalMinutes(item.startsAtLocal).minutes;
+    const end = readLocalMinutes(item.endsAtLocal).minutes;
+    if (start < earliest) earliest = Math.floor(start / 60) * 60;
+    if (end > latest) latest = Math.ceil(end / 60) * 60;
+  }
+  return {
+    startHour: Math.min(TIMELINE_MIN_HOUR, Math.floor(earliest / 60)),
+    endHour: Math.max(TIMELINE_MAX_HOUR, Math.ceil(latest / 60)),
+  };
+}
+
+function formatTimelineHour(hour: number): string {
+  const suffix = hour < 12 ? "AM" : "PM";
+  const display = hour % 12 === 0 ? 12 : hour % 12;
+  return `${display}${suffix.toLowerCase()}`;
+}
+
+function formatTimelineDay(date: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+  if (!year) return date;
+  return new Intl.DateTimeFormat("en", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year, (month ?? 1) - 1, day ?? 1)));
+}
+
+function WorkingAgendaTimeline({
+  items,
+  rooms,
+  startsOn,
+  endsOn,
+  timezone,
+}: {
+  items: TimelineItem[];
+  rooms: TimelineRoom[];
+  startsOn: string;
+  endsOn: string;
+  timezone: string;
+}) {
+  const days = timelineDays(startsOn, endsOn);
+  const { startHour, endHour } = timelineHourRange(items);
+  const totalMinutes = (endHour - startHour) * 60;
+  const trackWidth = totalMinutes * TIMELINE_PIXELS_PER_MINUTE;
+  const visibleRooms =
+    rooms.length === 0 ? [{ id: "", name: "Unassigned" }] : rooms;
+
+  return (
+    <div className="agenda-timeline-wrap">
+      <div className="agenda-timeline-legend">
+        <span className="eyebrow">Timeline · {timezone}</span>
+        <div className="agenda-timeline-legend-keys">
+          <span>
+            <i className="swatch swatch-room" /> Room conflict
+          </span>
+          <span>
+            <i className="swatch swatch-speaker" /> Speaker conflict
+          </span>
+          <span>
+            <i className="swatch swatch-canceled" /> Canceled
+          </span>
+          <span>
+            <i className="swatch swatch-service" /> Event-wide block
+          </span>
+        </div>
+      </div>
+      {items.length === 0 ? (
+        <p className="empty-copy">
+          Placed items will appear here as a room-by-room timeline.
+        </p>
+      ) : (
+        days.map((date) => {
+          const dayItems = items.filter(
+            (item) => readLocalMinutes(item.startsAtLocal).date === date,
+          );
+          if (dayItems.length === 0) return null;
+          return (
+            <section className="agenda-timeline-day" key={date}>
+              <header className="agenda-timeline-day-header">
+                <h3>{formatTimelineDay(date)}</h3>
+                <div
+                  className="agenda-timeline-ruler"
+                  style={
+                    { "--ruler-width": `${trackWidth}px` } as CSSProperties
+                  }
+                >
+                  {Array.from(
+                    { length: endHour - startHour + 1 },
+                    (_, index) => {
+                      const hour = startHour + index;
+                      return (
+                        <span
+                          className="agenda-timeline-ruler-tick"
+                          key={hour}
+                          style={{
+                            left: `${index * 60 * TIMELINE_PIXELS_PER_MINUTE}px`,
+                          }}
+                        >
+                          {formatTimelineHour(hour)}
+                        </span>
+                      );
+                    },
+                  )}
+                </div>
+              </header>
+              <div className="agenda-timeline-rows">
+                {(() => {
+                  const eventWideItems = dayItems.filter(
+                    (item) => item.serviceScope === "event",
+                  );
+                  const rows: Array<{
+                    room: TimelineRoom;
+                    items: TimelineItem[];
+                  }> = [];
+                  if (eventWideItems.length > 0) {
+                    rows.push({
+                      room: { id: "__all__", name: "All rooms" },
+                      items: eventWideItems,
+                    });
+                  }
+                  for (const room of visibleRooms) {
+                    rows.push({
+                      room,
+                      items: dayItems.filter(
+                        (item) =>
+                          item.serviceScope !== "event" &&
+                          (item.roomId === room.id ||
+                            (room.id === "" && !item.roomId)),
+                      ),
+                    });
+                  }
+                  return rows.map(({ room, items: roomItems }) => (
+                    <div
+                      className="agenda-timeline-row"
+                      key={room.id || "unassigned"}
+                      style={{ height: `${TIMELINE_ROW_HEIGHT}px` }}
+                    >
+                      <div className="agenda-timeline-row-label">
+                        <span>{room.name}</span>
+                        {roomItems.filter((item) => !item.canceled).length >
+                          0 && (
+                          <em>
+                            {roomItems.filter((item) => !item.canceled).length}{" "}
+                            placed
+                          </em>
+                        )}
+                      </div>
+                      <div
+                        className="agenda-timeline-track"
+                        style={{ width: `${trackWidth}px` }}
+                      >
+                        {Array.from(
+                          { length: endHour - startHour },
+                          (_, index) => (
+                            <div
+                              className="agenda-timeline-grid-line"
+                              key={index}
+                              style={{
+                                left: `${(index + 1) * 60 * TIMELINE_PIXELS_PER_MINUTE}px`,
+                              }}
+                            />
+                          ),
+                        )}
+                        {roomItems.length === 0 && (
+                          <span className="agenda-timeline-row-empty">
+                            Open
+                          </span>
+                        )}
+                        {roomItems.map((item) => {
+                          const start = readLocalMinutes(
+                            item.startsAtLocal,
+                          ).minutes;
+                          const end = readLocalMinutes(
+                            item.endsAtLocal,
+                          ).minutes;
+                          const left =
+                            (start - startHour * 60) *
+                            TIMELINE_PIXELS_PER_MINUTE;
+                          const width =
+                            Math.max(15, end - start) *
+                            TIMELINE_PIXELS_PER_MINUTE;
+                          const spansAll = item.serviceScope === "event";
+                          return (
+                            <div
+                              className={`agenda-timeline-card${
+                                spansAll ? " spans-all-rooms" : ""
+                              }${item.canceled ? " is-canceled" : ""}`}
+                              data-conflict-room={
+                                item.conflicts.includes("room") || undefined
+                              }
+                              data-conflict-speaker={
+                                item.conflicts.includes("speaker") || undefined
+                              }
+                              key={item.id}
+                              style={
+                                {
+                                  "--card-left": `${left}px`,
+                                  "--card-width": `${width}px`,
+                                } as CSSProperties
+                              }
+                              title={
+                                item.kind === "program"
+                                  ? (item.title ?? "")
+                                  : (item.serviceTitle ?? "")
+                              }
+                            >
+                              <div className="agenda-timeline-card-time">
+                                {item.startsAtLocal.slice(11, 16)}–
+                                {item.endsAtLocal.slice(11, 16)}
+                              </div>
+                              <div className="agenda-timeline-card-title">
+                                {item.kind === "program"
+                                  ? item.title
+                                  : item.serviceTitle}
+                              </div>
+                              {item.speakers.length > 0 && (
+                                <div className="agenda-timeline-card-speakers">
+                                  {item.speakers
+                                    .map((speaker) => speaker.displayName)
+                                    .join(", ")}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ));
+                })()}
+              </div>
+            </section>
+          );
+        })
+      )}
+    </div>
   );
 }
 

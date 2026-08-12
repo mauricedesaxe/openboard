@@ -667,6 +667,219 @@ a {
     600 clamp(40px, 7vw, 72px) "Newsreader",
     serif;
 }
+.agenda-view-toggle {
+  border: 1px solid var(--ink);
+  padding: 8px 14px;
+  background: transparent;
+  font: 11px "DM Mono";
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.agenda-view-toggle[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--acid);
+}
+.agenda-list-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.agenda-timeline-wrap {
+  margin: 32px 0 0;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  overflow-x: auto;
+}
+.agenda-timeline-legend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--ink);
+  color: var(--paper);
+}
+.agenda-timeline-legend .eyebrow {
+  color: var(--acid);
+}
+.agenda-timeline-legend-keys {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+  font: 11px "DM Mono";
+  text-transform: uppercase;
+}
+.agenda-timeline-legend-keys .swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: middle;
+  background: var(--ink);
+  border: 1px solid var(--paper);
+}
+.agenda-timeline-legend-keys .swatch-room {
+  background: var(--orange);
+}
+.agenda-timeline-legend-keys .swatch-speaker {
+  background: #a22d18;
+}
+.agenda-timeline-legend-keys .swatch-canceled {
+  background: rgba(27, 39, 36, 0.4);
+}
+.agenda-timeline-legend-keys .swatch-service {
+  background: var(--acid);
+}
+.agenda-timeline-day {
+  padding: 22px clamp(14px, 3vw, 32px);
+  border-bottom: 1px solid var(--line);
+  min-width: max-content;
+}
+.agenda-timeline-day:last-child {
+  border-bottom: 0;
+}
+.agenda-timeline-day-header {
+  position: sticky;
+  left: 0;
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.agenda-timeline-day-header h3 {
+  margin: 0;
+  font:
+    600 22px "Newsreader",
+    serif;
+}
+.agenda-timeline-ruler {
+  position: relative;
+  height: 18px;
+  width: var(--ruler-width, 100%);
+  border-bottom: 1px solid var(--line);
+}
+.agenda-timeline-ruler-tick {
+  position: absolute;
+  bottom: 0;
+  transform: translateX(-50%);
+  padding-bottom: 4px;
+  font: 10px "DM Mono";
+  text-transform: lowercase;
+  color: rgba(27, 39, 36, 0.55);
+}
+.agenda-timeline-rows {
+  display: flex;
+  flex-direction: column;
+}
+.agenda-timeline-row {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  align-items: stretch;
+  gap: 16px;
+  border-top: 1px dashed var(--line);
+}
+.agenda-timeline-row-label {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 12px 0;
+  font: 11px "DM Mono";
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.agenda-timeline-row-label em {
+  margin-top: 4px;
+  font-style: normal;
+  font-size: 9px;
+  color: rgba(27, 39, 36, 0.5);
+}
+.agenda-timeline-track {
+  position: relative;
+  height: 100%;
+  min-height: 60px;
+}
+.agenda-timeline-grid-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px dashed rgba(27, 39, 36, 0.1);
+}
+.agenda-timeline-row-empty {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%);
+  font: 9px "DM Mono";
+  text-transform: uppercase;
+  color: rgba(27, 39, 36, 0.3);
+}
+.agenda-timeline-card {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: var(--card-left, 0);
+  width: var(--card-width, 80px);
+  padding: 8px 10px;
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-left: 3px solid var(--ink);
+  overflow: hidden;
+}
+.agenda-timeline-card.spans-all-rooms {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+  border-left-color: var(--acid);
+}
+.agenda-timeline-card.is-canceled {
+  opacity: 0.45;
+  background: repeating-linear-gradient(
+    45deg,
+    var(--paper),
+    var(--paper) 6px,
+    rgba(27, 39, 36, 0.08) 6px,
+    rgba(27, 39, 36, 0.08) 12px
+  );
+}
+.agenda-timeline-card[data-conflict-room] {
+  border-color: var(--orange);
+  border-left-color: var(--orange);
+  box-shadow: 0 0 0 1px var(--orange) inset;
+  z-index: 3;
+}
+.agenda-timeline-card[data-conflict-speaker] {
+  border-color: #a22d18;
+  border-left-color: #a22d18;
+  box-shadow: 0 0 0 1px #a22d18 inset;
+  z-index: 4;
+}
+.agenda-timeline-card-time {
+  font: 9px "DM Mono";
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+.agenda-timeline-card-title {
+  margin-top: 2px;
+  font:
+    600 13px/1.2 "Manrope",
+    sans-serif;
+}
+.agenda-timeline-card.spans-all-rooms .agenda-timeline-card-title {
+  font-family: "DM Mono";
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.agenda-timeline-card-speakers {
+  margin-top: 3px;
+  font: 10px "DM Mono";
+  opacity: 0.65;
+}
 @media (max-width: 760px) {
   .agenda-heading,
   .agenda-composer,
