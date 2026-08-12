@@ -1,5 +1,6 @@
 import { desc, eq, sql } from "drizzle-orm";
 
+import { ORGANIZER_CFP_AREA } from "../../shared/event-routes";
 import type { UserId } from "../../shared/events";
 import { getWorkingAgenda } from "../agendas/repository";
 import { getCfpSetup } from "../cfps/repository";
@@ -130,7 +131,7 @@ function organizerAttention(
         "The CFP is not configured",
         "Create the proposal form before inviting submissions.",
         1,
-        route("cfp/setup"),
+        route(ORGANIZER_CFP_AREA),
         null,
       ),
     );
@@ -142,7 +143,7 @@ function organizerAttention(
         "The CFP is still a draft",
         "Open it when the proposal form is ready.",
         1,
-        route("cfp/setup"),
+        route(ORGANIZER_CFP_AREA),
         draftCfp.deadline,
       ),
     );
@@ -156,7 +157,7 @@ function organizerAttention(
           "The CFP deadline passed",
           "Close proposal intake or update the deadline.",
           1,
-          route("cfp/setup"),
+          route(ORGANIZER_CFP_AREA),
           openCfp.deadline,
         ),
       );
@@ -168,7 +169,7 @@ function organizerAttention(
           `The CFP closes in ${days} ${days === 1 ? "day" : "days"}`,
           "Check the form and deadline before intake closes.",
           1,
-          route("cfp/setup"),
+          route(ORGANIZER_CFP_AREA),
           openCfp.deadline,
         ),
       );
@@ -333,7 +334,7 @@ function cfpStatus(cfp: OrganizerState["cfp"]) {
     detail: current?.deadline
       ? `Deadline ${current.deadline.slice(0, 10)}`
       : "No proposal form",
-    href: "cfp/setup",
+    href: ORGANIZER_CFP_AREA,
   };
 }
 

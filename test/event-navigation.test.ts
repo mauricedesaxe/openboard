@@ -31,8 +31,8 @@ describe("event navigation", () => {
     expect(eventSwitchPath("/events/current/review", reviewer)).toBe(
       "/events/reviewer-event/review",
     );
-    expect(eventSwitchPath("/events/current/cfp/setup", owner)).toBe(
-      "/events/owner-event/cfp/setup",
+    expect(eventSwitchPath("/events/current/cfp/manage", owner)).toBe(
+      "/events/owner-event/cfp/manage",
     );
   });
 

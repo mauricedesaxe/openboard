@@ -1,3 +1,5 @@
+import { ORGANIZER_CFP_AREA } from "../shared/event-routes";
+
 export type NavigationEvent = {
   name: string;
   slug: string;
@@ -31,6 +33,6 @@ export function eventSwitchPath(
   ) {
     return `/events/${event.slug}`;
   }
-  const targetArea = area === "cfp" ? "cfp/setup" : area;
+  const targetArea = area === "cfp" ? ORGANIZER_CFP_AREA : area;
   return `/events/${event.slug}${targetArea ? `/${targetArea}` : ""}`;
 }

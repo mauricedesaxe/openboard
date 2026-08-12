@@ -43,7 +43,7 @@ describe("event workspace", () => {
     expect(workspace.attention).toContainEqual(
       expect.objectContaining({
         key: "cfp",
-        href: "/events/workspace-owner-event/cfp/setup",
+        href: "/events/workspace-owner-event/cfp/manage",
       }),
     );
     expect(workspace.statuses.map((status) => status.key)).toEqual([
