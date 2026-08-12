@@ -1200,7 +1200,8 @@ describe("build and publish an agenda", () => {
     );
     await expectPublicationFailure(slug, owner.cookie);
 
-    await expectOk(
+    const beforeInvalidMove = await getWorking(owner.cookie, slug);
+    const invalidMove = await callTrpc(
       "agendas.move",
       {
         slug,
@@ -1211,7 +1212,27 @@ describe("build and publish an agenda", () => {
       },
       owner.cookie,
     );
-    await expectPublicationFailure(slug, owner.cookie, 400);
+    expect(invalidMove.status).toBe(400);
+    expect(JSON.stringify(invalidMove.body)).toContain(
+      "End must be after start.",
+    );
+    expect(await getWorking(owner.cookie, slug)).toEqual(beforeInvalidMove);
+
+    await testEnvironment.DB.prepare(
+      "UPDATE agenda_items SET starts_at_local = ?, ends_at_local = ? WHERE id = ?",
+    )
+      .bind("2028-10-29T10:00", "2028-10-29T09:00", placement.id)
+      .run();
+    const corrupted = await getWorking(owner.cookie, slug);
+    const publication = await callTrpc(
+      "agendas.publish",
+      { slug, expectedRevision: corrupted.revision },
+      owner.cookie,
+    );
+    expect(publication.status).toBe(400);
+    expect(JSON.stringify(publication.body)).toContain(
+      "End time must be after start time.",
+    );
 
     await expectOk(
       "agendas.move",

@@ -7,6 +7,12 @@ test.setTimeout(60_000);
 test("publishes a working placement to every public agenda view", async ({
   page,
 }) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("pageerror", (error) => pageErrors.push(error.message));
   const suffix = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const slug = `browser-agenda-${suffix}`;
   const ownerEmail = `browser-agenda-owner-${suffix}@example.com`;
@@ -37,6 +43,11 @@ test("publishes a working placement to every public agenda view", async ({
     slug,
     name: "Studio",
   });
+  const overlapRooms = await Promise.all(
+    ["Workshop", "Library", "Terrace"].map((name) =>
+      mutate(page.request, "rooms.create", { slug, name }),
+    ),
+  );
   const cfp = await mutate(page.request, "cfps.createDraft", {
     slug,
     name: "Browser agenda CFP",
@@ -126,6 +137,25 @@ test("publishes a working placement to every public agenda view", async ({
   await expect(
     page.getByText("New service block", { exact: true }),
   ).toBeVisible();
+  const calendarScroller = page.locator(".fc-scroller-liquid-absolute").last();
+  await expect(calendarScroller).toBeVisible();
+  await expect
+    .poll(() =>
+      calendarScroller.evaluate((element) => ({
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        scrollTop: element.scrollTop,
+      })),
+    )
+    .toMatchObject({ clientHeight: expect.any(Number) });
+  expect(
+    await calendarScroller.evaluate(
+      (element) => element.scrollHeight > element.clientHeight,
+    ),
+  ).toBe(true);
+  expect(
+    await calendarScroller.evaluate((element) => element.scrollTop),
+  ).toBeGreaterThan(0);
 
   const working = await query(page.request, "agendas.working", { slug });
   const unplaced = working.unplacedProgramItems as Array<
@@ -158,8 +188,24 @@ test("publishes a working placement to every public agenda view", async ({
     startsAtLocal: "2028-08-13T12:00",
     endsAtLocal: "2028-08-13T13:00",
   });
+  for (const [index, overlapRoom] of overlapRooms.entries()) {
+    await mutate(page.request, "agendas.placeService", {
+      slug,
+      title: `Overlap ${index + 1}`,
+      scope: { type: "room", roomId: overlapRoom.id },
+      startsAtLocal: "2028-08-13T14:00",
+      endsAtLocal: "2028-08-13T15:00",
+    });
+  }
   await page.reload();
   await expect(page.getByText("2 conflicts")).toBeVisible();
+  await expect(page.getByText("speaker conflict")).toHaveCount(2);
+  const overlapMore = page.locator(".fc-timegrid-more-link");
+  await expect(overlapMore).toHaveText("+1");
+  await expect(overlapMore).toHaveAttribute("title", "Show 1 more event");
+  await overlapMore.click();
+  await expect(page.locator(".fc-more-popover")).toBeVisible();
+  await expect(page.getByText("Overlap 1", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Publish agenda" }),
   ).toBeDisabled();
@@ -172,10 +218,53 @@ test("publishes a working placement to every public agenda view", async ({
     inspector.getByRole("heading", { name: "A second browser session" }),
   ).toBeVisible();
   await expect(inspector.getByLabel("Starts")).toHaveValue("2028-08-13T09:30");
+  let releaseMove: (() => void) | undefined;
+  let moveRequestStarted = false;
+  const moveGate = new Promise<void>((resolve) => {
+    releaseMove = resolve;
+  });
+  await page.route("**/api/trpc/agendas.move**", async (route) => {
+    moveRequestStarted = true;
+    await moveGate;
+    await route.continue();
+  });
   await inspector.getByLabel("Room").selectOption(secondRoom.id as string);
+  await expect.poll(() => moveRequestStarted).toBe(true);
+  await expect(
+    page.locator(".agenda-calendar-card", {
+      hasText: "A second browser session",
+    }),
+  ).toBeVisible();
+  await page
+    .locator(".agenda-header-controls")
+    .getByLabel("Room")
+    .selectOption(secondRoom.id as string);
+  await expect(
+    page.locator(".agenda-calendar-card", {
+      hasText: "A second browser session",
+    }),
+  ).toBeVisible();
+  const moveResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/trpc/agendas.move") && response.ok(),
+  );
+  releaseMove?.();
+  await moveResponse;
+  await page.unroute("**/api/trpc/agendas.move**");
+  await page
+    .locator(".agenda-header-controls")
+    .getByLabel("Room")
+    .selectOption("");
   await inspector.getByLabel("Starts").fill("2028-08-14T10:00");
   await inspector.getByLabel("Ends").fill("2028-08-14T11:00");
-  await inspector.getByRole("button", { name: "Save changes" }).click();
+  await expect
+    .poll(async () => {
+      const current = await query(page.request, "agendas.working", { slug });
+      const items = current.items as Array<Record<string, unknown>>;
+      return items.find((item) => item.id === secondPlacement.id)
+        ?.startsAtLocal;
+    })
+    .toBe("2028-08-14T10:00");
   await expect(page.getByText("0 conflicts")).toBeVisible();
   await expect(page).toHaveURL(
     new RegExp(`item=${String(secondPlacement.id)}`),
@@ -205,6 +294,13 @@ test("publishes a working placement to every public agenda view", async ({
   await expect(
     page.getByText("A second browser session", { exact: true }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "calendar", exact: true }).click();
+  await expect(page.locator(".fc-timegrid")).toBeVisible();
+  await page.goBack();
+  await expect(page.locator(".fc-list")).toBeVisible();
+  await page.goForward();
+  await expect(page.locator(".fc-timegrid")).toBeVisible();
+  await page.getByRole("button", { name: "list", exact: true }).click();
   await page.reload();
   await expect(
     page.getByRole("button", { name: "list", exact: true }),
@@ -245,6 +341,24 @@ test("publishes a working placement to every public agenda view", async ({
   await expect(
     inspector.getByRole("heading", { name: "New service block" }),
   ).toBeVisible();
+  let invalidDraftRequests = 0;
+  await page.route("**/api/trpc/agendas.updateService**", async (route) => {
+    invalidDraftRequests += 1;
+    await route.continue();
+  });
+  await inspector.getByLabel("Starts").fill("2028-08-13T11:00");
+  await inspector.getByLabel("Ends").fill("2028-08-13T10:00");
+  await expect(inspector.getByText("End must be after start.")).toBeVisible();
+  await expect(
+    inspector.getByRole("button", { name: "Save changes" }),
+  ).toBeDisabled();
+  await page.waitForTimeout(500);
+  expect(invalidDraftRequests).toBe(0);
+  await inspector.getByLabel("Ends").fill("2028-08-13T12:00");
+  await expect(inspector.getByText("End must be after start.")).toHaveCount(0);
+  await expect.poll(() => invalidDraftRequests).toBeGreaterThan(0);
+  await page.unroute("**/api/trpc/agendas.updateService**");
+
   let failServiceSave = true;
   await page.route("**/api/trpc/agendas.updateService**", async (route) => {
     if (failServiceSave) {
@@ -261,6 +375,68 @@ test("publishes a working placement to every public agenda view", async ({
   await inspector.getByRole("button", { name: "Retry" }).click();
   await expect(inspector.getByRole("button", { name: "Retry" })).toHaveCount(0);
   await page.unroute("**/api/trpc/agendas.updateService**");
+
+  await page.goto(`/events/${slug}/agenda?item=${String(firstPlacement.id)}`);
+  await inspector.getByRole("button", { name: "Return to unplaced" }).click();
+  await expect(
+    page.getByText("Program item returned to unplaced"),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.getByRole("button", { name: "Undo" })).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`item=${String(firstPlacement.id)}`));
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/events/${slug}/agenda`);
+  const palette = page.locator(".agenda-palette");
+  await expect
+    .poll(() =>
+      palette.evaluate((element) => element.getBoundingClientRect().top),
+    )
+    .toBeGreaterThanOrEqual(844);
+  await page.getByRole("button", { name: "Add to agenda" }).click();
+  await expect
+    .poll(() =>
+      palette.evaluate((element) => element.getBoundingClientRect().top),
+    )
+    .toBeLessThan(844);
+  await palette.getByRole("button", { name: "Close" }).click();
+  await expect
+    .poll(() =>
+      palette.evaluate((element) => element.getBoundingClientRect().top),
+    )
+    .toBeGreaterThanOrEqual(844);
+  await page.getByText("A browser-built agenda", { exact: true }).click();
+  await expect(inspector).toBeVisible();
+  await expect
+    .poll(() =>
+      inspector.evaluate(
+        (element) => element.getBoundingClientRect().bottom <= innerHeight,
+      ),
+    )
+    .toBe(true);
+  await page.getByRole("button", { name: "Add to agenda" }).click();
+  await expect(inspector).toHaveCount(0);
+  await expect(palette).toHaveClass(/is-open/);
+  await palette.getByRole("button", { name: "Close" }).click();
+
+  await mutate(page.request, "rooms.archive", {
+    slug,
+    roomId: secondRoom.id,
+  });
+  await page.goto(`/events/${slug}/agenda?room=${String(secondRoom.id)}`);
+  await expect(
+    page.locator(".agenda-header-controls").getByLabel("Room"),
+  ).toHaveValue(String(secondRoom.id));
+  await expect(
+    page
+      .locator(".agenda-header-controls")
+      .getByRole("option", { name: "Studio (archived)" }),
+  ).toBeAttached();
+
+  expect(
+    consoleErrors.filter((message) => message.includes("flushSync")),
+  ).toEqual([]);
+  expect(pageErrors).toEqual([]);
   expect(firstPlacement.id).toBeTruthy();
 });
 

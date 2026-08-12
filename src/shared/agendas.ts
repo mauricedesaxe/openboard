@@ -15,18 +15,32 @@ export const agendaLocalDateTimeSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
 
-const agendaTimeRangeSchema = z.object({
-  startsAtLocal: agendaLocalDateTimeSchema,
-  endsAtLocal: agendaLocalDateTimeSchema,
-});
+export const invalidAgendaTimeRangeMessage = "End must be after start.";
 
-export const placeProgramItemSchema = agendaTimeRangeSchema.extend({
+export function isValidAgendaTimeRange(input: {
+  startsAtLocal: string;
+  endsAtLocal: string;
+}): boolean {
+  return input.endsAtLocal > input.startsAtLocal;
+}
+
+const agendaTimeRangeSchema = z
+  .object({
+    startsAtLocal: agendaLocalDateTimeSchema,
+    endsAtLocal: agendaLocalDateTimeSchema,
+  })
+  .refine(isValidAgendaTimeRange, {
+    message: invalidAgendaTimeRangeMessage,
+    path: ["endsAtLocal"],
+  });
+
+export const placeProgramItemSchema = agendaTimeRangeSchema.safeExtend({
   slug: eventInputSchema.shape.slug,
   programItemId: programItemIdSchema,
   roomId: roomIdSchema.nullable(),
 });
 
-export const placeServiceBlockSchema = agendaTimeRangeSchema.extend({
+export const placeServiceBlockSchema = agendaTimeRangeSchema.safeExtend({
   slug: eventInputSchema.shape.slug,
   title: z.string().trim().min(1).max(160),
   scope: z.discriminatedUnion("type", [
@@ -35,13 +49,13 @@ export const placeServiceBlockSchema = agendaTimeRangeSchema.extend({
   ]),
 });
 
-export const moveAgendaItemSchema = agendaTimeRangeSchema.extend({
+export const moveAgendaItemSchema = agendaTimeRangeSchema.safeExtend({
   slug: eventInputSchema.shape.slug,
   agendaItemId: agendaItemIdSchema,
   roomId: roomIdSchema.nullable(),
 });
 
-export const updateServiceBlockSchema = agendaTimeRangeSchema.extend({
+export const updateServiceBlockSchema = agendaTimeRangeSchema.safeExtend({
   slug: eventInputSchema.shape.slug,
   agendaItemId: agendaItemIdSchema,
   expectedRevision: z.number().int().positive(),

@@ -17,6 +17,7 @@ import type {
   PublishAgendaInput,
   UpdateServiceBlockInput,
 } from "../../shared/agendas";
+import { isValidAgendaTimeRange } from "../../shared/agendas";
 import type { CommunicationPurpose } from "../../shared/communications";
 import { resolveEventLocalDateTime } from "../../shared/date-time";
 import type { UserId } from "../../shared/events";
@@ -67,6 +68,7 @@ export type AgendaWriteError =
   | "archived_reference"
   | "invalid_agenda_item"
   | "invalid_time"
+  | "invalid_time_range"
   | "missing_room"
   | "not_found"
   | "persistence_failed"
@@ -99,6 +101,9 @@ export async function placeProgramItem(
 ): Promise<AgendaWriteResult<{ id: AgendaItemId }>> {
   const event = await findEventForOrganizer(database, actorUserId, input.slug);
   if (!event) return { ok: false, error: "not_found" };
+  if (!isValidAgendaTimeRange(input)) {
+    return { ok: false, error: "invalid_time_range" };
+  }
   const [existingPlacement] = await database
     .select({ id: agendaItems.id, placed: agendaItems.placed })
     .from(agendaItems)
@@ -152,6 +157,9 @@ export async function placeServiceBlock(
 ): Promise<AgendaWriteResult<{ id: AgendaItemId }>> {
   const event = await findEventForOrganizer(database, actorUserId, input.slug);
   if (!event) return { ok: false, error: "not_found" };
+  if (!isValidAgendaTimeRange(input)) {
+    return { ok: false, error: "invalid_time_range" };
+  }
   const id = crypto.randomUUID() as AgendaItemId;
   const now = new Date();
   try {
@@ -181,6 +189,9 @@ export async function moveAgendaItem(
 ): Promise<AgendaWriteResult<{ moved: true }>> {
   const event = await findEventForOrganizer(database, actorUserId, input.slug);
   if (!event) return { ok: false, error: "not_found" };
+  if (!isValidAgendaTimeRange(input)) {
+    return { ok: false, error: "invalid_time_range" };
+  }
   const [item] = await database
     .select({ kind: agendaItems.kind, serviceScope: agendaItems.serviceScope })
     .from(agendaItems)
@@ -239,6 +250,9 @@ export async function updateServiceBlock(
 ): Promise<AgendaWriteResult<{ revision: number }>> {
   const event = await findEventForOrganizer(database, actorUserId, input.slug);
   if (!event) return { ok: false, error: "not_found" };
+  if (!isValidAgendaTimeRange(input)) {
+    return { ok: false, error: "invalid_time_range" };
+  }
   try {
     const result = await database
       .update(agendaItems)
@@ -1000,6 +1014,9 @@ function validateForPublication(
   | { ok: false; error: AgendaWriteError } {
   const times = new Map<string, { startsAt: string; endsAt: string }>();
   for (const item of items) {
+    if (!isValidAgendaTimeRange(item)) {
+      return { ok: false, error: "invalid_time_range" };
+    }
     if (!item.canceled) {
       if (item.kind === "program" && !item.roomId) {
         return { ok: false, error: "missing_room" };
@@ -1036,7 +1053,6 @@ function validateForPublication(
     if (
       start.status === "invalid" ||
       end.status === "invalid" ||
-      start.iso >= end.iso ||
       item.startsAtLocal.slice(0, 10) < event.startsOn ||
       item.endsAtLocal.slice(0, 10) > event.endsOn
     ) {

@@ -1565,6 +1565,7 @@ function throwAgendaWriteError(error: AgendaWriteError): never {
       "Restore or replace archived rooms and tracks before publishing.",
     invalid_time:
       "Every agenda item needs a valid time within the event dates.",
+    invalid_time_range: "End time must be after start time.",
     invalid_agenda_item: "Use an agenda item that belongs to this event.",
     missing_room:
       "Assign every scheduled session and room-wide block to a room.",
@@ -1576,7 +1577,10 @@ function throwAgendaWriteError(error: AgendaWriteError): never {
   };
   if (error !== "persistence_failed") {
     throw new TRPCError({
-      code: error === "invalid_time" ? "BAD_REQUEST" : "CONFLICT",
+      code:
+        error === "invalid_time" || error === "invalid_time_range"
+          ? "BAD_REQUEST"
+          : "CONFLICT",
       message: messages[error] ?? "The agenda cannot be published.",
     });
   }
