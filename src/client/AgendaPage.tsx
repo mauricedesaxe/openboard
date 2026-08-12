@@ -82,6 +82,7 @@ export function AgendaPage() {
     restore.isPending ||
     unplace.isPending ||
     removeService.isPending;
+  const blockedItemId = saveError?.itemId;
 
   async function updateWorkingAgenda(
     update: (current: WorkingAgenda) => WorkingAgenda,
@@ -156,6 +157,7 @@ export function AgendaPage() {
     room: string | null,
     revert?: () => void,
     recordUndo = true,
+    onSaved?: (revision: number) => void,
   ) {
     if (saveError?.itemId === item.id) setSaveError(undefined);
     const previous = {
@@ -174,8 +176,9 @@ export function AgendaPage() {
       moveItemInAgenda(current, input),
     );
     move.mutate(input, {
-      onSuccess: () => {
+      onSuccess: (saved) => {
         setSaveError(undefined);
+        onSaved?.(saved.revision);
         if (recordUndo) {
           setUndo({
             label: "Move saved",
@@ -187,6 +190,7 @@ export function AgendaPage() {
                 previous.roomId,
                 undefined,
                 false,
+                onSaved,
               ),
           });
         }
@@ -199,7 +203,15 @@ export function AgendaPage() {
           message: error.message,
           retry: () => {
             setSaveError(undefined);
-            void saveMove(item, startsAtLocal, endsAtLocal, room, revert);
+            void saveMove(
+              item,
+              startsAtLocal,
+              endsAtLocal,
+              room,
+              revert,
+              recordUndo,
+              onSaved,
+            );
           },
           ...(revert
             ? {
@@ -579,7 +591,7 @@ export function AgendaPage() {
             if (item) void saveMove(item, start, end, item.roomId, revert);
           }}
           onSelect={(id) => {
-            if (!pending) {
+            if (!pending && !blockedItemId) {
               setPaletteOpen(false);
               updateUrl({ item: id });
             }
@@ -595,6 +607,7 @@ export function AgendaPage() {
         {selected && (
           <WorkingInspector
             key={selected.id}
+            blocked={Boolean(saveError?.itemId === selected.id)}
             busy={pending}
             {...(saveError?.itemId === selected.id ? { error: saveError } : {})}
             item={selected}
@@ -602,8 +615,16 @@ export function AgendaPage() {
             onClose={() => {
               if (!pending) updateUrl({ item: null });
             }}
-            onMove={(start, end, room) =>
-              void saveMove(selected, start, end, room)
+            onMove={(start, end, room, onSaved) =>
+              void saveMove(
+                selected,
+                start,
+                end,
+                room,
+                undefined,
+                true,
+                onSaved,
+              )
             }
             onRemove={() => void removeAgendaItem(selected.id, selected.kind)}
             onUpdateService={(input, expectedRevision, onSaved) =>
@@ -713,6 +734,7 @@ function AgendaPalette({
 }
 
 function WorkingInspector({
+  blocked,
   busy,
   error,
   item,
@@ -723,12 +745,18 @@ function WorkingInspector({
   onUpdateService,
   rooms,
 }: {
+  blocked: boolean;
   busy: boolean;
   error?: { message: string; retry: () => void; revert?: () => void };
   item: WorkingItem;
   onCancel: () => void;
   onClose: () => void;
-  onMove: (start: string, end: string, room: string | null) => void;
+  onMove: (
+    start: string,
+    end: string,
+    room: string | null,
+    onSaved: (revision: number) => void,
+  ) => void;
   onRemove: () => void;
   onUpdateService: (
     input: ServiceBlockDraft,
@@ -769,7 +797,7 @@ function WorkingInspector({
   function saveDraft() {
     if (!timeRangeValid) return;
     if (item.kind === "service") saveService();
-    else onMove(start, end, roomId || null);
+    else onMove(start, end, roomId || null, setRevision);
   }
   const saveDraftAfterDelay = useEffectEvent(saveDraft);
   useEffect(() => {
@@ -778,16 +806,21 @@ function WorkingInspector({
     const titleChanged = item.kind === "service" && title !== item.serviceTitle;
     const timeChanged =
       start !== item.startsAtLocal || end !== item.endsAtLocal;
-    if (!scopeChanged && !roomChanged && !titleChanged && !timeChanged) return;
+    if (
+      blocked ||
+      (!scopeChanged && !roomChanged && !titleChanged && !timeChanged)
+    ) {
+      return;
+    }
     const timer = window.setTimeout(saveDraftAfterDelay, 300);
     return () => window.clearTimeout(timer);
-  }, [end, item, roomId, scope, start, title]);
+  }, [blocked, end, item, roomId, scope, start, title]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!timeRangeValid) return;
     if (item.kind === "service") saveService();
-    else onMove(start, end, roomId || null);
+    else onMove(start, end, roomId || null, setRevision);
   }
 
   return (

@@ -82,7 +82,10 @@ export function AgendaCalendar({
     Math.min(7, daysBetween(visibleStart, endsOn) + 1),
   );
   const visibleItems = items.filter(
-    (item) => !roomId || item.roomId === roomId || item.roomId === null,
+    (item) =>
+      !roomId ||
+      item.roomId === roomId ||
+      (item.kind === "service" && item.roomId === null),
   );
 
   function datesChanged(info: DatesSetArg) {
@@ -195,12 +198,10 @@ function AgendaEventCard({
       }
     >
       <strong>{info.event.title}</strong>
-      {!compact && (
-        <span>
-          {item.roomName ??
-            (item.kind === "service" ? "All rooms" : "Unassigned")}
-        </span>
-      )}
+      <span>
+        {item.roomName ??
+          (item.kind === "service" ? "All rooms" : "Unassigned")}
+      </span>
       {!compact && (item.speakers?.length ?? 0) > 0 && (
         <small>
           {item.speakers?.map((speaker) => speaker.displayName).join(", ")}

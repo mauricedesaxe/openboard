@@ -1165,6 +1165,72 @@ describe("build and publish an agenda", () => {
     expect(replaced.id).toBe(programPlacement.id);
   });
 
+  test("publishes after a program item returns to unplaced", async () => {
+    const slug = "agenda-republish-unplaced";
+    const owner = await signIn("agenda-republish-unplaced@example.com");
+    const fixture = await seedAgendaFixture(slug, owner, 1, 1);
+    const placement = getResult(
+      (
+        await callTrpc(
+          "agendas.placeProgram",
+          {
+            slug,
+            programItemId: fixture.programItemIds[0],
+            roomId: fixture.roomId,
+            startsAtLocal: "2028-08-10T09:00",
+            endsAtLocal: "2028-08-10T10:00",
+          },
+          owner.cookie,
+        )
+      ).body,
+      idSchema,
+    );
+    let working = await getWorking(owner.cookie, slug);
+    await expectOk(
+      "agendas.publish",
+      { slug, expectedRevision: working.revision },
+      owner.cookie,
+    );
+    await expectOk(
+      "agendas.unplaceProgram",
+      { slug, agendaItemId: placement.id },
+      owner.cookie,
+    );
+    working = await getWorking(owner.cookie, slug);
+    await expectOk(
+      "agendas.publish",
+      { slug, expectedRevision: working.revision },
+      owner.cookie,
+    );
+    expect((await getPublished(slug)).items).toEqual([]);
+  });
+
+  test("does not place a program item through another event", async () => {
+    const owner = await signIn("agenda-cross-event-owner@example.com");
+    const first = await seedAgendaFixture(
+      "agenda-cross-event-one",
+      owner,
+      1,
+      1,
+    );
+    await seedAgendaFixture("agenda-cross-event-two", owner, 1, 1);
+    const response = await callTrpc(
+      "agendas.placeProgram",
+      {
+        slug: "agenda-cross-event-two",
+        programItemId: first.programItemIds[0],
+        roomId: null,
+        startsAtLocal: "2028-08-10T09:00",
+        endsAtLocal: "2028-08-10T10:00",
+      },
+      owner.cookie,
+    );
+    expect(response.status).toBe(409);
+    expect(
+      (await getWorking(owner.cookie, "agenda-cross-event-two")).items,
+    ).toEqual([]);
+  });
+
   test("rejects every invalid active placement from authoritative state", async () => {
     const slug = "agenda-validation-2028";
     const owner = await signIn("agenda-validation-owner@example.com");
