@@ -104,10 +104,29 @@ export async function placeProgramItem(
   if (!isValidAgendaTimeRange(input)) {
     return { ok: false, error: "invalid_time_range" };
   }
+  const [programItem] = await database
+    .select({ id: programItems.id })
+    .from(programItems)
+    .where(
+      and(
+        eq(programItems.id, input.programItemId),
+        eq(programItems.eventId, event.id),
+      ),
+    )
+    .limit(1);
+  if (!programItem) {
+    return { ok: false, error: "program_item_unavailable" };
+  }
   const [existingPlacement] = await database
     .select({ id: agendaItems.id, placed: agendaItems.placed })
     .from(agendaItems)
-    .where(eq(agendaItems.programItemId, input.programItemId))
+    .where(
+      and(
+        eq(agendaItems.programItemId, input.programItemId),
+        eq(agendaItems.eventId, event.id),
+        eq(agendaItems.agendaId, event.agendaId),
+      ),
+    )
     .limit(1);
   if (existingPlacement?.placed) {
     return { ok: false, error: "program_item_unavailable" };
@@ -127,7 +146,14 @@ export async function placeProgramItem(
           revision: sql`${agendaItems.revision} + 1`,
           updatedAt: now,
         })
-        .where(and(eq(agendaItems.id, id), eq(agendaItems.placed, false)));
+        .where(
+          and(
+            eq(agendaItems.id, id),
+            eq(agendaItems.eventId, event.id),
+            eq(agendaItems.agendaId, event.agendaId),
+            eq(agendaItems.placed, false),
+          ),
+        );
       return result.meta.changes > 0
         ? { ok: true, value: { id } }
         : { ok: false, error: "program_item_unavailable" };
@@ -186,14 +212,18 @@ export async function moveAgendaItem(
   database: Database,
   actorUserId: UserId,
   input: MoveAgendaItemInput,
-): Promise<AgendaWriteResult<{ moved: true }>> {
+): Promise<AgendaWriteResult<{ moved: true; revision: number }>> {
   const event = await findEventForOrganizer(database, actorUserId, input.slug);
   if (!event) return { ok: false, error: "not_found" };
   if (!isValidAgendaTimeRange(input)) {
     return { ok: false, error: "invalid_time_range" };
   }
   const [item] = await database
-    .select({ kind: agendaItems.kind, serviceScope: agendaItems.serviceScope })
+    .select({
+      kind: agendaItems.kind,
+      revision: agendaItems.revision,
+      serviceScope: agendaItems.serviceScope,
+    })
     .from(agendaItems)
     .where(
       and(
@@ -233,10 +263,11 @@ export async function moveAgendaItem(
         and(
           eq(agendaItems.id, input.agendaItemId),
           eq(agendaItems.agendaId, event.agendaId),
+          eq(agendaItems.placed, true),
         ),
       );
     return result.meta.changes > 0
-      ? { ok: true, value: { moved: true } }
+      ? { ok: true, value: { moved: true, revision: item.revision + 1 } }
       : { ok: false, error: "agenda_item_not_found" };
   } catch (error: unknown) {
     return { ok: false, error: agendaItemPersistenceError(error) };
