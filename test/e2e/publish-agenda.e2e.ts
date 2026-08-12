@@ -430,6 +430,48 @@ test("publishes a working placement to every public agenda view", async ({
   await expect(page.getByRole("button", { name: "Undo" })).toHaveCount(0);
   await expect(page).toHaveURL(new RegExp(`item=${String(firstPlacement.id)}`));
 
+  await inspector.getByRole("button", { name: "Return to unplaced" }).click();
+  const unplacedPaletteItem = page.locator(".agenda-palette-item", {
+    hasText: "A browser-built agenda",
+  });
+  await expect(unplacedPaletteItem).toBeVisible();
+  const paletteBox = await unplacedPaletteItem.boundingBox();
+  const dropColumn = page.locator('.fc-timegrid-col[data-date="2028-08-15"]');
+  const scrollerBox = await calendarScroller.boundingBox();
+  const columnBox = await dropColumn.boundingBox();
+  if (!paletteBox || !scrollerBox || !columnBox) {
+    throw new Error("palette drag geometry unavailable");
+  }
+  await page.mouse.move(
+    paletteBox.x + paletteBox.width / 2,
+    paletteBox.y + paletteBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    paletteBox.x + paletteBox.width / 2 + 12,
+    paletteBox.y,
+    { steps: 3 },
+  );
+  await page.mouse.move(
+    columnBox.x + columnBox.width / 2,
+    scrollerBox.y + scrollerBox.height / 2,
+    { steps: 20 },
+  );
+  await page.mouse.up();
+  await expect(
+    page.locator(".agenda-calendar-card", {
+      hasText: "A browser-built agenda",
+    }),
+  ).toBeVisible();
+  await expect
+    .poll(async () => {
+      const current = await query(page.request, "agendas.working", { slug });
+      const items = current.items as Array<Record<string, unknown>>;
+      return items.find((item) => item.title === "A browser-built agenda")?.id;
+    })
+    .toBe(firstPlacement.id);
+  await page.getByRole("button", { name: "Dismiss" }).click();
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/events/${slug}/agenda`);
   const palette = page.locator(".agenda-palette");
