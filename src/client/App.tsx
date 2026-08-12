@@ -49,7 +49,9 @@ import {
 } from "../shared/submissions";
 
 import { AgendaPage, PublicAgendaPage } from "./AgendaPage";
+import { MutationStatus } from "./MutationStatus";
 import { authClient } from "./auth";
+import { useMutationStatuses } from "./mutation-feedback";
 import { useTRPC } from "./trpc";
 
 const ONBOARDING_REFETCH_INTERVAL_MS = 15_000;
@@ -136,6 +138,21 @@ function SignInRoute({ signedIn }: { signedIn: boolean }) {
 function AuthenticatedApp({ email }: { email: string }) {
   const trpc = useTRPC();
   const speakerProfile = useQuery(trpc.speakerProfile.getOwn.queryOptions());
+  const [signOutState, setSignOutState] = useState<
+    | { status: "idle" }
+    | { status: "pending" }
+    | { status: "error"; message: string }
+  >({ status: "idle" });
+  async function signOut() {
+    setSignOutState({ status: "pending" });
+    const result = await authClient.signOut();
+    if (result.error) {
+      setSignOutState({
+        status: "error",
+        message: result.error.message ?? "Sign out failed. Try again.",
+      });
+    }
+  }
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -157,11 +174,17 @@ function AuthenticatedApp({ email }: { email: string }) {
           <span>{email}</span>
           <button
             className="text-button"
-            onClick={() => void authClient.signOut()}
+            disabled={signOutState.status === "pending"}
+            onClick={() => void signOut()}
             type="button"
           >
-            Sign out
+            {signOutState.status === "pending" ? "Signing out…" : "Sign out"}
           </button>
+          {signOutState.status === "error" && (
+            <span className="form-error" role="alert">
+              {signOutState.message}
+            </span>
+          )}
         </div>
       </header>
       <main>
@@ -211,7 +234,8 @@ function SignInPage() {
   );
   const [devCode, setDevCode] = useState<string>();
   const [error, setError] = useState<string>();
-  const [busy, setBusy] = useState(false);
+  const [sendingCode, setSendingCode] = useState(false);
+  const [verifying, setVerifying] = useState(false);
 
   useEffect(() => {
     if (!pendingEmail || !import.meta.env.DEV) return;
@@ -224,12 +248,12 @@ function SignInPage() {
   }
 
   async function sendCode() {
-    setBusy(true);
+    setSendingCode(true);
     setError(undefined);
     setCode("");
     setDevCode(undefined);
     const result = await beginEmailSignIn(email, returnTo);
-    setBusy(false);
+    setSendingCode(false);
 
     if (result.error) {
       setError("The code could not be sent. Try again.");
@@ -252,10 +276,10 @@ function SignInPage() {
 
   async function verifyCode(event: FormEvent) {
     event.preventDefault();
-    setBusy(true);
+    setVerifying(true);
     setError(undefined);
     const result = await authClient.signIn.emailOtp({ email, otp: code });
-    setBusy(false);
+    setVerifying(false);
 
     if (result.error) {
       setCode("");
@@ -324,8 +348,12 @@ function SignInPage() {
                 value={email}
               />
             </Field>
-            <button className="primary-button" disabled={busy} type="submit">
-              {busy ? "Sending…" : "Send sign-in code"}
+            <button
+              className="primary-button"
+              disabled={sendingCode}
+              type="submit"
+            >
+              {sendingCode ? "Sending…" : "Send sign-in code"}
             </button>
           </form>
         ) : (
@@ -350,8 +378,12 @@ function SignInPage() {
               />
             </Field>
             <div className="code-actions">
-              <button className="primary-button" disabled={busy} type="submit">
-                {busy
+              <button
+                className="primary-button"
+                disabled={sendingCode || verifying}
+                type="submit"
+              >
+                {verifying
                   ? "Verifying…"
                   : invitationSignIn
                     ? "Continue to invitation"
@@ -361,15 +393,15 @@ function SignInPage() {
               </button>
               <button
                 className="text-button"
-                disabled={busy}
+                disabled={sendingCode || verifying}
                 onClick={() => void sendCode()}
                 type="button"
               >
-                Resend code
+                {sendingCode ? "Resending…" : "Resend code"}
               </button>
               <button
                 className="text-button"
-                disabled={busy}
+                disabled={sendingCode || verifying}
                 onClick={useAnotherEmail}
                 type="button"
               >
@@ -810,6 +842,18 @@ function CommunicationSettingsPage() {
         ),
     }),
   );
+  const communicationStatus = useMutationStatuses([
+    {
+      mutation: update,
+      mutationKey: trpc.communications.updateTemplate.mutationKey(),
+      success: "Template saved",
+    },
+    {
+      mutation: retry,
+      mutationKey: trpc.communications.retry.mutationKey(),
+      success: "Delivery retry queued",
+    },
+  ]);
   if (templates.isPending || failures.isPending) {
     return <FullPageStatus label="Opening communications" />;
   }
@@ -837,6 +881,10 @@ function CommunicationSettingsPage() {
           </p>
         </div>
       </section>
+      <MutationStatus
+        error={communicationStatus.error}
+        success={communicationStatus.success}
+      />
       <div className="review-list">
         {templates.data.map((template) => (
           <CommunicationTemplateForm
@@ -850,6 +898,11 @@ function CommunicationSettingsPage() {
                 expectedRevision: template.revision,
               })
             }
+            pending={communicationStatus.isPendingFor(
+              update,
+              "purpose",
+              template.purpose,
+            )}
             template={template}
           />
         ))}
@@ -869,6 +922,11 @@ function CommunicationSettingsPage() {
               {failure.status === "failed" ? (
                 <button
                   className="text-button"
+                  disabled={communicationStatus.isPendingFor(
+                    retry,
+                    "communicationId",
+                    failure.communicationId,
+                  )}
                   onClick={() =>
                     retry.mutate({
                       slug,
@@ -877,7 +935,13 @@ function CommunicationSettingsPage() {
                   }
                   type="button"
                 >
-                  Retry delivery
+                  {communicationStatus.isPendingFor(
+                    retry,
+                    "communicationId",
+                    failure.communicationId,
+                  )
+                    ? "Queuing…"
+                    : "Retry delivery"}
                 </button>
               ) : (
                 <span className="eyebrow">Not retryable</span>
@@ -892,9 +956,11 @@ function CommunicationSettingsPage() {
 
 function CommunicationTemplateForm({
   onSave,
+  pending,
   template,
 }: {
   onSave: (subject: string, body: string) => void;
+  pending: boolean;
   template: {
     purpose: string;
     subject: string;
@@ -927,8 +993,8 @@ function CommunicationTemplateForm({
           value={body}
         />
       </Field>
-      <button className="primary-button" type="submit">
-        Save revision {template.revision + 1}
+      <button className="primary-button" disabled={pending} type="submit">
+        {pending ? "Saving…" : `Save revision ${template.revision + 1}`}
       </button>
     </form>
   );
@@ -975,6 +1041,48 @@ function OrganizerOnboardingPage() {
   const rejectEvidence = useMutation(
     trpc.onboarding.rejectEvidence.mutationOptions({ onSuccess: refresh }),
   );
+  const onboardingStatus = useMutationStatuses([
+    {
+      mutation: createDefinition,
+      mutationKey: trpc.onboarding.createDefinition.mutationKey(),
+      success: "Task definition created",
+    },
+    {
+      mutation: createAssignment,
+      mutationKey: trpc.onboarding.createAssignment.mutationKey(),
+      success: "Assignment created",
+    },
+    {
+      mutation: recordReminder,
+      mutationKey: trpc.onboarding.recordReminder.mutationKey(),
+      success: "Reminder queued",
+    },
+    {
+      mutation: reopen,
+      mutationKey: trpc.onboarding.reopen.mutationKey(),
+      success: "Assignment reopened",
+    },
+    {
+      mutation: waive,
+      mutationKey: trpc.onboarding.waive.mutationKey(),
+      success: "Assignment waived",
+    },
+    {
+      mutation: override,
+      mutationKey: trpc.onboarding.override.mutationKey(),
+      success: "Organizer override recorded",
+    },
+    {
+      mutation: cancelAssignment,
+      mutationKey: trpc.onboarding.cancelAssignment.mutationKey(),
+      success: "Assignment canceled",
+    },
+    {
+      mutation: rejectEvidence,
+      mutationKey: trpc.onboarding.rejectEvidence.mutationKey(),
+      success: "Evidence rejected",
+    },
+  ]);
   const [definition, setDefinition] = useState({
     name: "",
     scope: "event_speaker" as
@@ -1009,15 +1117,6 @@ function OrganizerOnboardingPage() {
   const targetOptions = selectedDefinition
     ? onboardingTargetOptions(board.data.targets, selectedDefinition.scope)
     : [];
-  const mutationError =
-    createDefinition.error ??
-    createAssignment.error ??
-    waive.error ??
-    override.error ??
-    reopen.error ??
-    recordReminder.error ??
-    cancelAssignment.error ??
-    rejectEvidence.error;
 
   function addDefinition(event: FormEvent) {
     event.preventDefault();
@@ -1084,10 +1183,11 @@ function OrganizerOnboardingPage() {
           <p>Completion comes from current evidence, not a status checkbox.</p>
         </div>
       </section>
-      {mutationError && (
-        <p className="form-error" role="alert">
-          {mutationError.message}
-        </p>
+      {onboardingStatus.error && (
+        <MutationStatus error={onboardingStatus.error} />
+      )}
+      {onboardingStatus.success && (
+        <MutationStatus success={onboardingStatus.success} />
       )}
       {communicationFailures.data?.some(
         (failure) => failure.purpose === "task_reminder",
@@ -1205,7 +1305,9 @@ function OrganizerOnboardingPage() {
             disabled={createDefinition.isPending}
             type="submit"
           >
-            Create task definition
+            {createDefinition.isPending
+              ? "Creating…"
+              : "Create task definition"}
           </button>
         </form>
         <form className="form-board" onSubmit={addAssignment}>
@@ -1284,7 +1386,7 @@ function OrganizerOnboardingPage() {
             disabled={createAssignment.isPending}
             type="submit"
           >
-            Create assignment
+            {createAssignment.isPending ? "Creating…" : "Create assignment"}
           </button>
         </form>
       </div>
@@ -1362,33 +1464,63 @@ function OrganizerOnboardingPage() {
             <div className="task-actions">
               <button
                 className="text-button"
+                disabled={onboardingStatus.isPendingFor(
+                  recordReminder,
+                  "assignmentId",
+                  item.id,
+                )}
                 onClick={() => recordReminder.mutate({ assignmentId: item.id })}
                 type="button"
               >
-                Send reminder
+                {onboardingStatus.isPendingFor(
+                  recordReminder,
+                  "assignmentId",
+                  item.id,
+                )
+                  ? "Sending…"
+                  : "Send reminder"}
               </button>
               <button
                 className="text-button"
+                disabled={onboardingStatus.isPendingFor(
+                  reopen,
+                  "assignmentId",
+                  item.id,
+                )}
                 onClick={() => {
                   const reason = reasonFor("reopen this assignment");
                   if (reason) reopen.mutate({ assignmentId: item.id, reason });
                 }}
                 type="button"
               >
-                Reopen
+                {onboardingStatus.isPendingFor(reopen, "assignmentId", item.id)
+                  ? "Reopening…"
+                  : "Reopen"}
               </button>
               <button
                 className="text-button"
+                disabled={onboardingStatus.isPendingFor(
+                  waive,
+                  "assignmentId",
+                  item.id,
+                )}
                 onClick={() => {
                   const reason = reasonFor("waive this assignment");
                   if (reason) waive.mutate({ assignmentId: item.id, reason });
                 }}
                 type="button"
               >
-                Waive
+                {onboardingStatus.isPendingFor(waive, "assignmentId", item.id)
+                  ? "Waiving…"
+                  : "Waive"}
               </button>
               <button
                 className="text-button"
+                disabled={onboardingStatus.isPendingFor(
+                  override,
+                  "assignmentId",
+                  item.id,
+                )}
                 onClick={() => {
                   const reason = reasonFor("override this assignment");
                   if (reason)
@@ -1396,10 +1528,21 @@ function OrganizerOnboardingPage() {
                 }}
                 type="button"
               >
-                Organizer override
+                {onboardingStatus.isPendingFor(
+                  override,
+                  "assignmentId",
+                  item.id,
+                )
+                  ? "Overriding…"
+                  : "Organizer override"}
               </button>
               <button
                 className="text-button"
+                disabled={onboardingStatus.isPendingFor(
+                  cancelAssignment,
+                  "assignmentId",
+                  item.id,
+                )}
                 onClick={() => {
                   if (window.confirm("Cancel this assignment?")) {
                     cancelAssignment.mutate({ assignmentId: item.id });
@@ -1407,7 +1550,13 @@ function OrganizerOnboardingPage() {
                 }}
                 type="button"
               >
-                Cancel assignment
+                {onboardingStatus.isPendingFor(
+                  cancelAssignment,
+                  "assignmentId",
+                  item.id,
+                )
+                  ? "Canceling…"
+                  : "Cancel assignment"}
               </button>
             </div>
             {item.evidence.map((evidence) => (
@@ -1433,6 +1582,11 @@ function OrganizerOnboardingPage() {
                 {!evidence.rejectedReason && !evidence.supersededBy && (
                   <button
                     className="text-button"
+                    disabled={onboardingStatus.isPendingFor(
+                      rejectEvidence,
+                      "evidenceId",
+                      evidence.id,
+                    )}
                     onClick={() => {
                       const reason = reasonFor("reject this evidence");
                       if (reason)
@@ -1443,7 +1597,13 @@ function OrganizerOnboardingPage() {
                     }}
                     type="button"
                   >
-                    Reject
+                    {onboardingStatus.isPendingFor(
+                      rejectEvidence,
+                      "evidenceId",
+                      evidence.id,
+                    )
+                      ? "Rejecting…"
+                      : "Reject"}
                   </button>
                 )}
               </div>
@@ -1506,11 +1666,38 @@ function SpeakerTasksPage() {
     trpc.onboarding.submitForm.mutationOptions({ onSuccess: refresh }),
   );
   const upload = useMutation(
-    trpc.onboarding.uploadFile.mutationOptions({ onSuccess: refresh }),
+    trpc.onboarding.uploadFile.mutationOptions({
+      onSuccess: refresh,
+      onSettled: () => setUploadingFor(undefined),
+    }),
   );
+  const taskStatus = useMutationStatuses([
+    {
+      mutation: confirm,
+      mutationKey: trpc.onboarding.confirmManual.mutationKey(),
+      success: "Task confirmed",
+    },
+    {
+      mutation: saveDraft,
+      mutationKey: trpc.onboarding.saveFormDraft.mutationKey(),
+      success: "Draft saved",
+    },
+    {
+      mutation: submitForm,
+      mutationKey: trpc.onboarding.submitForm.mutationKey(),
+      success: "Response submitted",
+    },
+    {
+      mutation: upload,
+      mutationKey: trpc.onboarding.uploadFile.mutationKey(),
+      success: "File uploaded",
+    },
+  ]);
   const [answers, setAnswers] = useState<
     Record<string, Record<string, string>>
   >({});
+  const [uploadingFor, setUploadingFor] = useState<string>();
+  const [uploadError, setUploadError] = useState<string>();
 
   if (tasks.isPending) return <FullPageStatus label="Opening your tasks" />;
   if (tasks.isError) {
@@ -1527,21 +1714,33 @@ function SpeakerTasksPage() {
     savedAnswers: Record<string, string> | undefined,
   ) {
     event.preventDefault();
-    await saveDraft.mutateAsync({
-      assignmentId,
-      answers: answers[assignmentId] ?? savedAnswers ?? {},
-    });
-    await submitForm.mutateAsync({ assignmentId });
+    try {
+      await saveDraft.mutateAsync({
+        assignmentId,
+        answers: answers[assignmentId] ?? savedAnswers ?? {},
+      });
+      await submitForm.mutateAsync({ assignmentId });
+    } catch {
+      return;
+    }
   }
 
   async function uploadFile(assignmentId: string, file: File | undefined) {
-    if (!file) return;
-    upload.mutate({
-      assignmentId,
-      fileName: file.name,
-      contentType: file.type || "application/octet-stream",
-      contentBase64: await browserFileToBase64(file),
-    });
+    if (!file || uploadingFor) return;
+    setUploadError(undefined);
+    setUploadingFor(assignmentId);
+    try {
+      const contentBase64 = await browserFileToBase64(file);
+      upload.mutate({
+        assignmentId,
+        fileName: file.name,
+        contentType: file.type || "application/octet-stream",
+        contentBase64,
+      });
+    } catch {
+      setUploadingFor(undefined);
+      setUploadError("The file could not be read. Choose it again.");
+    }
   }
 
   return (
@@ -1559,6 +1758,10 @@ function SpeakerTasksPage() {
           </p>
         </div>
       </section>
+      <MutationStatus
+        error={taskStatus.error ?? uploadError}
+        success={taskStatus.success}
+      />
       {tasks.data.length === 0 && (
         <BoardStatus
           label="No onboarding tasks"
@@ -1598,22 +1801,34 @@ function SpeakerTasksPage() {
               {task.completionMechanism === "manual" && !task.completed && (
                 <button
                   className="primary-button"
-                  disabled={confirm.isPending}
+                  disabled={taskStatus.isPendingFor(
+                    confirm,
+                    "assignmentId",
+                    task.id,
+                  )}
                   onClick={() => confirm.mutate({ assignmentId: task.id })}
                   type="button"
                 >
-                  Confirm complete
+                  {taskStatus.isPendingFor(confirm, "assignmentId", task.id)
+                    ? "Confirming…"
+                    : "Confirm complete"}
                 </button>
               )}
               {task.completionMechanism === "file" && (
                 <Field label="Upload current file" name={`file-${task.id}`}>
                   <input
+                    disabled={Boolean(uploadingFor)}
                     id={`file-${task.id}`}
                     onChange={(event) =>
                       void uploadFile(task.id, event.target.files?.[0])
                     }
                     type="file"
                   />
+                  {uploadingFor === task.id && (
+                    <span className="upload-pending" role="status">
+                      Uploading…
+                    </span>
+                  )}
                 </Field>
               )}
               {task.completionMechanism === "form" && !task.completed && (
@@ -1678,7 +1893,11 @@ function SpeakerTasksPage() {
                     disabled={saveDraft.isPending || submitForm.isPending}
                     type="submit"
                   >
-                    Submit response
+                    {saveDraft.isPending
+                      ? "Saving…"
+                      : submitForm.isPending
+                        ? "Submitting…"
+                        : "Submit response"}
                   </button>
                 </form>
               )}
@@ -1759,10 +1978,14 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
   const communicationFailures = useQuery(
     trpc.communications.failures.queryOptions({ slug }),
   );
-  const refresh = () =>
-    queryClient.invalidateQueries(
+  const refresh = async () => {
+    await queryClient.invalidateQueries(
       trpc.reviews.organizerBoard.queryFilter({ slug }),
     );
+    await queryClient.invalidateQueries(
+      trpc.reviews.mine.queryFilter({ slug }),
+    );
+  };
   const openRound = useMutation(
     trpc.reviews.openRound.mutationOptions({ onSuccess: refresh }),
   );
@@ -1786,12 +2009,65 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
   >({});
   const publish = useMutation(
     trpc.decisions.publish.mutationOptions({
-      onSuccess: async () => {
+      onSuccess: async (_result, input) => {
         setSelectedForPublication({});
         await refresh();
+        await queryClient.invalidateQueries(
+          trpc.onboarding.organizerBoard.queryFilter({ slug }),
+        );
+        await queryClient.invalidateQueries(
+          trpc.agendas.working.queryFilter({ slug }),
+        );
+        await queryClient.invalidateQueries(
+          trpc.submissions.list.queryFilter(),
+        );
+        await Promise.all(
+          input.selections.map(({ submissionId }) =>
+            queryClient.invalidateQueries(
+              trpc.submissions.get.queryFilter({ submissionId }),
+            ),
+          ),
+        );
       },
     }),
   );
+  const reviewBoardStatus = useMutationStatuses([
+    {
+      mutation: openRound,
+      mutationKey: trpc.reviews.openRound.mutationKey(),
+      success: "Reviewing opened",
+    },
+    {
+      mutation: closeRound,
+      mutationKey: trpc.reviews.closeRound.mutationKey(),
+      success: "Reviewing closed",
+    },
+    {
+      mutation: reopenRound,
+      mutationKey: trpc.reviews.reopenRound.mutationKey(),
+      success: "Round reopened",
+    },
+    {
+      mutation: assign,
+      mutationKey: trpc.reviews.assign.mutationKey(),
+      success: "Reviewer assigned",
+    },
+    {
+      mutation: revoke,
+      mutationKey: trpc.reviews.revokeAssignment.mutationKey(),
+      success: "Assignment revoked",
+    },
+    {
+      mutation: queue,
+      mutationKey: trpc.decisions.queue.mutationKey(),
+      success: "Outcome queued",
+    },
+    {
+      mutation: publish,
+      mutationKey: trpc.decisions.publish.mutationKey(),
+      success: "Decisions published",
+    },
+  ]);
   const [reviewerBySubmission, setReviewerBySubmission] = useState<
     Record<string, string>
   >({});
@@ -1821,14 +2097,6 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
       submission.status === "active" &&
       submission.review.completed < submission.review.assigned,
   );
-  const mutationError =
-    openRound.error ??
-    closeRound.error ??
-    reopenRound.error ??
-    assign.error ??
-    revoke.error ??
-    queue.error ??
-    publish.error;
 
   function closeWithConfirmation() {
     if (!hasMissingReviews) {
@@ -1866,7 +2134,7 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
               onClick={() => openRound.mutate({ slug })}
               type="button"
             >
-              Open reviewing
+              {openRound.isPending ? "Opening…" : "Open reviewing"}
             </button>
           )}
           {board.data.round.status === "open" && (
@@ -1876,7 +2144,7 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
               onClick={closeWithConfirmation}
               type="button"
             >
-              Close reviewing
+              {closeRound.isPending ? "Closing…" : "Close reviewing"}
             </button>
           )}
           {board.data.round.status === "closed" && (
@@ -1886,15 +2154,16 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
               onClick={() => reopenRound.mutate({ slug })}
               type="button"
             >
-              Reopen round
+              {reopenRound.isPending ? "Reopening…" : "Reopen round"}
             </button>
           )}
         </div>
       </section>
-      {mutationError && (
-        <p className="form-error" role="alert">
-          {mutationError.message}
-        </p>
+      {reviewBoardStatus.error && (
+        <MutationStatus error={reviewBoardStatus.error} />
+      )}
+      {reviewBoardStatus.success && (
+        <MutationStatus success={reviewBoardStatus.success} />
       )}
       {communicationFailures.data?.some((failure) =>
         failure.purpose.startsWith("decision_"),
@@ -1946,7 +2215,13 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
                 >
                   <select
                     disabled={
-                      hasPublishedDecision || submission.status === "withdrawn"
+                      hasPublishedDecision ||
+                      submission.status === "withdrawn" ||
+                      reviewBoardStatus.isPendingFor(
+                        queue,
+                        "submissionId",
+                        submission.id,
+                      )
                     }
                     id={`decision-${submission.id}`}
                     onChange={(event) =>
@@ -2012,7 +2287,11 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
                         className="mini-button"
                         disabled={
                           !reviewerBySubmission[submission.id] ||
-                          assign.isPending
+                          reviewBoardStatus.isPendingFor(
+                            assign,
+                            "submissionId",
+                            submission.id,
+                          )
                         }
                         onClick={() => {
                           const reviewerUserId =
@@ -2026,7 +2305,13 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
                         }}
                         type="button"
                       >
-                        Assign
+                        {reviewBoardStatus.isPendingFor(
+                          assign,
+                          "submissionId",
+                          submission.id,
+                        )
+                          ? "Assigning…"
+                          : "Assign"}
                       </button>
                     </div>
                   )}
@@ -2040,7 +2325,11 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
                       {board.data.round.status !== "closed" && (
                         <button
                           className="text-button"
-                          disabled={revoke.isPending}
+                          disabled={reviewBoardStatus.isPendingFor(
+                            revoke,
+                            "assignmentId",
+                            assignment.id,
+                          )}
                           onClick={() =>
                             revoke.mutate({
                               slug,
@@ -2049,7 +2338,13 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
                           }
                           type="button"
                         >
-                          Revoke
+                          {reviewBoardStatus.isPendingFor(
+                            revoke,
+                            "assignmentId",
+                            assignment.id,
+                          )
+                            ? "Revoking…"
+                            : "Revoke"}
                         </button>
                       )}
                     </div>
@@ -2180,10 +2475,23 @@ function ReviewAssignmentCard({
   const [comment, setComment] = useState(assignment.review?.comment ?? "");
   const save = useMutation(
     trpc.reviews.save.mutationOptions({
-      onSuccess: () =>
-        queryClient.invalidateQueries(trpc.reviews.mine.queryFilter({ slug })),
+      onSuccess: async () => {
+        await queryClient.invalidateQueries(
+          trpc.reviews.mine.queryFilter({ slug }),
+        );
+        await queryClient.invalidateQueries(
+          trpc.reviews.organizerBoard.queryFilter({ slug }),
+        );
+      },
     }),
   );
+  const saveStatus = useMutationStatuses([
+    {
+      mutation: save,
+      mutationKey: trpc.reviews.save.mutationKey(),
+      success: "Review saved",
+    },
+  ]);
   const editable = assignment.roundStatus === "open";
 
   return (
@@ -2232,11 +2540,8 @@ function ReviewAssignmentCard({
             value={comment}
           />
         </Field>
-        {save.error && (
-          <p className="form-error" role="alert">
-            {save.error.message}
-          </p>
-        )}
+        {saveStatus.error && <MutationStatus error={saveStatus.error} />}
+        {saveStatus.success && <MutationStatus success={saveStatus.success} />}
         <button
           className="primary-button"
           disabled={!editable || save.isPending}
@@ -2351,6 +2656,18 @@ function EventTeamPanel({ slug }: { slug: string }) {
       },
     }),
   );
+  const revokeStatus = useMutationStatuses([
+    {
+      mutation: revoke,
+      mutationKey: trpc.eventTeam.revokeRole.mutationKey(),
+      success: "Role revoked",
+    },
+    {
+      mutation: revokeInvitation,
+      mutationKey: trpc.eventTeam.revokeInvitation.mutationKey(),
+      success: "Invitation revoked",
+    },
+  ]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -2476,13 +2793,15 @@ function EventTeamPanel({ slug }: { slug: string }) {
               </select>
             </Field>
           </div>
-          {(invite.error || revoke.error || revokeInvitation.error) && (
+          {invite.error && (
             <p className="form-error" role="alert">
-              {invite.error?.message ??
-                revoke.error?.message ??
-                revokeInvitation.error?.message}
+              {invite.error.message}
             </p>
           )}
+          <MutationStatus
+            error={revokeStatus.error}
+            success={revokeStatus.success}
+          />
           {notice && (
             <div
               aria-live="polite"
@@ -2551,7 +2870,11 @@ function EventTeamPanel({ slug }: { slug: string }) {
                   </div>
                   <button
                     className="text-button"
-                    disabled={revoke.isPending}
+                    disabled={revokeStatus.isPendingFor(
+                      revoke,
+                      "roleId",
+                      member.id,
+                    )}
                     onClick={() =>
                       revoke.mutate({
                         slug,
@@ -2560,7 +2883,9 @@ function EventTeamPanel({ slug }: { slug: string }) {
                     }
                     type="button"
                   >
-                    Revoke
+                    {revokeStatus.isPendingFor(revoke, "roleId", member.id)
+                      ? "Revoking…"
+                      : "Revoke"}
                   </button>
                 </div>
               ))}
@@ -2603,7 +2928,11 @@ function EventTeamPanel({ slug }: { slug: string }) {
                     </button>
                     <button
                       className="text-button"
-                      disabled={revokeInvitation.isPending}
+                      disabled={revokeStatus.isPendingFor(
+                        revokeInvitation,
+                        "invitationId",
+                        invitation.id,
+                      )}
                       onClick={() =>
                         revokeInvitation.mutate({
                           slug,
@@ -2612,7 +2941,13 @@ function EventTeamPanel({ slug }: { slug: string }) {
                       }
                       type="button"
                     >
-                      Revoke
+                      {revokeStatus.isPendingFor(
+                        revokeInvitation,
+                        "invitationId",
+                        invitation.id,
+                      )
+                        ? "Revoking…"
+                        : "Revoke"}
                     </button>
                   </div>
                 </div>
@@ -2654,10 +2989,21 @@ function CfpSetupPage() {
   const rooms = useQuery(trpc.rooms.list.queryOptions({ slug }));
   const cfp = useQuery(trpc.cfps.getSetup.queryOptions({ slug }));
 
-  const refreshTracks = () =>
-    queryClient.invalidateQueries(trpc.tracks.list.queryFilter({ slug }));
-  const refreshRooms = () =>
-    queryClient.invalidateQueries(trpc.rooms.list.queryFilter({ slug }));
+  const refreshTracks = async () => {
+    await queryClient.invalidateQueries(trpc.tracks.list.queryFilter({ slug }));
+    await queryClient.invalidateQueries(
+      trpc.cfps.publicByEventSlug.queryFilter({ slug }),
+    );
+  };
+  const refreshRooms = async () => {
+    await queryClient.invalidateQueries(trpc.rooms.list.queryFilter({ slug }));
+    await queryClient.invalidateQueries(
+      trpc.cfps.publicByEventSlug.queryFilter({ slug }),
+    );
+    await queryClient.invalidateQueries(
+      trpc.agendas.working.queryFilter({ slug }),
+    );
+  };
   const createTrack = useMutation(
     trpc.tracks.create.mutationOptions({ onSuccess: refreshTracks }),
   );
@@ -2682,6 +3028,48 @@ function CfpSetupPage() {
   const reorderRooms = useMutation(
     trpc.rooms.reorder.mutationOptions({ onSuccess: refreshRooms }),
   );
+  const optionStatus = useMutationStatuses([
+    {
+      mutation: createTrack,
+      mutationKey: trpc.tracks.create.mutationKey(),
+      success: "Track created",
+    },
+    {
+      mutation: updateTrack,
+      mutationKey: trpc.tracks.update.mutationKey(),
+      success: "Track renamed",
+    },
+    {
+      mutation: archiveTrack,
+      mutationKey: trpc.tracks.archive.mutationKey(),
+      success: "Track archived",
+    },
+    {
+      mutation: reorderTracks,
+      mutationKey: trpc.tracks.reorder.mutationKey(),
+      success: "Tracks reordered",
+    },
+    {
+      mutation: createRoom,
+      mutationKey: trpc.rooms.create.mutationKey(),
+      success: "Room created",
+    },
+    {
+      mutation: updateRoom,
+      mutationKey: trpc.rooms.update.mutationKey(),
+      success: "Room renamed",
+    },
+    {
+      mutation: archiveRoom,
+      mutationKey: trpc.rooms.archive.mutationKey(),
+      success: "Room archived",
+    },
+    {
+      mutation: reorderRooms,
+      mutationKey: trpc.rooms.reorder.mutationKey(),
+      success: "Rooms reordered",
+    },
+  ]);
 
   if (event.isPending || tracks.isPending || rooms.isPending || cfp.isPending) {
     return <FullPageStatus label="Opening CFP setup" />;
@@ -2712,6 +3100,10 @@ function CfpSetupPage() {
           <h1>{event.data.name} CFP</h1>
         </div>
       </section>
+      <MutationStatus
+        error={optionStatus.error}
+        success={optionStatus.success}
+      />
       <div className="setup-grid">
         <OptionEditor
           creating={createTrack.isPending}
@@ -2725,6 +3117,13 @@ function CfpSetupPage() {
             reorderTracks.error
           }
           items={tracks.data}
+          archiving={(id) =>
+            optionStatus.isPendingFor(archiveTrack, "trackId", id)
+          }
+          renaming={(id) =>
+            optionStatus.isPendingFor(updateTrack, "trackId", id)
+          }
+          reordering={reorderTracks.isPending}
           onCreate={(name) => createTrack.mutateAsync({ slug, name })}
           onRename={(id, name) =>
             updateTrack.mutate({ slug, trackId: id, name })
@@ -2748,6 +3147,11 @@ function CfpSetupPage() {
             reorderRooms.error
           }
           items={rooms.data}
+          archiving={(id) =>
+            optionStatus.isPendingFor(archiveRoom, "roomId", id)
+          }
+          renaming={(id) => optionStatus.isPendingFor(updateRoom, "roomId", id)}
+          reordering={reorderRooms.isPending}
           onCreate={(name) => createRoom.mutateAsync({ slug, name })}
           onRename={(id, name) => updateRoom.mutate({ slug, roomId: id, name })}
           onArchive={(id) => {
@@ -2761,7 +3165,7 @@ function CfpSetupPage() {
       {cfp.data.open && (
         <CfpBuilder
           cfp={cfp.data.open}
-          key={cfp.data.open.id}
+          key="open-cfp"
           endsOn={event.data.endsOn}
           slug={slug}
           timezone={event.data.timezone}
@@ -2769,7 +3173,7 @@ function CfpSetupPage() {
       )}
       <CfpBuilder
         cfp={cfp.data.draft}
-        key={cfp.data.draft?.id ?? "new"}
+        key={`draft-${cfp.data.open?.id ?? "none"}`}
         endsOn={event.data.endsOn}
         slug={slug}
         timezone={event.data.timezone}
@@ -2779,6 +3183,7 @@ function CfpSetupPage() {
 }
 
 function OptionEditor({
+  archiving,
   creating,
   disabled,
   title,
@@ -2789,7 +3194,10 @@ function OptionEditor({
   onRename,
   onArchive,
   onReorder,
+  renaming,
+  reordering,
 }: {
+  archiving: (id: string) => boolean;
   creating: boolean;
   disabled: boolean;
   title: string;
@@ -2800,6 +3208,8 @@ function OptionEditor({
   onRename: (id: string, name: string) => void;
   onArchive: (id: string) => void;
   onReorder: (ids: string[]) => void;
+  renaming: (id: string) => boolean;
+  reordering: boolean;
 }) {
   const [name, setName] = useState("");
   const [validationError, setValidationError] = useState<string>();
@@ -2860,38 +3270,42 @@ function OptionEditor({
           >
             <input
               defaultValue={item.name}
-              disabled={disabled}
+              disabled={disabled || renaming(item.id)}
               name="name"
               aria-label={`${singular} name: ${item.name}`}
             />
-            <button className="mini-button" disabled={disabled} type="submit">
-              Save
+            <button
+              className="mini-button"
+              disabled={disabled || renaming(item.id)}
+              type="submit"
+            >
+              {renaming(item.id) ? "Saving…" : "Save"}
             </button>
             <button
               className="mini-button"
-              disabled={disabled || index === 0}
+              disabled={disabled || reordering || index === 0}
               aria-label={`Move ${item.name} up`}
               onClick={() => move(index, -1)}
               type="button"
             >
-              Move up
+              {reordering ? "Moving…" : "Move up"}
             </button>
             <button
               className="mini-button"
-              disabled={disabled || index === items.length - 1}
+              disabled={disabled || reordering || index === items.length - 1}
               aria-label={`Move ${item.name} down`}
               onClick={() => move(index, 1)}
               type="button"
             >
-              Move down
+              {reordering ? "Moving…" : "Move down"}
             </button>
             <button
               className="mini-button danger-button"
-              disabled={disabled}
+              disabled={disabled || archiving(item.id)}
               onClick={() => onArchive(item.id)}
               type="button"
             >
-              Archive
+              {archiving(item.id) ? "Archiving…" : "Archive"}
             </button>
           </form>
         ))}
@@ -2934,10 +3348,22 @@ function InvitationPage({
   const { secret = "" } = useParams();
   const navigate = useNavigate();
   const trpc = useTRPC();
+  const queryClient = useQueryClient();
   const invitation = useQuery(trpc.invitations.get.queryOptions({ secret }));
   const accept = useMutation(
     trpc.invitations.accept.mutationOptions({
-      onSuccess: (result) => {
+      onSuccess: async (result) => {
+        await queryClient.invalidateQueries(trpc.events.list.queryFilter());
+        await queryClient.invalidateQueries(
+          trpc.speakerProfile.getOwn.queryFilter(),
+        );
+        await queryClient.invalidateQueries(trpc.onboarding.mine.queryFilter());
+        await queryClient.invalidateQueries(
+          trpc.submissions.list.queryFilter(),
+        );
+        await queryClient.invalidateQueries(
+          trpc.events.get.queryFilter({ slug: result.eventSlug }),
+        );
         void navigate(`/events/${result.eventSlug}`, { replace: true });
       },
     }),
@@ -2945,6 +3371,11 @@ function InvitationPage({
   const decline = useMutation(trpc.invitations.decline.mutationOptions());
   const acceptanceKey = `openboard:pending-invitation-acceptance:${secret}`;
   const acceptanceStarted = useRef(false);
+  const [switchAccount, setSwitchAccount] = useState<
+    | { status: "idle" }
+    | { status: "pending" }
+    | { status: "error"; message: string }
+  >({ status: "idle" });
   const acceptAfterSignIn =
     window.sessionStorage.getItem(acceptanceKey) === "true";
   const finishPendingAcceptance = useEffectEvent(() => {
@@ -2999,7 +3430,15 @@ function InvitationPage({
   const signInUrl = `/sign-in?returnTo=${encodeURIComponent(returnTo)}&email=${encodeURIComponent(invitation.data.email)}`;
   const emailMismatch = signedIn && email !== invitation.data.email;
   async function signInWithInvitedEmail() {
-    await authClient.signOut();
+    setSwitchAccount({ status: "pending" });
+    const result = await authClient.signOut();
+    if (result.error) {
+      setSwitchAccount({
+        status: "error",
+        message: result.error.message ?? "Sign out failed. Try again.",
+      });
+      return;
+    }
     window.location.assign(signInUrl);
   }
   return (
@@ -3016,12 +3455,20 @@ function InvitationPage({
             <span>Use {invitation.data.email} to accept this invitation.</span>
             <button
               className="text-button"
+              disabled={switchAccount.status === "pending"}
               onClick={() => void signInWithInvitedEmail()}
               type="button"
             >
-              Sign out and continue
+              {switchAccount.status === "pending"
+                ? "Signing out…"
+                : "Sign out and continue"}
             </button>
           </div>
+        )}
+        {switchAccount.status === "error" && (
+          <p className="form-error" role="alert">
+            {switchAccount.message}
+          </p>
         )}
         {(accept.error || decline.error) && (
           <p className="form-error" role="alert">
@@ -3073,12 +3520,26 @@ function SpeakerInvitationPage({
   const { secret = "" } = useParams();
   const navigate = useNavigate();
   const trpc = useTRPC();
+  const queryClient = useQueryClient();
   const invitation = useQuery(
     trpc.submissionSpeakerInvitations.get.queryOptions({ secret }),
   );
   const accept = useMutation(
     trpc.submissionSpeakerInvitations.accept.mutationOptions({
-      onSuccess: (result) => {
+      onSuccess: async (result) => {
+        await queryClient.invalidateQueries(trpc.events.list.queryFilter());
+        await queryClient.invalidateQueries(
+          trpc.speakerProfile.getOwn.queryFilter(),
+        );
+        await queryClient.invalidateQueries(trpc.onboarding.mine.queryFilter());
+        await queryClient.invalidateQueries(
+          trpc.submissions.list.queryFilter(),
+        );
+        await queryClient.invalidateQueries(
+          trpc.submissions.get.queryFilter({
+            submissionId: result.submissionId,
+          }),
+        );
         void navigate(`/submissions/${result.submissionId}`, { replace: true });
       },
     }),
@@ -3086,6 +3547,11 @@ function SpeakerInvitationPage({
   const decline = useMutation(
     trpc.submissionSpeakerInvitations.decline.mutationOptions(),
   );
+  const [switchAccount, setSwitchAccount] = useState<
+    | { status: "idle" }
+    | { status: "pending" }
+    | { status: "error"; message: string }
+  >({ status: "idle" });
 
   if (invitation.isPending) {
     return <FullPageStatus label="Opening speaker invitation" />;
@@ -3122,7 +3588,15 @@ function SpeakerInvitationPage({
   const signInUrl = `/sign-in?returnTo=${encodeURIComponent(returnTo)}&email=${encodeURIComponent(invitation.data.email)}`;
   const emailMismatch = signedIn && email !== invitation.data.email;
   async function signInWithInvitedSpeakerEmail() {
-    await authClient.signOut();
+    setSwitchAccount({ status: "pending" });
+    const result = await authClient.signOut();
+    if (result.error) {
+      setSwitchAccount({
+        status: "error",
+        message: result.error.message ?? "Sign out failed. Try again.",
+      });
+      return;
+    }
     window.location.assign(signInUrl);
   }
   return (
@@ -3140,12 +3614,20 @@ function SpeakerInvitationPage({
             <span>Use {invitation.data.email} to accept this invitation.</span>
             <button
               className="text-button"
+              disabled={switchAccount.status === "pending"}
               onClick={() => void signInWithInvitedSpeakerEmail()}
               type="button"
             >
-              Sign out and continue
+              {switchAccount.status === "pending"
+                ? "Signing out…"
+                : "Sign out and continue"}
             </button>
           </div>
+        )}
+        {switchAccount.status === "error" && (
+          <p className="form-error" role="alert">
+            {switchAccount.message}
+          </p>
         )}
         {(accept.error || decline.error) && (
           <p className="form-error" role="alert">
@@ -3208,9 +3690,21 @@ function SpeakerProfilePage() {
         await queryClient.invalidateQueries(
           trpc.speakerProfile.getOwn.queryFilter(),
         );
+        await queryClient.invalidateQueries(trpc.onboarding.mine.queryFilter());
+        await queryClient.invalidateQueries(
+          trpc.onboarding.organizerBoard.queryFilter(),
+        );
+        await queryClient.invalidateQueries(trpc.agendas.working.queryFilter());
       },
     }),
   );
+  const saveStatus = useMutationStatuses([
+    {
+      mutation: save,
+      mutationKey: trpc.speakerProfile.saveOwn.mutationKey(),
+      success: "Profile saved",
+    },
+  ]);
   useEffect(
     () => () => {
       if (headshotPreviewUrl) URL.revokeObjectURL(headshotPreviewUrl);
@@ -3276,15 +3770,26 @@ function SpeakerProfilePage() {
     event.preventDefault();
     if (headshotError) return;
     setIsSubmitting(true);
+    let contentBase64: string | undefined;
+    if (headshotFile) {
+      try {
+        contentBase64 = await browserFileToBase64(headshotFile.file);
+      } catch {
+        setHeadshotError("The headshot could not be read. Choose it again.");
+        setIsSubmitting(false);
+        return;
+      }
+    }
+    setHeadshotError(undefined);
     try {
       await save.mutateAsync({
         ...current,
-        ...(headshotFile
+        ...(headshotFile && contentBase64
           ? {
               headshot: {
                 fileName: headshotFile.file.name,
                 contentType: headshotFile.contentType,
-                contentBase64: await browserFileToBase64(headshotFile.file),
+                contentBase64,
               },
             }
           : {}),
@@ -3363,10 +3868,9 @@ function SpeakerProfilePage() {
               {headshotError}
             </p>
           )}
-          {save.error && (
-            <p className="form-error" role="alert">
-              {save.error.message}
-            </p>
+          {saveStatus.error && <MutationStatus error={saveStatus.error} />}
+          {saveStatus.success && (
+            <MutationStatus success={saveStatus.success} />
           )}
           <div className="submission-actions">
             <button
@@ -3416,8 +3920,14 @@ function CfpBuilder({
     message: string;
     path: (string | number)[];
   }>();
-  const refresh = () =>
-    queryClient.invalidateQueries(trpc.cfps.getSetup.queryFilter({ slug }));
+  const refresh = async () => {
+    await queryClient.invalidateQueries(
+      trpc.cfps.getSetup.queryFilter({ slug }),
+    );
+    await queryClient.invalidateQueries(
+      trpc.cfps.publicByEventSlug.queryFilter({ slug }),
+    );
+  };
   const create = useMutation(
     trpc.cfps.createDraft.mutationOptions({ onSuccess: refresh }),
   );
@@ -3427,6 +3937,23 @@ function CfpBuilder({
   const open = useMutation(
     trpc.cfps.open.mutationOptions({ onSuccess: refresh }),
   );
+  const cfpStatus = useMutationStatuses([
+    {
+      mutation: create,
+      mutationKey: trpc.cfps.createDraft.mutationKey(),
+      success: "Draft created",
+    },
+    {
+      mutation: update,
+      mutationKey: trpc.cfps.updateDraft.mutationKey(),
+      success: "CFP saved",
+    },
+    {
+      mutation: open,
+      mutationKey: trpc.cfps.open.mutationKey(),
+      success: "CFP opened",
+    },
+  ]);
   const formId = cfp?.id ?? "new";
 
   function parsedDefinition(): CfpDefinitionInput | undefined {
@@ -3487,7 +4014,6 @@ function CfpBuilder({
     }));
   }
 
-  const mutationError = create.error ?? update.error ?? open.error;
   return (
     <section className="cfp-builder">
       <div className="builder-title">
@@ -3623,10 +4149,12 @@ function CfpBuilder({
             />
           ))}
         </fieldset>
-        {(validationError?.path[0] !== "customFields" || mutationError) &&
-          (validationError || mutationError) && (
+        {cfpStatus.error && <MutationStatus error={cfpStatus.error} />}
+        {cfpStatus.success && <MutationStatus success={cfpStatus.success} />}
+        {(validationError?.path[0] !== "customFields" || cfpStatus.error) &&
+          validationError && (
             <p className="form-error" role="alert">
-              {validationError?.message ?? mutationError?.message}
+              {validationError.message}
             </p>
           )}
         <div className="builder-actions">
@@ -3635,11 +4163,15 @@ function CfpBuilder({
             disabled={create.isPending || update.isPending}
             type="submit"
           >
-            {cfp?.structureLocked
-              ? "Save name and deadline"
-              : cfp
-                ? "Save form"
-                : "Create draft"}
+            {create.isPending
+              ? "Creating…"
+              : update.isPending
+                ? "Saving…"
+                : cfp?.structureLocked
+                  ? "Save name and deadline"
+                  : cfp
+                    ? "Save form"
+                    : "Create draft"}
           </button>
           {cfp?.status === "draft" && (
             <button
@@ -3648,7 +4180,7 @@ function CfpBuilder({
               onClick={saveAndOpen}
               type="button"
             >
-              Open CFP
+              {open.isPending ? "Opening…" : "Open CFP"}
             </button>
           )}
           {cfp?.status === "open" && (
@@ -3885,6 +4417,12 @@ function SubmissionPage() {
         await queryClient.invalidateQueries(
           trpc.submissions.get.queryFilter(submissionInput),
         );
+        await queryClient.invalidateQueries(
+          trpc.submissions.list.queryFilter(),
+        );
+        await queryClient.invalidateQueries(
+          trpc.reviews.organizerBoard.queryFilter({ slug: saved.event.slug }),
+        );
       },
       onError: async (error, attempted) => {
         if (error.data?.code !== "CONFLICT") return;
@@ -3902,14 +4440,34 @@ function SubmissionPage() {
   );
   const withdraw = useMutation(
     trpc.submissions.withdrawOwn.mutationOptions({
-      onSuccess: async () => {
+      onSuccess: async (withdrawn) => {
         setEditState(undefined);
         await queryClient.invalidateQueries(
           trpc.submissions.get.queryFilter(submissionInput),
         );
+        await queryClient.invalidateQueries(
+          trpc.submissions.list.queryFilter(),
+        );
+        await queryClient.invalidateQueries(
+          trpc.reviews.organizerBoard.queryFilter({
+            slug: withdrawn.event.slug,
+          }),
+        );
       },
     }),
   );
+  const submissionStatus = useMutationStatuses([
+    {
+      mutation: update,
+      mutationKey: trpc.submissions.updateOwn.mutationKey(),
+      success: "Proposal saved",
+    },
+    {
+      mutation: withdraw,
+      mutationKey: trpc.submissions.withdrawOwn.mutationKey(),
+      success: "Proposal withdrawn",
+    },
+  ]);
 
   if (submission.isPending) return <FullPageStatus label="Opening proposal" />;
   if (submission.isError)
@@ -4088,10 +4646,11 @@ function SubmissionPage() {
                 />
               ))}
             </fieldset>
-            {(update.error || withdraw.error) && (
-              <p className="form-error" role="alert">
-                {update.error?.message ?? withdraw.error?.message}
-              </p>
+            {submissionStatus.error && (
+              <MutationStatus error={submissionStatus.error} />
+            )}
+            {submissionStatus.success && (
+              <MutationStatus success={submissionStatus.success} />
             )}
             {(editable || submission.data.permissions.canWithdraw) && (
               <div className="submission-actions">
@@ -4141,6 +4700,9 @@ function SubmissionSpeakerManager({
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [deliveryNotice, setDeliveryNotice] = useState<string>();
+  const [removingSpeakers, setRemovingSpeakers] = useState<
+    Record<string, Submission["proposedSpeakers"][number]>
+  >({});
   const submissionQuery = trpc.submissions.get.queryOptions(submissionInput);
   const refresh = () =>
     queryClient.invalidateQueries(
@@ -4169,6 +4731,15 @@ function SubmissionSpeakerManager({
         const previousSubmission = queryClient.getQueryData(
           submissionQuery.queryKey,
         );
+        const pendingSpeaker = previousSubmission?.proposedSpeakers.find(
+          (speaker) => speaker.id === speakerId,
+        );
+        if (pendingSpeaker) {
+          setRemovingSpeakers((current) => ({
+            ...current,
+            [speakerId]: pendingSpeaker,
+          }));
+        }
         queryClient.setQueryData(submissionQuery.queryKey, (current) =>
           current
             ? {
@@ -4179,17 +4750,31 @@ function SubmissionSpeakerManager({
               }
             : current,
         );
-        return { previousSubmission };
+        return { pendingSpeaker };
       },
       onError: (_error, _input, context) => {
-        if (context?.previousSubmission) {
-          queryClient.setQueryData(
-            submissionQuery.queryKey,
-            context.previousSubmission,
-          );
-        }
+        if (!context?.pendingSpeaker) return;
+        const pendingSpeaker = context.pendingSpeaker;
+        queryClient.setQueryData(submissionQuery.queryKey, (current) =>
+          current &&
+          !current.proposedSpeakers.some(
+            (speaker) => speaker.id === pendingSpeaker.id,
+          )
+            ? {
+                ...current,
+                proposedSpeakers: [...current.proposedSpeakers, pendingSpeaker],
+              }
+            : current,
+        );
       },
-      onSettled: refresh,
+      onSettled: async (_data, _error, { speakerId }) => {
+        await refresh();
+        setRemovingSpeakers((current) => {
+          const next = { ...current };
+          delete next[speakerId];
+          return next;
+        });
+      },
     }),
   );
   const replace = useMutation(
@@ -4216,8 +4801,28 @@ function SubmissionSpeakerManager({
       },
     }),
   );
-  const mutationError =
-    add.error ?? remove.error ?? replace.error ?? resend.error;
+  const speakerStatus = useMutationStatuses([
+    {
+      mutation: add,
+      mutationKey: trpc.submissions.addSpeaker.mutationKey(),
+      success: "Speaker added",
+    },
+    {
+      mutation: remove,
+      mutationKey: trpc.submissions.removeSpeaker.mutationKey(),
+      success: "Speaker removed",
+    },
+    {
+      mutation: replace,
+      mutationKey: trpc.submissions.replaceSpeakerInvitation.mutationKey(),
+      success: "Invitation replaced",
+    },
+    {
+      mutation: resend,
+      mutationKey: trpc.submissions.resendSpeakerInvitation.mutationKey(),
+      success: "Invitation renewed",
+    },
+  ]);
   const isOnlyProposedSpeaker = submission.proposedSpeakers.length === 1;
 
   function invite(event: FormEvent) {
@@ -4237,8 +4842,20 @@ function SubmissionSpeakerManager({
         </span>
       </div>
       <div className="speaker-list">
-        {submission.proposedSpeakers.map((speaker) => (
-          <div className="speaker-row" key={speaker.id}>
+        {[
+          ...submission.proposedSpeakers,
+          ...Object.values(removingSpeakers).filter(
+            (pendingSpeaker) =>
+              !submission.proposedSpeakers.some(
+                (speaker) => speaker.id === pendingSpeaker.id,
+              ),
+          ),
+        ].map((speaker) => (
+          <div
+            className="speaker-row"
+            data-speaker-id={speaker.id}
+            key={speaker.id}
+          >
             <div>
               <strong>{speaker.name}</strong>
               <span>{speaker.email ?? "Email hidden"}</span>
@@ -4258,7 +4875,11 @@ function SubmissionSpeakerManager({
                 speaker.invitation?.status === "pending" && (
                   <button
                     className="text-button"
-                    disabled={replace.isPending}
+                    disabled={speakerStatus.isPendingFor(
+                      replace,
+                      "speakerId",
+                      speaker.id,
+                    )}
                     onClick={() =>
                       replace.mutate({
                         ...submissionInput,
@@ -4268,7 +4889,13 @@ function SubmissionSpeakerManager({
                     }
                     type="button"
                   >
-                    Send new invitation
+                    {speakerStatus.isPendingFor(
+                      replace,
+                      "speakerId",
+                      speaker.id,
+                    )
+                      ? "Sending…"
+                      : "Send new invitation"}
                   </button>
                 )}
               {submission.permissions.canManageSpeakers &&
@@ -4276,7 +4903,11 @@ function SubmissionSpeakerManager({
                 speaker.invitation?.status !== "pending" && (
                   <button
                     className="text-button"
-                    disabled={resend.isPending}
+                    disabled={speakerStatus.isPendingFor(
+                      resend,
+                      "speakerId",
+                      speaker.id,
+                    )}
                     onClick={() =>
                       resend.mutate({
                         ...submissionInput,
@@ -4285,7 +4916,9 @@ function SubmissionSpeakerManager({
                     }
                     type="button"
                   >
-                    Send invitation
+                    {speakerStatus.isPendingFor(resend, "speakerId", speaker.id)
+                      ? "Sending…"
+                      : "Send invitation"}
                   </button>
                 )}
               {submission.permissions.canManageSpeakers && (
@@ -4297,7 +4930,13 @@ function SubmissionSpeakerManager({
                         : undefined
                     }
                     className="text-button danger-button"
-                    disabled={remove.isPending || isOnlyProposedSpeaker}
+                    disabled={
+                      speakerStatus.isPendingFor(
+                        remove,
+                        "speakerId",
+                        speaker.id,
+                      ) || isOnlyProposedSpeaker
+                    }
                     onClick={() =>
                       remove.mutate({
                         ...submissionInput,
@@ -4306,7 +4945,9 @@ function SubmissionSpeakerManager({
                     }
                     type="button"
                   >
-                    Remove
+                    {speakerStatus.isPendingFor(remove, "speakerId", speaker.id)
+                      ? "Removing…"
+                      : "Remove"}
                   </button>
                   {isOnlyProposedSpeaker && (
                     <span
@@ -4346,10 +4987,9 @@ function SubmissionSpeakerManager({
           </button>
         </form>
       )}
-      {mutationError && (
-        <p className="form-error" role="alert">
-          {mutationError.message}
-        </p>
+      {speakerStatus.error && <MutationStatus error={speakerStatus.error} />}
+      {speakerStatus.success && (
+        <MutationStatus success={speakerStatus.success} />
       )}
       {deliveryNotice && (
         <p className="invite-notice invite-notice-warning" role="status">
@@ -4364,6 +5004,7 @@ function PublicCfpPage() {
   const { slug = "" } = useParams();
   const navigate = useNavigate();
   const trpc = useTRPC();
+  const queryClient = useQueryClient();
   const session = authClient.useSession();
   const cfp = useQuery(
     trpc.cfps.publicByEventSlug.queryOptions(
@@ -4380,8 +5021,16 @@ function PublicCfpPage() {
   const draftKey = proposalDraftKey(slug);
   const submit = useMutation(
     trpc.submissions.submit.mutationOptions({
-      onSuccess: (submission) => {
+      onSuccess: async (submission) => {
         if (draftKey) window.localStorage.removeItem(draftKey);
+        await queryClient.invalidateQueries(
+          trpc.submissions.list.queryFilter(),
+        );
+        await queryClient.invalidateQueries(
+          trpc.reviews.organizerBoard.queryFilter({
+            slug: submission.event.slug,
+          }),
+        );
         const deliveryQuery = submission.invitationDeliveryFailed
           ? "?invitationDelivery=failed"
           : "";

@@ -3,6 +3,8 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
+import { MutationStatus } from "./MutationStatus";
+import { useMutationStatuses } from "./mutation-feedback";
 import { useTRPC } from "./trpc";
 
 export function AgendaPage() {
@@ -13,13 +15,32 @@ export function AgendaPage() {
   const communicationFailures = useQuery(
     trpc.communications.failures.queryOptions({ slug }),
   );
+  const [programItemId, setProgramItemId] = useState("");
+  const [programRoomId, setProgramRoomId] = useState("");
+  const [programStart, setProgramStart] = useState("");
+  const [programEnd, setProgramEnd] = useState("");
+  const [serviceTitle, setServiceTitle] = useState("");
+  const [serviceScope, setServiceScope] = useState<"event" | "room">("event");
+  const [serviceRoomId, setServiceRoomId] = useState("");
+  const [serviceStart, setServiceStart] = useState("");
+  const [serviceEnd, setServiceEnd] = useState("");
   const refresh = () =>
     queryClient.invalidateQueries(trpc.agendas.working.queryFilter({ slug }));
   const placeProgram = useMutation(
-    trpc.agendas.placeProgram.mutationOptions({ onSuccess: refresh }),
+    trpc.agendas.placeProgram.mutationOptions({
+      onSuccess: async () => {
+        setProgramItemId("");
+        await refresh();
+      },
+    }),
   );
   const placeService = useMutation(
-    trpc.agendas.placeService.mutationOptions({ onSuccess: refresh }),
+    trpc.agendas.placeService.mutationOptions({
+      onSuccess: async () => {
+        setServiceTitle("");
+        await refresh();
+      },
+    }),
   );
   const move = useMutation(
     trpc.agendas.move.mutationOptions({ onSuccess: refresh }),
@@ -34,17 +55,47 @@ export function AgendaPage() {
     trpc.agendas.removeService.mutationOptions({ onSuccess: refresh }),
   );
   const publish = useMutation(
-    trpc.agendas.publish.mutationOptions({ onSuccess: refresh }),
+    trpc.agendas.publish.mutationOptions({
+      onSuccess: async () => {
+        await refresh();
+        await queryClient.invalidateQueries(
+          trpc.agendas.published.queryFilter({ slug }),
+        );
+      },
+    }),
   );
-  const [programItemId, setProgramItemId] = useState("");
-  const [programRoomId, setProgramRoomId] = useState("");
-  const [programStart, setProgramStart] = useState("");
-  const [programEnd, setProgramEnd] = useState("");
-  const [serviceTitle, setServiceTitle] = useState("");
-  const [serviceScope, setServiceScope] = useState<"event" | "room">("event");
-  const [serviceRoomId, setServiceRoomId] = useState("");
-  const [serviceStart, setServiceStart] = useState("");
-  const [serviceEnd, setServiceEnd] = useState("");
+  const agendaStatus = useMutationStatuses([
+    {
+      mutation: placeProgram,
+      mutationKey: trpc.agendas.placeProgram.mutationKey(),
+      success: "Program item placed",
+    },
+    {
+      mutation: placeService,
+      mutationKey: trpc.agendas.placeService.mutationKey(),
+      success: "Service block added",
+    },
+    {
+      mutation: move,
+      mutationKey: trpc.agendas.move.mutationKey(),
+      success: "Placement moved",
+    },
+    {
+      mutation: cancel,
+      mutationKey: trpc.agendas.cancel.mutationKey(),
+      success: "Placement canceled",
+    },
+    {
+      mutation: restore,
+      mutationKey: trpc.agendas.restore.mutationKey(),
+      success: "Placement restored",
+    },
+    {
+      mutation: removeService,
+      mutationKey: trpc.agendas.removeService.mutationKey(),
+      success: "Service block removed",
+    },
+  ]);
 
   if (agenda.isPending) return <AgendaStatus label="Opening working agenda" />;
   if (agenda.isError) {
@@ -56,32 +107,22 @@ export function AgendaPage() {
     );
   }
 
-  const mutationError =
-    placeProgram.error ??
-    placeService.error ??
-    move.error ??
-    cancel.error ??
-    restore.error ??
-    removeService.error ??
-    publish.error;
-
-  async function submitProgram(event: FormEvent) {
+  function submitProgram(event: FormEvent) {
     event.preventDefault();
     if (!programItemId || !programStart || !programEnd) return;
-    await placeProgram.mutateAsync({
+    placeProgram.mutate({
       slug,
       programItemId,
       roomId: programRoomId || null,
       startsAtLocal: programStart,
       endsAtLocal: programEnd,
     });
-    setProgramItemId("");
   }
 
-  async function submitService(event: FormEvent) {
+  function submitService(event: FormEvent) {
     event.preventDefault();
     if (!serviceTitle || !serviceStart || !serviceEnd) return;
-    await placeService.mutateAsync({
+    placeService.mutate({
       slug,
       title: serviceTitle,
       scope:
@@ -91,7 +132,6 @@ export function AgendaPage() {
       startsAtLocal: serviceStart,
       endsAtLocal: serviceEnd,
     });
-    setServiceTitle("");
   }
 
   return (
@@ -127,11 +167,11 @@ export function AgendaPage() {
         </button>
       </header>
 
-      {mutationError && (
-        <p className="form-error agenda-error" role="alert">
-          {mutationError.message}
-        </p>
-      )}
+      <MutationStatus
+        error={agendaStatus.error}
+        success={agendaStatus.success}
+      />
+      {publish.error && <MutationStatus error={publish.error.message} />}
       {communicationFailures.data?.some((failure) =>
         failure.purpose.startsWith("agenda_"),
       ) && (
@@ -154,7 +194,7 @@ export function AgendaPage() {
       )}
 
       <section className="agenda-composer">
-        <form onSubmit={(event) => void submitProgram(event)}>
+        <form onSubmit={submitProgram}>
           <div className="eyebrow">Program placement</div>
           <h2>Schedule an accepted item</h2>
           <label>
@@ -185,12 +225,16 @@ export function AgendaPage() {
             onStart={setProgramStart}
             start={programStart}
           />
-          <button className="secondary-button" type="submit">
-            Place program item
+          <button
+            className="secondary-button"
+            disabled={placeProgram.isPending}
+            type="submit"
+          >
+            {placeProgram.isPending ? "Placing…" : "Place program item"}
           </button>
         </form>
 
-        <form onSubmit={(event) => void submitService(event)}>
+        <form onSubmit={submitService}>
           <div className="eyebrow">Service block</div>
           <h2>Block event time</h2>
           <label>
@@ -228,8 +272,12 @@ export function AgendaPage() {
             onStart={setServiceStart}
             start={serviceStart}
           />
-          <button className="secondary-button" type="submit">
-            Add service block
+          <button
+            className="secondary-button"
+            disabled={placeService.isPending}
+            type="submit"
+          >
+            {placeService.isPending ? "Adding…" : "Add service block"}
           </button>
         </form>
       </section>
@@ -252,6 +300,25 @@ export function AgendaPage() {
         ) : (
           agenda.data.items.map((item) => (
             <AgendaItemEditor
+              busy={
+                agendaStatus.isPendingFor(move, "agendaItemId", item.id)
+                  ? "move"
+                  : agendaStatus.isPendingFor(cancel, "agendaItemId", item.id)
+                    ? "cancel"
+                    : agendaStatus.isPendingFor(
+                          restore,
+                          "agendaItemId",
+                          item.id,
+                        )
+                      ? "restore"
+                      : agendaStatus.isPendingFor(
+                            removeService,
+                            "agendaItemId",
+                            item.id,
+                          )
+                        ? "remove"
+                        : undefined
+              }
               item={item}
               key={item.id}
               onCancel={() => cancel.mutate({ slug, agendaItemId: item.id })}
@@ -442,6 +509,7 @@ function AgendaItemEditor({
   onCancel,
   onRestore,
   onRemove,
+  busy,
 }: {
   item: {
     id: string;
@@ -466,6 +534,7 @@ function AgendaItemEditor({
   onCancel: () => void;
   onRestore: () => void;
   onRemove: () => void;
+  busy?: "move" | "cancel" | "restore" | "remove" | undefined;
 }) {
   const [roomId, setRoomId] = useState(item.roomId ?? "");
   const [start, setStart] = useState(item.startsAtLocal);
@@ -514,6 +583,7 @@ function AgendaItemEditor({
         <div className="working-item-actions">
           <button
             className="text-button"
+            disabled={busy === "move"}
             onClick={() =>
               onMove({
                 roomId: item.serviceScope === "event" ? null : roomId || null,
@@ -523,19 +593,31 @@ function AgendaItemEditor({
             }
             type="button"
           >
-            Save move
+            {busy === "move" ? "Saving…" : "Save move"}
           </button>
           {item.kind === "program" ? (
             <button
               className="text-button"
+              disabled={busy === "cancel" || busy === "restore"}
               onClick={item.canceled ? onRestore : onCancel}
               type="button"
             >
-              {item.canceled ? "Restore" : "Cancel"}
+              {item.canceled
+                ? busy === "restore"
+                  ? "Restoring…"
+                  : "Restore"
+                : busy === "cancel"
+                  ? "Canceling…"
+                  : "Cancel"}
             </button>
           ) : (
-            <button className="text-button" onClick={onRemove} type="button">
-              Remove
+            <button
+              className="text-button"
+              disabled={busy === "remove"}
+              onClick={onRemove}
+              type="button"
+            >
+              {busy === "remove" ? "Removing…" : "Remove"}
             </button>
           )}
         </div>
