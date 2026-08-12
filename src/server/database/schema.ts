@@ -755,6 +755,7 @@ export const speakerProfiles = sqliteTable("speaker_profiles", {
   headshotStoredFileId: text("headshot_stored_file_id").references(
     () => storedFiles.id,
   ),
+  revision: integer("revision").notNull().default(1),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });

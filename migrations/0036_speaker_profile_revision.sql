@@ -1,0 +1,2 @@
+ALTER TABLE speaker_profiles
+  ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;

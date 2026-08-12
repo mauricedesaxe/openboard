@@ -22,6 +22,7 @@ type AgendaDeliveryOptions = {
   organizerEmail: string;
   retryStaleClaims?: boolean;
   now?: Date;
+  clock?: () => Date;
   limit?: number;
 };
 
@@ -288,8 +289,8 @@ async function createAgendaCalendarDelivery(
   };
 }
 
-function currentTime(options: { now?: Date }): Date {
-  return options.now ?? new Date();
+function currentTime(options: { now?: Date; clock?: () => Date }): Date {
+  return options.clock?.() ?? options.now ?? new Date();
 }
 
 function nextDeliveryAttemptAt(finishedAt: Date, attemptNumber: number): Date {

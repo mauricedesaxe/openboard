@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 
 import type { UserId } from "../../shared/events";
 import type { StoredFileId } from "../../shared/files";
@@ -56,7 +56,6 @@ type SaveSpeakerProfileResult =
   | {
       ok: false;
       error:
-        | "headshot_conflict"
         | "invalid_file"
         | "not_a_speaker"
         | "profile_conflict"
@@ -78,7 +77,7 @@ export async function saveOwnSpeakerProfile(
       id: speakerProfiles.id,
       headshotStoredFileId: speakerProfiles.headshotStoredFileId,
       headshotObjectKey: storedFiles.objectKey,
-      updatedAt: speakerProfiles.updatedAt,
+      revision: speakerProfiles.revision,
     })
     .from(speakerProfiles)
     .leftJoin(
@@ -109,6 +108,7 @@ export async function saveOwnSpeakerProfile(
     displayName: input.displayName,
     bio: input.bio,
     updatedAt: now,
+    ...(existing ? { revision: sql`${speakerProfiles.revision} + 1` } : {}),
     ...(stored?.ok
       ? {
           headshotUrl: null,
@@ -116,7 +116,7 @@ export async function saveOwnSpeakerProfile(
         }
       : {}),
   };
-  let conflict: "headshot_conflict" | "profile_conflict" | undefined;
+  let conflict: "profile_conflict" | undefined;
   try {
     if (existing) {
       const update = database
@@ -132,7 +132,7 @@ export async function saveOwnSpeakerProfile(
                       existing.headshotStoredFileId,
                     )
                   : isNull(speakerProfiles.headshotStoredFileId),
-                eq(speakerProfiles.updatedAt, existing.updatedAt),
+                eq(speakerProfiles.revision, existing.revision),
               )
             : eq(speakerProfiles.id, existing.id),
         );
@@ -141,7 +141,7 @@ export async function saveOwnSpeakerProfile(
           database.insert(storedFiles).values(stored.value.record),
           update,
         ]);
-        if (updated.meta.changes === 0) conflict = "headshot_conflict";
+        if (updated.meta.changes === 0) conflict = "profile_conflict";
       } else {
         await update;
       }
