@@ -127,16 +127,44 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   await signedInProposedSpeakerRow
     .getByRole("button", { name: "Remove" })
     .click();
-  await expect(signedInProposedSpeakerRow).toBeHidden({ timeout: 500 });
+  await expect(
+    signedInProposedSpeakerRow.getByRole("button", { name: "Removing…" }),
+  ).toBeDisabled();
   await expect.poll(() => removalRequestStarted).toBe(true);
   releaseRemovalRequest();
   expect((await removalResponse).ok()).toBe(true);
-  await page.reload();
   await expect(signedInProposedSpeakerRow).toBeHidden();
   await expect(page.getByText("Second Browser Speaker")).toBeVisible();
   await expect(
     page.getByText("At least one proposed speaker must remain."),
   ).toBeVisible();
+
+  await page
+    .getByRole("textbox", { name: "Proposed speaker name" })
+    .fill("Rollback Browser Speaker");
+  await page
+    .getByRole("textbox", { name: "Proposed speaker email" })
+    .fill(`rollback-browser-speaker-${suffix}@example.com`);
+  await page.getByRole("button", { name: "Invite proposed speaker" }).click();
+  const rollbackRow = page
+    .locator(".speaker-row")
+    .filter({ hasText: "Rollback Browser Speaker" });
+  await expect(rollbackRow).toBeVisible();
+  const rollbackSpeakerId = await rollbackRow.getAttribute("data-speaker-id");
+  expect(rollbackSpeakerId).toBeTruthy();
+  await page.route(removeSpeakerRequestPattern, async (route) => {
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ error: { message: "Removal failed" } }),
+    });
+  });
+  await rollbackRow.getByRole("button", { name: "Remove" }).click();
+  await expect(rollbackRow).toBeVisible();
+  await expect(
+    rollbackRow.getByRole("button", { name: "Remove" }),
+  ).toBeVisible();
+  await expect(page.getByRole("alert")).toBeVisible();
 });
 
 async function measureLocalTransition(

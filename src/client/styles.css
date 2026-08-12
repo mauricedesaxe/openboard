@@ -245,6 +245,30 @@ a {
   font-size: 13px;
   line-height: 1.5;
 }
+.mutation-notice {
+  margin: 16px 0 0;
+  border: 1px solid currentColor;
+  border-left: 4px solid currentColor;
+  padding: 11px 15px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.mutation-notice-error {
+  color: #a22d18;
+  background: rgba(162, 45, 24, 0.06);
+}
+.mutation-notice-success {
+  color: #185f43;
+  background: rgba(24, 95, 67, 0.08);
+}
+.upload-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: rgba(0, 0, 0, 0.62);
+  font: 12px "DM Mono";
+}
 
 .page {
   width: min(1180px, 92vw);

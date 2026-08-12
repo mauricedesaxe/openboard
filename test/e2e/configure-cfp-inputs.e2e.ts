@@ -11,6 +11,11 @@ test("accepts comma-separated multi-word CFP formats and options", async ({
   await signIn(page, `browser-cfp-owner-${suffix}@example.com`);
   await createEvent(page, slug);
   await page.goto(`/events/${slug}/cfp/setup`);
+  await page
+    .getByRole("textbox", { name: "New track name" })
+    .fill("Web systems");
+  await page.getByRole("button", { name: "Add" }).first().click();
+  await expect(page.getByText("Track created", { exact: true })).toBeVisible();
 
   const formats = page.getByRole("textbox", { name: "Formats" });
   await formats.fill("");
@@ -25,6 +30,7 @@ test("accepts comma-separated multi-word CFP formats and options", async ({
 
   await page.getByRole("textbox", { name: "CFP name" }).fill("Browser CFP");
   await page.getByRole("button", { name: "Create draft" }).click();
+  await expect(page.getByText("Draft created", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Save form" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Formats" })).toHaveValue(
     "Talk, Lightning talk",
@@ -32,6 +38,33 @@ test("accepts comma-separated multi-word CFP formats and options", async ({
   await expect(page.getByRole("textbox", { name: "Options" })).toHaveValue(
     "First, Second choice",
   );
+
+  await page.getByRole("button", { name: "Open CFP" }).click();
+  await page.getByRole("link", { name: "View public form →" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Browser CFP", exact: true }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(page.locator("#cfp-name-new")).toHaveValue("");
+  const openCfp = page.locator(".cfp-builder").filter({
+    has: page.locator(".status-open"),
+  });
+  await page
+    .getByRole("textbox", { name: "New track name" })
+    .fill("AI systems");
+  await page.getByRole("button", { name: "Add" }).first().click();
+  await expect(page.getByText("Track created", { exact: true })).toBeVisible();
+  await openCfp
+    .getByRole("textbox", { name: "CFP name" })
+    .fill("Updated Browser CFP");
+  await openCfp.getByRole("button", { name: "Save form" }).click();
+  await expect(page.getByText("CFP saved", { exact: true })).toBeVisible();
+  await openCfp.getByRole("link", { name: "View public form →" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Updated Browser CFP" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByLabel("Track")).toContainText("AI systems");
 });
 
 async function signIn(page: Page, email: string) {

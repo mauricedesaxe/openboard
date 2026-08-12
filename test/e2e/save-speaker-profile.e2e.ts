@@ -56,6 +56,7 @@ test("saves an optional bio and uploaded headshot", async ({ page }) => {
   await saveButton.click();
   await expect(saveButton).toBeDisabled();
   await expect(saveButton).toBeEnabled();
+  await expect(page.getByText("Profile saved")).toBeVisible();
   await expect(page.locator(".form-error")).toHaveCount(0);
   await expect(
     page.getByRole("img", { name: "Headshot preview" }),

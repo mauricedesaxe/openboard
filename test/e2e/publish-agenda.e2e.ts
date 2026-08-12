@@ -134,6 +134,7 @@ test("publishes a working placement to every public agenda view", async ({
   await placementForm
     .getByRole("button", { name: "Place program item" })
     .click();
+  await expect(page.getByText("Program item placed")).toBeVisible();
   await expect(page.getByText("1 durable item")).toBeVisible();
   await placementForm
     .getByLabel("Program item")
@@ -166,6 +167,7 @@ test("publishes a working placement to every public agenda view", async ({
   await serviceForm.getByLabel("Starts").fill("2028-08-13T12:00");
   await serviceForm.getByLabel("Ends").fill("2028-08-13T13:00");
   await serviceForm.getByRole("button", { name: "Add service block" }).click();
+  await expect(page.getByText("Service block added")).toBeVisible();
   await expect(page.getByText("3 durable items")).toBeVisible();
   await page.getByRole("button", { name: "Publish agenda" }).click();
   await expect(page.getByText(/Public revision 1 is live/)).toBeVisible();
