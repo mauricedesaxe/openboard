@@ -274,15 +274,15 @@ function AuthenticatedApp({ email }: { email: string }) {
           />
           <Route
             path="events/:slug/readiness"
-            element={<OrganizerReadinessPage />}
+            element={<OrganizerReadinessPage view="overview" />}
           />
           <Route
             path="events/:slug/readiness/task-definitions"
-            element={<OrganizerReadinessPage />}
+            element={<OrganizerReadinessPage view="definitions" />}
           />
           <Route
             path="events/:slug/readiness/task-assignments"
-            element={<OrganizerReadinessPage />}
+            element={<OrganizerReadinessPage view="assignments" />}
           />
           <Route path="events/:slug/team" element={<EventTeamPage />} />
           <Route path="events/:slug/settings" element={<EventSettingsPage />} />
@@ -1534,9 +1534,12 @@ function CommunicationTemplateForm({
   );
 }
 
-function OrganizerReadinessPage() {
+function OrganizerReadinessPage({
+  view,
+}: {
+  view: "overview" | "definitions" | "assignments";
+}) {
   const { slug = "" } = useParams();
-  const location = useLocation();
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const board = useQuery(
@@ -1548,7 +1551,7 @@ function OrganizerReadinessPage() {
   const communicationFailures = useQuery(
     trpc.communications.failures.queryOptions(
       { slug },
-      { enabled: location.pathname.endsWith("/task-assignments") },
+      { enabled: view === "assignments" },
     ),
   );
   const refresh = () =>
@@ -1657,11 +1660,6 @@ function OrganizerReadinessPage() {
     ? onboardingTargetOptions(board.data.targets, selectedDefinition.scope)
     : [];
   const eventWindow = board.data.event;
-  const activeView = location.pathname.endsWith("/task-definitions")
-    ? "definitions"
-    : location.pathname.endsWith("/task-assignments")
-      ? "assignments"
-      : "overview";
   const viewCopy = {
     overview: {
       eyebrow: "Readiness overview",
@@ -1679,7 +1677,7 @@ function OrganizerReadinessPage() {
       title: "Assign and resolve readiness work.",
       detail: "Target accepted work, review evidence, and handle exceptions.",
     },
-  }[activeView];
+  }[view];
 
   function addDefinition(event: FormEvent) {
     event.preventDefault();
@@ -1782,7 +1780,7 @@ function OrganizerReadinessPage() {
       {onboardingStatus.success && (
         <MutationStatus success={onboardingStatus.success} />
       )}
-      {activeView === "assignments" &&
+      {view === "assignments" &&
         communicationFailures.data?.some(
           (failure) => failure.purpose === "task_reminder",
         ) && (
@@ -1790,13 +1788,13 @@ function OrganizerReadinessPage() {
             A task reminder failed. Open communications to retry delivery.
           </p>
         )}
-      {activeView === "assignments" && communicationFailures.isError && (
+      {view === "assignments" && communicationFailures.isError && (
         <p className="form-error" role="alert">
           Reminder delivery status is unavailable. Try again before you leave
           task assignments.
         </p>
       )}
-      {activeView === "definitions" && (
+      {view === "definitions" && (
         <div className="onboarding-builders readiness-definition-layout">
           <form className="form-board" onSubmit={addDefinition}>
             <div className="eyebrow">New task definition</div>
@@ -1927,7 +1925,7 @@ function OrganizerReadinessPage() {
           </section>
         </div>
       )}
-      {activeView === "assignments" && (
+      {view === "assignments" && (
         <div className="onboarding-builders readiness-assignment-layout">
           <form className="form-board" onSubmit={addAssignment}>
             <div className="eyebrow">New assignment</div>
@@ -2025,7 +2023,7 @@ function OrganizerReadinessPage() {
           </form>
         </div>
       )}
-      {activeView === "overview" && (
+      {view === "overview" && (
         <section className="readiness-section">
           <div className="eyebrow">Fixed readiness view</div>
           <h2>Program items</h2>
@@ -2076,7 +2074,7 @@ function OrganizerReadinessPage() {
           </div>
         </section>
       )}
-      {activeView === "assignments" && (
+      {view === "assignments" && (
         <section className="assignment-cards">
           {board.data.assignments.map((item) => (
             <article className="task-card" key={item.id}>
