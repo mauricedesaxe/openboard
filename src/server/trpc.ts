@@ -1571,6 +1571,8 @@ function throwAgendaWriteError(error: AgendaWriteError): never {
   }
   const messages: Partial<Record<AgendaWriteError, string>> = {
     agenda_changed: "The working agenda changed. Reload it before publishing.",
+    agenda_item_changed:
+      "This agenda item changed. Reload it before saving your changes.",
     archived_reference:
       "Restore or replace archived rooms and tracks before publishing.",
     invalid_time:

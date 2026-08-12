@@ -1,0 +1,5 @@
+ALTER TABLE agenda_items
+  ADD COLUMN placed INTEGER NOT NULL DEFAULT 1 CHECK (placed IN (0, 1));
+
+ALTER TABLE agenda_items
+  ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;

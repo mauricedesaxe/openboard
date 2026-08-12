@@ -10,7 +10,7 @@ import listPlugin from "@fullcalendar/list";
 import momentTimezonePlugin from "@fullcalendar/moment-timezone";
 import FullCalendar from "@fullcalendar/react";
 import timeGridPlugin from "@fullcalendar/timegrid";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { addDays, toCalendarEvent, trackColor } from "./agenda-calendar-model";
 
@@ -28,7 +28,6 @@ export type AgendaCalendarItem = {
   speakers: Array<{ displayName: string }>;
   canceled?: boolean;
   conflicts?: Array<"room" | "speaker">;
-  saving?: boolean;
 };
 
 type AgendaCalendarProps = {
@@ -81,6 +80,15 @@ export function AgendaCalendar({
   const visibleItems = items.filter(
     (item) => !roomId || item.roomId === roomId || item.roomId === null,
   );
+
+  useEffect(() => {
+    const calendar = calendarRef.current?.getApi();
+    if (!calendar) return;
+    calendar.changeView(view === "list" ? "listAgenda" : "agendaRange", {
+      start: visibleStart,
+      end: visibleEnd,
+    });
+  }, [view, visibleEnd, visibleStart]);
 
   function datesChanged(info: DatesSetArg) {
     const start = info.startStr.slice(0, 10);
@@ -191,7 +199,6 @@ function AgendaEventCard({
           <b key={conflict}>{conflict} conflict</b>
         ))}
         {item.canceled && <b>Canceled</b>}
-        {item.saving && <b>Saving</b>}
       </div>
     </div>
   );
