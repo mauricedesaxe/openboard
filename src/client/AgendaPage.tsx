@@ -9,6 +9,9 @@ import { MutationStatus } from "./MutationStatus";
 import { useMutationStatuses } from "./mutation-feedback";
 import { useTRPC } from "./trpc";
 
+const defaultAgendaStartTime = "09:00";
+const defaultAgendaEndTime = "10:00";
+
 export function AgendaPage() {
   const { slug = "" } = useParams();
   const trpc = useTRPC();
@@ -757,8 +760,8 @@ function agendaTimeWindow(event: {
     ...event,
     min: `${event.startsOn}T00:00`,
     max: `${event.endsOn}T23:59`,
-    defaultStart: `${event.startsOn}T09:00`,
-    defaultEnd: `${event.startsOn}T10:00`,
+    defaultStart: `${event.startsOn}T${defaultAgendaStartTime}`,
+    defaultEnd: `${event.startsOn}T${defaultAgendaEndTime}`,
   };
 }
 
