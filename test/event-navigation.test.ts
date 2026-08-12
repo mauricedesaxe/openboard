@@ -39,6 +39,21 @@ describe("event navigation", () => {
     ).toBe("/events/owner-event/communications/deliveries");
   });
 
+  test("preserves an accessible review subpage when switching events", () => {
+    expect(eventSwitchPath("/events/current/review/decisions", owner)).toBe(
+      "/events/owner-event/review/decisions",
+    );
+    expect(eventSwitchPath("/events/current/review/my-reviews", reviewer)).toBe(
+      "/events/reviewer-event/review/my-reviews",
+    );
+  });
+
+  test("falls back to review when a review subpage is inaccessible", () => {
+    expect(eventSwitchPath("/events/current/review/decisions", reviewer)).toBe(
+      "/events/reviewer-event/review",
+    );
+  });
+
   test("opens Home when the target event cannot access the area", () => {
     expect(eventSwitchPath("/events/current/agenda", reviewer)).toBe(
       "/events/reviewer-event",

@@ -1582,6 +1582,25 @@ a {
 .review-heading p {
   color: rgba(27, 39, 36, 0.62);
 }
+.review-navigation {
+  display: flex;
+  gap: 4px;
+  margin: -30px 0 32px;
+  border-bottom: 1px solid var(--ink);
+  overflow-x: auto;
+}
+.review-navigation a {
+  flex: 0 0 auto;
+  padding: 13px 16px;
+  color: rgba(27, 39, 36, 0.62);
+  font: 11px "DM Mono";
+  text-decoration: none;
+  text-transform: uppercase;
+}
+.review-navigation a.active {
+  color: var(--ink);
+  background: var(--acid);
+}
 .round-control {
   display: flex;
   align-items: center;
@@ -1605,6 +1624,12 @@ a {
   grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.75fr);
   border: 1px solid var(--ink);
   background: rgba(255, 255, 255, 0.2);
+}
+.review-proposal-overview {
+  grid-template-columns: 1fr;
+}
+.review-proposal-overview .review-proposal-copy {
+  border-right: 0;
 }
 .review-proposal-copy,
 .review-controls {
