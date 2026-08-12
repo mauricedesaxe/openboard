@@ -26,7 +26,6 @@ export function eventSwitchPath(
     "cfp",
     "agenda",
     "readiness",
-    "onboarding",
     "communications",
     "settings",
   ]);
