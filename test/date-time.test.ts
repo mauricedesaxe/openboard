@@ -91,10 +91,18 @@ describe("event deadline timezones", () => {
 
   test("defaults a new CFP deadline to the event start in the event timezone", () => {
     expect(
-      defaultCfpDeadline({ startsOn: "2027-08-10", timezone: "Europe/Berlin" }),
+      defaultCfpDeadline({
+        startsOn: "2027-08-10",
+        endsOn: "2027-08-12",
+        timezone: "Europe/Berlin",
+      }),
     ).toBe("2027-08-10T15:00:00.000Z");
     expect(
-      defaultCfpDeadline({ startsOn: "2027-01-10", timezone: "Europe/Berlin" }),
+      defaultCfpDeadline({
+        startsOn: "2027-01-10",
+        endsOn: "2027-01-12",
+        timezone: "Europe/Berlin",
+      }),
     ).toBe("2027-01-10T16:00:00.000Z");
   });
 
@@ -102,9 +110,21 @@ describe("event deadline timezones", () => {
     expect(
       defaultCfpDeadline({
         startsOn: "2027-08-10",
+        endsOn: "2027-08-12",
         timezone: "Europe/Berlin",
         now: new Date("2027-08-10T18:00:00Z"),
       }),
-    ).toBe("2027-08-10T21:59:00.000Z");
+    ).toBe("2027-08-10T18:02:00.000Z");
+  });
+
+  test("leaves no stale CFP deadline after the event", () => {
+    expect(
+      defaultCfpDeadline({
+        startsOn: "2027-08-10",
+        endsOn: "2027-08-12",
+        timezone: "Europe/Berlin",
+        now: new Date("2027-08-12T22:30:00Z"),
+      }),
+    ).toBe("");
   });
 });

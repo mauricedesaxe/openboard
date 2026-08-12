@@ -28,6 +28,7 @@ import {
   instantFallsAfterLocalDate,
   instantFallsBeforeLocalDate,
   isoToEventLocalDateTime,
+  resolveEventLocalDateTime,
 } from "../shared/date-time";
 import type { EventRole, InvitationId } from "../shared/event-team";
 import {
@@ -1113,6 +1114,7 @@ function OrganizerOnboardingPage() {
     required: true,
     dueAt: "",
   });
+  const [assignmentTimeError, setAssignmentTimeError] = useState<string>();
 
   if (board.isPending)
     return <FullPageStatus label="Opening speaker readiness" />;
@@ -1174,19 +1176,31 @@ function OrganizerOnboardingPage() {
               scope: "program_item_speaker",
               submissionSpeakerId: id,
             } as const);
-    const dueAt = assignment.dueAt
-      ? eventLocalDateTimeToIso({
+    const dueAtResolution = assignment.dueAt
+      ? resolveEventLocalDateTime({
           localDateTime: assignment.dueAt,
           timezone: eventWindow.timezone,
         })
-      : null;
-    if (assignment.dueAt && !dueAt) return;
+      : undefined;
+    if (dueAtResolution?.status === "invalid") {
+      setAssignmentTimeError(
+        "Choose a due time that exists in the event timezone.",
+      );
+      return;
+    }
+    if (dueAtResolution?.status === "ambiguous") {
+      setAssignmentTimeError(
+        "Choose a due time that occurs once in the event timezone.",
+      );
+      return;
+    }
+    setAssignmentTimeError(undefined);
     createAssignment.mutate({
       slug,
       taskDefinitionId: selectedDefinition.id,
       target,
       required: assignment.required,
-      dueAt: dueAt ?? null,
+      dueAt: dueAtResolution?.iso ?? null,
     });
   }
 
@@ -1395,6 +1409,11 @@ function OrganizerOnboardingPage() {
               type="datetime-local"
               value={assignment.dueAt}
             />
+            {assignmentTimeError && (
+              <span className="form-error" role="alert">
+                {assignmentTimeError}
+              </span>
+            )}
             {assignment.dueAt.slice(0, 10) > eventWindow.endsOn && (
               <span className="form-warning" role="status">
                 The due date is after the event ends. Check this is intentional.
@@ -1442,7 +1461,7 @@ function OrganizerOnboardingPage() {
               </span>
               <span>
                 {item.nextDueAt
-                  ? new Date(item.nextDueAt).toLocaleString()
+                  ? formatDeadline(item.nextDueAt, eventWindow.timezone)
                   : "No due date"}
               </span>
             </div>
@@ -1465,7 +1484,7 @@ function OrganizerOnboardingPage() {
               </span>
               <span>
                 {speaker.nextDueAt
-                  ? new Date(speaker.nextDueAt).toLocaleString()
+                  ? formatDeadline(speaker.nextDueAt, eventWindow.timezone)
                   : "No due date"}
               </span>
             </div>
@@ -3951,7 +3970,7 @@ function CfpBuilder({
           formats: cfp.formats,
           customFields: cfp.customFields,
         }
-      : emptyCfpDefinition(startsOn, timezone),
+      : emptyCfpDefinition(startsOn, endsOn, timezone),
   );
   const [validationError, setValidationError] = useState<{
     message: string;
@@ -5545,11 +5564,12 @@ function PublicCustomField({
 
 function emptyCfpDefinition(
   startsOn: string,
+  endsOn: string,
   timezone: string,
 ): CfpDefinitionInput {
   return {
     name: "",
-    deadline: defaultCfpDeadline({ startsOn, timezone }),
+    deadline: defaultCfpDeadline({ startsOn, endsOn, timezone }),
     formats: ["Talk", "Workshop"],
     customFields: [],
   };

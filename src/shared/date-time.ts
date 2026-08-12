@@ -1,6 +1,7 @@
 const timezoneCorrectionAttempts = 3;
 const maximumTimezoneOverlapMinutes = 180;
 const millisecondsPerMinute = 60_000;
+const preferredCfpDeadlineTime = "17:00";
 
 export type EventLocalDateTimeResolution =
   | { status: "resolved"; iso: string }
@@ -94,23 +95,28 @@ export function instantFallsBeforeLocalDate(input: {
 
 export function defaultCfpDeadline(input: {
   startsOn: string;
+  endsOn: string;
   timezone: string;
   now?: Date;
 }): string {
   const now = input.now ?? new Date();
-  const nowLocal = isoToEventLocalDateTime({
-    instant: now.toISOString(),
+  const preferred = eventLocalDateTimeToIso({
+    localDateTime: `${input.startsOn}T${preferredCfpDeadlineTime}`,
     timezone: input.timezone,
   });
-  const defaultLocal = `${input.startsOn}T17:00`;
-  const localDateTime =
-    nowLocal.slice(0, 10) === input.startsOn && nowLocal >= defaultLocal
-      ? `${input.startsOn}T23:59`
-      : defaultLocal;
-  return (
-    eventLocalDateTimeToIso({ localDateTime, timezone: input.timezone }) ??
-    `${input.startsOn}T17:00:00.000Z`
+  if (preferred && new Date(preferred) > now) return preferred;
+
+  const nextMinute = new Date(
+    Math.floor(now.getTime() / millisecondsPerMinute) * millisecondsPerMinute +
+      2 * millisecondsPerMinute,
   );
+  const nextLocalDate = isoToEventLocalDateTime({
+    instant: nextMinute.toISOString(),
+    timezone: input.timezone,
+  }).slice(0, 10);
+  return nextLocalDate >= input.startsOn && nextLocalDate <= input.endsOn
+    ? nextMinute.toISOString()
+    : "";
 }
 
 export function formatEventDateRange(startsOn: string, endsOn: string): string {
