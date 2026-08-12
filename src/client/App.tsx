@@ -4,6 +4,7 @@ import type { FormEvent, ReactNode } from "react";
 import {
   Link,
   Navigate,
+  NavLink,
   Route,
   Routes,
   useLocation,
@@ -141,7 +142,13 @@ function SignInRoute({ signedIn }: { signedIn: boolean }) {
 
 function AuthenticatedApp({ email }: { email: string }) {
   const trpc = useTRPC();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const events = useQuery(trpc.events.list.queryOptions());
   const speakerProfile = useQuery(trpc.speakerProfile.getOwn.queryOptions());
+  const activeSlug = eventSlugFromPath(location.pathname);
+  const activeEvent = events.data?.find((event) => event.slug === activeSlug);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [signOutState, setSignOutState] = useState<
     | { status: "idle" }
     | { status: "pending" }
@@ -158,44 +165,71 @@ function AuthenticatedApp({ email }: { email: string }) {
     }
   }
   return (
-    <div className="app-shell">
-      <header className="topbar">
+    <div className={`app-shell ${activeEvent ? "event-shell" : ""}`}>
+      <header className="mobile-topbar">
         <Link className="wordmark" to="/">
           <span className="wordmark-mark">OB</span>
           <span>OpenBoard</span>
         </Link>
-        <div className="account-strip">
-          {speakerProfile.data?.eligible && (
-            <>
-              <Link className="text-button" to="/tasks">
-                My tasks
-              </Link>
-              <Link className="text-button" to="/speaker-profile">
-                Speaker profile
-              </Link>
-            </>
-          )}
-          <span>{email}</span>
-          <button
-            className="text-button"
-            disabled={signOutState.status === "pending"}
-            onClick={() => void signOut()}
-            type="button"
-          >
-            {signOutState.status === "pending" ? "Signing out…" : "Sign out"}
-          </button>
-          {signOutState.status === "error" && (
-            <span className="form-error" role="alert">
-              {signOutState.message}
-            </span>
-          )}
-        </div>
+        <button
+          aria-expanded={drawerOpen}
+          aria-label="Open navigation"
+          className="navigation-toggle"
+          onClick={() => setDrawerOpen((open) => !open)}
+          type="button"
+        >
+          {drawerOpen ? "Close" : "Menu"}
+        </button>
       </header>
-      <main>
+      {drawerOpen && (
+        <button
+          aria-label="Close navigation"
+          className="navigation-scrim"
+          onClick={() => setDrawerOpen(false)}
+          type="button"
+        />
+      )}
+      <aside className={`app-sidebar ${drawerOpen ? "navigation-open" : ""}`}>
+        <AppNavigation
+          activeEvent={activeEvent}
+          email={email}
+          events={events.data ?? []}
+          onNavigate={() => setDrawerOpen(false)}
+          onSignOut={() => void signOut()}
+          onSwitch={(slug) => {
+            const target = events.data?.find((event) => event.slug === slug);
+            if (target)
+              void navigate(eventSwitchPath(location.pathname, target));
+            setDrawerOpen(false);
+          }}
+          signOutPending={signOutState.status === "pending"}
+          speakerProfileEligible={Boolean(speakerProfile.data?.eligible)}
+        />
+        {activeEvent && (
+          <div className="drawer-event-navigation">
+            <EventNavigation
+              event={activeEvent}
+              onNavigate={() => setDrawerOpen(false)}
+            />
+          </div>
+        )}
+      </aside>
+      {activeEvent && (
+        <aside className="event-sidebar">
+          <EventNavigation event={activeEvent} />
+        </aside>
+      )}
+      <main className="workspace-main">
         <Routes>
           <Route index element={<EventIndex />} />
           <Route path="events/new" element={<CreateEventPage />} />
           <Route path="events/:slug" element={<EventPage />} />
+          <Route
+            path="events/:slug/home"
+            element={<Navigate to=".." replace />}
+          />
+          <Route path="events/:slug/tracks" element={<CfpSetupPage />} />
+          <Route path="events/:slug/rooms" element={<CfpSetupPage />} />
           <Route path="events/:slug/cfp/setup" element={<CfpSetupPage />} />
           <Route path="events/:slug/review" element={<ReviewPage />} />
           <Route path="events/:slug/agenda" element={<AgendaPage />} />
@@ -208,6 +242,12 @@ function AuthenticatedApp({ email }: { email: string }) {
             element={<OrganizerOnboardingPage />}
           />
           <Route
+            path="events/:slug/readiness"
+            element={<OrganizerOnboardingPage />}
+          />
+          <Route path="events/:slug/team" element={<EventTeamPage />} />
+          <Route path="events/:slug/settings" element={<EventSettingsPage />} />
+          <Route
             path="submissions/:submissionId"
             element={<SubmissionPage />}
           />
@@ -217,6 +257,204 @@ function AuthenticatedApp({ email }: { email: string }) {
       </main>
     </div>
   );
+}
+
+type NavigationEvent = {
+  name: string;
+  slug: string;
+  access: "owner" | "organizer" | "reviewer";
+  permissions: Array<"organizer" | "reviewer">;
+};
+
+function AppNavigation({
+  activeEvent,
+  email,
+  events,
+  onNavigate,
+  onSignOut,
+  onSwitch,
+  signOutPending,
+}: {
+  activeEvent: NavigationEvent | undefined;
+  email: string;
+  events: NavigationEvent[];
+  onNavigate: () => void;
+  onSignOut: () => void;
+  onSwitch: (slug: string) => void;
+  signOutPending: boolean;
+  speakerProfileEligible: boolean;
+}) {
+  return (
+    <>
+      <Link className="wordmark sidebar-wordmark" onClick={onNavigate} to="/">
+        <span className="wordmark-mark">OB</span>
+        <span>OpenBoard</span>
+      </Link>
+      <nav aria-label="OpenBoard navigation" className="app-navigation">
+        <NavLink onClick={onNavigate} to="/" end>
+          Events
+        </NavLink>
+        {events.length > 0 && (
+          <label className="event-switcher">
+            <span>Active event</span>
+            <select
+              aria-label="Switch active event"
+              onChange={(event) => onSwitch(event.target.value)}
+              value={activeEvent?.slug ?? ""}
+            >
+              {!activeEvent && <option value="">Choose an event</option>}
+              {events.map((event) => (
+                <option key={event.slug} value={event.slug}>
+                  {event.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <NavLink onClick={onNavigate} to="/tasks">
+          My tasks
+        </NavLink>
+        <NavLink onClick={onNavigate} to="/speaker-profile">
+          Speaker profile
+        </NavLink>
+      </nav>
+      <div className="sidebar-account">
+        <span>{email}</span>
+        <button
+          className="text-button"
+          disabled={signOutPending}
+          onClick={onSignOut}
+          type="button"
+        >
+          {signOutPending ? "Signing out…" : "Sign out"}
+        </button>
+      </div>
+    </>
+  );
+}
+
+const organizerNavigation = [
+  { group: "Overview", items: [["Home", ""]] },
+  {
+    group: "Program",
+    items: [
+      ["Tracks", "tracks"],
+      ["Rooms", "rooms"],
+      ["CFP", "cfp/setup"],
+      ["Review", "review"],
+      ["Agenda", "agenda"],
+    ],
+  },
+  { group: "People", items: [["Readiness", "readiness"]] },
+  {
+    group: "Operations",
+    items: [
+      ["Communications", "communications"],
+      ["Settings", "settings"],
+    ],
+  },
+] as const;
+
+function EventNavigation({
+  event,
+  onNavigate,
+}: {
+  event: NavigationEvent;
+  onNavigate?: () => void;
+}) {
+  const trpc = useTRPC();
+  const workspace = useQuery(
+    trpc.events.workspace.queryOptions({ slug: event.slug }),
+  );
+  const badgeCount = (path: string) => {
+    if (!workspace.data) return 0;
+    if (path === "review" && !event.permissions.includes("organizer")) {
+      return workspace.data.reviewer?.remaining ?? 0;
+    }
+    const keys: Record<string, string[]> = {
+      "cfp/setup": ["cfp"],
+      review: ["review", "decisions"],
+      agenda: ["agenda-conflicts", "unplaced"],
+      readiness: ["readiness"],
+      team: ["team"],
+      communications: ["communications"],
+    };
+    return workspace.data.attention
+      .filter((item) => keys[path]?.includes(item.key))
+      .reduce((sum, item) => sum + item.count, 0);
+  };
+  const groups = event.permissions.includes("organizer")
+    ? organizerNavigation.map((group) => ({
+        ...group,
+        items: [...group.items],
+      }))
+    : [
+        { group: "Overview", items: [["Home", ""]] },
+        { group: "Program", items: [["Review", "review"]] },
+      ];
+  if (event.access === "owner") {
+    groups
+      .find((group) => group.group === "People")
+      ?.items.push(["Team", "team"] as never);
+  }
+  return (
+    <nav aria-label={`${event.name} navigation`} className="event-navigation">
+      <div className="event-navigation-title">
+        <span>Active event</span>
+        <strong>{event.name}</strong>
+      </div>
+      {groups.map((group) => (
+        <div className="navigation-group" key={group.group}>
+          <span>{group.group}</span>
+          {group.items.map(([label, path]) => (
+            <NavLink
+              end={path === ""}
+              key={label}
+              onClick={onNavigate}
+              to={`/events/${event.slug}${path ? `/${path}` : ""}`}
+            >
+              <span>{label}</span>
+              {badgeCount(path) > 0 && (
+                <span
+                  className="navigation-badge"
+                  aria-label={`${badgeCount(path)} items need attention`}
+                >
+                  {badgeCount(path)}
+                </span>
+              )}
+            </NavLink>
+          ))}
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+function eventSlugFromPath(pathname: string): string | undefined {
+  return pathname.match(/^\/events\/([^/]+)(?:\/|$)/)?.[1];
+}
+
+function eventSwitchPath(pathname: string, event: NavigationEvent): string {
+  const area = pathname.match(/^\/events\/[^/]+\/([^/]+)/)?.[1] ?? "";
+  const organizerOnly = new Set([
+    "tracks",
+    "rooms",
+    "cfp",
+    "agenda",
+    "readiness",
+    "onboarding",
+    "communications",
+    "settings",
+  ]);
+  const ownerOnly = area === "team";
+  if (
+    (organizerOnly.has(area) && !event.permissions.includes("organizer")) ||
+    (ownerOnly && event.access !== "owner")
+  ) {
+    return `/events/${event.slug}`;
+  }
+  const targetArea = area === "cfp" ? "cfp/setup" : area;
+  return `/events/${event.slug}${targetArea ? `/${targetArea}` : ""}`;
 }
 
 function SignInPage() {
@@ -706,128 +944,181 @@ function CreateEventPage() {
 function EventPage() {
   const { slug = "" } = useParams();
   const trpc = useTRPC();
-  const event = useQuery(trpc.events.get.queryOptions({ slug }));
+  const workspace = useQuery(trpc.events.workspace.queryOptions({ slug }));
 
-  if (event.isPending) return <FullPageStatus label="Opening event" />;
-  if (event.isError)
+  if (workspace.isPending) return <FullPageStatus label="Opening event Home" />;
+  if (workspace.isError)
     return (
       <div className="page">
-        <BoardStatus label="Event unavailable" detail={event.error.message} />
+        <BoardStatus
+          label="Event Home unavailable"
+          detail={workspace.error.message}
+        />
       </div>
     );
 
+  const { event, attention, reviewer, statuses } = workspace.data;
   return (
-    <div className="page event-page">
-      <Link className="arrow-link" to="/">
-        ← All events
-      </Link>
-      <div className="event-title-block">
-        <div className="eyebrow">Working event</div>
-        <h1>{event.data.name}</h1>
+    <div className="page event-home">
+      <div className="event-home-heading">
+        <div className="eyebrow">Event Home</div>
+        <h1>{event.name}</h1>
         <div className="event-meta">
-          <span>
-            {formatEventDateRange(event.data.startsOn, event.data.endsOn)}
-          </span>
-          <span>{event.data.timezone}</span>
-          <span>Private</span>
+          <span>{formatEventDateRange(event.startsOn, event.endsOn)}</span>
+          <span>{event.timezone}</span>
+          <span>{event.access}</span>
         </div>
       </div>
-      <section className="agenda-board">
+      {reviewer && !event.permissions.includes("organizer") ? (
+        <ReviewerHome reviewer={reviewer} slug={slug} />
+      ) : (
+        <>
+          <section className="attention-panel">
+            <div className="attention-heading">
+              <div>
+                <div className="eyebrow">Needs attention</div>
+                <h2>Act on what blocks the event.</h2>
+              </div>
+              <span>
+                {attention.reduce((sum, item) => sum + item.count, 0)}
+              </span>
+            </div>
+            {attention.length === 0 ? (
+              <div className="on-track">
+                <strong>Everything is on track</strong>
+                <span>No current event state needs action.</span>
+              </div>
+            ) : (
+              <div className="attention-list">
+                {attention.map((item) => (
+                  <Link
+                    className={`attention-item attention-${item.severity}`}
+                    key={item.key}
+                    to={item.href}
+                  >
+                    <span className="attention-signal">
+                      {item.severity === "critical"
+                        ? "Action required"
+                        : "Check soon"}
+                    </span>
+                    <div>
+                      <strong>{item.title}</strong>
+                      <p>{item.detail}</p>
+                    </div>
+                    <span aria-hidden="true">→</span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </section>
+          <section className="status-section">
+            <div className="eyebrow">Event status</div>
+            <div className="status-grid">
+              {statuses.map((status) => (
+                <Link
+                  className="status-card"
+                  key={status.key}
+                  to={`/events/${slug}/${status.href}`}
+                >
+                  <span>{status.label}</span>
+                  <strong>{status.value}</strong>
+                  <p>{status.detail}</p>
+                </Link>
+              ))}
+            </div>
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ReviewerHome({
+  reviewer,
+  slug,
+}: {
+  reviewer: {
+    roundStatus: string;
+    remaining: number;
+    assigned: number;
+    deadline: string | null;
+  };
+  slug: string;
+}) {
+  return (
+    <section className="reviewer-home">
+      <div className="eyebrow">Your review round</div>
+      <div className="reviewer-home-grid">
         <div>
-          <div className="eyebrow">Working agenda</div>
-          <h2>Build a conflict-free program.</h2>
+          <span>Round</span>
+          <strong>{reviewer.roundStatus}</strong>
+        </div>
+        <div>
+          <span>Reviews remaining</span>
+          <strong>{reviewer.remaining}</strong>
+        </div>
+        <div>
+          <span>Assigned</span>
+          <strong>{reviewer.assigned}</strong>
+        </div>
+        <div>
+          <span>Deadline</span>
+          <strong>
+            {reviewer.deadline
+              ? reviewer.deadline.slice(0, 10)
+              : "Not available"}
+          </strong>
+        </div>
+      </div>
+      <Link
+        className="primary-button link-button"
+        to={`/events/${slug}/review`}
+      >
+        My reviews
+      </Link>
+    </section>
+  );
+}
+
+function EventTeamPage() {
+  const { slug = "" } = useParams();
+  return (
+    <div className="page">
+      <EventTeamPanel slug={slug} />
+    </div>
+  );
+}
+
+function EventSettingsPage() {
+  const { slug = "" } = useParams();
+  const trpc = useTRPC();
+  const event = useQuery(trpc.events.get.queryOptions({ slug }));
+  if (event.isPending) return <FullPageStatus label="Opening event settings" />;
+  if (event.isError)
+    return (
+      <div className="page">
+        <BoardStatus
+          label="Settings unavailable"
+          detail={event.error.message}
+        />
+      </div>
+    );
+  return (
+    <div className="page">
+      <section className="review-heading">
+        <div>
+          <div className="eyebrow">Settings</div>
+          <h1>{event.data.name}</h1>
           <p>
-            Place accepted program items and service blocks. Working conflicts
-            stay visible until you correct and publish them.
+            {formatEventDateRange(event.data.startsOn, event.data.endsOn)} ·{" "}
+            {event.data.timezone}
           </p>
         </div>
-        {event.data.access !== "reviewer" && (
-          <Link
-            className="primary-button link-button"
-            to={`/events/${slug}/agenda`}
-          >
-            Open working agenda
-          </Link>
-        )}
       </section>
-      {event.data.access === "owner" && (
-        <EventTeamPanel slug={event.data.slug} />
-      )}
-      {event.data.access !== "reviewer" && (
-        <section className="setup-callout">
-          <div>
-            <div className="eyebrow">Call for proposals</div>
-            <h2>Shape what speakers send you.</h2>
-            <p>
-              Configure tracks, rooms, formats, and conditional proposal fields
-              before you open the public form.
-            </p>
-          </div>
-          <Link
-            className="primary-button link-button"
-            to={`/events/${slug}/cfp/setup`}
-          >
-            Configure CFP
-          </Link>
-        </section>
-      )}
-      <section className="setup-callout review-callout">
-        <div>
-          <div className="eyebrow">Review and decisions</div>
-          <h2>
-            {event.data.access === "reviewer"
-              ? "Score your assigned proposals."
-              : "Move proposals into the program."}
-          </h2>
-          <p>
-            {event.data.access === "reviewer"
-              ? "Your assignments stay blinded and editable while the round is open."
-              : "Assign reviewers, watch progress, queue outcomes, and publish them together."}
-          </p>
-        </div>
-        <Link
-          className="primary-button link-button"
-          to={`/events/${slug}/review`}
-        >
-          Open review board
-        </Link>
-      </section>
-      {event.data.access !== "reviewer" && (
-        <section className="setup-callout onboarding-callout">
-          <div>
-            <div className="eyebrow">Speaker readiness</div>
-            <h2>Turn accepted work into a ready program.</h2>
-            <p>
-              Assign onboarding requirements, review evidence, and see every
-              current blocker without maintaining a separate status field.
-            </p>
-          </div>
-          <Link
-            className="primary-button link-button"
-            to={`/events/${slug}/onboarding`}
-          >
-            Open readiness
-          </Link>
-        </section>
-      )}
-      {event.data.access !== "reviewer" && (
-        <section className="setup-callout">
-          <div>
-            <div className="eyebrow">Communications</div>
-            <h2>Control what each workflow sends.</h2>
-            <p>
-              Edit message templates and retry failed delivery without changing
-              domain state.
-            </p>
-          </div>
-          <Link
-            className="primary-button link-button"
-            to={`/events/${slug}/communications`}
-          >
-            Open communications
-          </Link>
-        </section>
-      )}
+      <BoardStatus
+        label="Event details"
+        detail="Event identity, dates, and timezone are the current workspace settings."
+      />
     </div>
   );
 }
@@ -1750,6 +2041,7 @@ function SpeakerTasksPage() {
   >({});
   const [uploadingFor, setUploadingFor] = useState<string>();
   const [uploadError, setUploadError] = useState<string>();
+  const [eventFilter, setEventFilter] = useState("all");
 
   if (tasks.isPending) return <FullPageStatus label="Opening your tasks" />;
   if (tasks.isError) {
@@ -1795,6 +2087,15 @@ function SpeakerTasksPage() {
     }
   }
 
+  const filteredTasks = tasks.data.filter(
+    (task) => eventFilter === "all" || task.eventSlug === eventFilter,
+  );
+  const taskEvents = [
+    ...new Map(
+      tasks.data.map((task) => [task.eventSlug, task.eventName]),
+    ).entries(),
+  ];
+
   return (
     <div className="page onboarding-page">
       <Link className="arrow-link" to="/">
@@ -1814,6 +2115,22 @@ function SpeakerTasksPage() {
         error={taskStatus.error ?? uploadError}
         success={taskStatus.success}
       />
+      {taskEvents.length > 1 && (
+        <label className="task-event-filter">
+          <span>Filter by event</span>
+          <select
+            onChange={(event) => setEventFilter(event.target.value)}
+            value={eventFilter}
+          >
+            <option value="all">All events</option>
+            {taskEvents.map(([slug, name]) => (
+              <option key={slug} value={slug}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {tasks.data.length === 0 && (
         <BoardStatus
           label="No onboarding tasks"
@@ -1821,14 +2138,14 @@ function SpeakerTasksPage() {
         />
       )}
       <section className="assignment-cards">
-        {tasks.data.map((task) => {
+        {filteredTasks.map((task) => {
           const fields = task.formFields ?? [];
           return (
             <article className="task-card" key={task.id}>
               <div>
                 <div className="eyebrow">
-                  {task.required ? "Required" : "Optional"} · Revision{" "}
-                  {task.completionRevision}
+                  {task.eventName} · {task.required ? "Required" : "Optional"} ·
+                  Revision {task.completionRevision}
                 </div>
                 <h2>{task.name}</h2>
                 <p>

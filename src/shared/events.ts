@@ -4,6 +4,7 @@ export type EventId = string & { readonly __brand: "EventId" };
 export type RoomId = string & { readonly __brand: "RoomId" };
 export type UserId = string & { readonly __brand: "UserId" };
 export type EventAccess = "owner" | "organizer" | "reviewer";
+export type EventPermission = "organizer" | "reviewer";
 
 export const roomIdSchema = z.uuid().transform((value) => value as RoomId);
 
@@ -76,6 +77,7 @@ export const eventSchema = eventInputSchema.extend({
   ownerUserId: z.string().transform((value) => value as UserId),
   agendaId: z.string(),
   access: z.enum(["owner", "organizer", "reviewer"]),
+  permissions: z.array(z.enum(["organizer", "reviewer"])),
 });
 
 export type Event = z.infer<typeof eventSchema>;
