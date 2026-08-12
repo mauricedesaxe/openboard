@@ -166,6 +166,7 @@ export async function listOwnReviewAssignments(
   database: Database,
   userId: UserId,
   slug: string,
+  reviewRoundId?: string,
 ) {
   return database
     .select({
@@ -204,6 +205,9 @@ export async function listOwnReviewAssignments(
       and(
         eq(events.slug, slug),
         eq(reviewerAssignments.reviewerUserId, userId),
+        reviewRoundId
+          ? eq(reviewerAssignments.reviewRoundId, reviewRoundId)
+          : undefined,
         isNull(reviewerAssignments.revokedAt),
         eq(submissions.status, "active"),
       ),
