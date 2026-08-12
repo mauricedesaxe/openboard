@@ -268,7 +268,7 @@ function organizerAttention(
         `${state.communications.length} ${state.communications.length === 1 ? "communication failed" : "communications failed"}`,
         "Retry delivery or inspect the terminal failure.",
         state.communications.length,
-        route("communications"),
+        route("communications/deliveries"),
         null,
       ),
     );
@@ -422,7 +422,9 @@ function communicationStatus(communications: OrganizerState["communications"]) {
     detail: communications?.length
       ? "Delivery needs attention"
       : "Delivery is clear",
-    href: "communications",
+    href: communications?.length
+      ? "communications/deliveries"
+      : "communications",
   };
 }
 

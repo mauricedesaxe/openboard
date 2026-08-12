@@ -29,6 +29,7 @@ import {
   type CfpDefinitionInput,
   type CustomField,
 } from "../shared/cfps";
+import type { CommunicationPurpose } from "../shared/communications";
 import {
   defaultCfpDeadline,
   eventLocalDateTimeToIso,
@@ -42,9 +43,11 @@ import { ORGANIZER_CFP_AREA } from "../shared/event-routes";
 import type { EventRole, InvitationId } from "../shared/event-team";
 import {
   eventInputSchema,
+  eventSettingsInputSchema,
   listTimezones,
   slugifyEventName,
   type EventInput,
+  type EventSettingsInput,
 } from "../shared/events";
 import { MAX_STORED_FILE_BYTES } from "../shared/files";
 import {
@@ -257,7 +260,7 @@ function AuthenticatedApp({ email }: { email: string }) {
           <Route path="events/:slug/review" element={<ReviewPage />} />
           <Route path="events/:slug/agenda" element={<AgendaPage />} />
           <Route
-            path="events/:slug/communications"
+            path="events/:slug/communications/*"
             element={<CommunicationSettingsPage />}
           />
           <Route
@@ -1083,7 +1086,7 @@ function EventTeamPage() {
       </div>
     );
   return (
-    <div className="page">
+    <div className="page team-page">
       <EventTeamPanel slug={slug} />
     </div>
   );
@@ -1103,22 +1106,158 @@ function EventSettingsPage() {
         />
       </div>
     );
+  if (event.data.access === "reviewer")
+    return (
+      <div className="page">
+        <BoardStatus
+          label="Settings unavailable"
+          detail="Only the event owner or an organizer can manage event settings."
+        />
+      </div>
+    );
+  return <EventSettingsForm event={event.data} key={event.data.slug} />;
+}
+
+function EventSettingsForm({
+  event,
+}: {
+  event: {
+    access: "owner" | "organizer" | "reviewer";
+    name: string;
+    slug: string;
+    startsOn: string;
+    endsOn: string;
+    timezone: string;
+  };
+}) {
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const [input, setInput] = useState<EventSettingsInput>({
+    name: event.name,
+    slug: event.slug,
+    startsOn: event.startsOn,
+    endsOn: event.endsOn,
+    timezone: event.timezone,
+  });
+  const [validationError, setValidationError] = useState<string>();
+  const updateSettings = useMutation(
+    trpc.events.updateSettings.mutationOptions({
+      onSuccess: async () => {
+        await Promise.all([
+          queryClient.invalidateQueries(
+            trpc.events.get.queryFilter({ slug: event.slug }),
+          ),
+          queryClient.invalidateQueries(
+            trpc.events.workspace.queryFilter({ slug: event.slug }),
+          ),
+          queryClient.invalidateQueries(trpc.events.list.queryFilter()),
+        ]);
+      },
+    }),
+  );
+  const updateStatus = useMutationStatuses([
+    {
+      mutation: updateSettings,
+      mutationKey: trpc.events.updateSettings.mutationKey(),
+      success: "Event settings saved",
+    },
+  ]);
+
+  function update<K extends keyof EventSettingsInput>(
+    field: K,
+    value: EventSettingsInput[K],
+  ) {
+    setInput((current) => ({ ...current, [field]: value }));
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const parsed = eventSettingsInputSchema.safeParse(input);
+    if (!parsed.success) {
+      setValidationError(formatEventValidationError(parsed.error.issues[0]));
+      return;
+    }
+
+    setValidationError(undefined);
+    updateSettings.mutate(parsed.data);
+  }
+
   return (
     <div className="page">
       <section className="review-heading">
         <div>
           <div className="eyebrow">Settings</div>
-          <h1>{event.data.name}</h1>
+          <h1>{event.name}</h1>
           <p>
-            {formatEventDateRange(event.data.startsOn, event.data.endsOn)} ·{" "}
-            {event.data.timezone}
+            {formatEventDateRange(event.startsOn, event.endsOn)} ·{" "}
+            {event.timezone}
           </p>
         </div>
       </section>
-      <BoardStatus
-        label="Event details"
-        detail="Event identity, dates, and timezone are the current workspace settings."
+      <MutationStatus
+        error={updateStatus.error}
+        success={updateStatus.success}
       />
+      <form className="form-board settings-form" onSubmit={submit}>
+        <Field label="Event name" name="settings-name">
+          <input
+            id="settings-name"
+            onChange={(change) => update("name", change.target.value)}
+            required
+            value={input.name}
+          />
+        </Field>
+        <div className="field-pair">
+          <Field label="Starts" name="settings-startsOn">
+            <input
+              id="settings-startsOn"
+              onChange={(change) => update("startsOn", change.target.value)}
+              required
+              type="date"
+              value={input.startsOn}
+            />
+          </Field>
+          <Field label="Ends" name="settings-endsOn">
+            <input
+              id="settings-endsOn"
+              min={input.startsOn}
+              onChange={(change) => update("endsOn", change.target.value)}
+              required
+              type="date"
+              value={input.endsOn}
+            />
+          </Field>
+        </div>
+        <Field
+          hint="All deadlines and agenda times use this zone"
+          label="Timezone"
+          name="settings-timezone"
+        >
+          <select
+            id="settings-timezone"
+            onChange={(change) => update("timezone", change.target.value)}
+            value={input.timezone}
+          >
+            {listTimezones().map((timezone) => (
+              <option key={timezone} value={timezone}>
+                {timezone}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {(validationError || updateSettings.error) && (
+          <p className="form-error" role="alert">
+            {validationError ?? updateSettings.error?.message}
+          </p>
+        )}
+        <button
+          className="primary-button"
+          disabled={updateSettings.isPending}
+          type="submit"
+        >
+          {updateSettings.isPending ? "Saving…" : "Save event settings"}
+        </button>
+      </form>
     </div>
   );
 }
@@ -1127,12 +1266,6 @@ function CommunicationSettingsPage() {
   const { slug = "" } = useParams();
   const trpc = useTRPC();
   const queryClient = useQueryClient();
-  const templates = useQuery(
-    trpc.communications.templates.queryOptions({ slug }),
-  );
-  const failures = useQuery(
-    trpc.communications.failures.queryOptions({ slug }),
-  );
   const refreshTemplates = () =>
     queryClient.invalidateQueries(
       trpc.communications.templates.queryFilter({ slug }),
@@ -1162,103 +1295,177 @@ function CommunicationSettingsPage() {
       success: "Delivery retry queued",
     },
   ]);
-  if (templates.isPending || failures.isPending) {
-    return <FullPageStatus label="Opening communications" />;
-  }
-  if (templates.isError || failures.isError) {
-    return (
-      <div className="page">
-        <BoardStatus
-          label="Communications unavailable"
-          detail={(templates.error ?? failures.error)?.message ?? "Try again."}
-        />
-      </div>
-    );
-  }
   return (
     <div className="page">
-      <Link className="arrow-link" to={`/events/${slug}`}>
-        ← Back to event
-      </Link>
       <section className="review-heading">
         <div>
           <div className="eyebrow">Communications</div>
-          <h1>Message templates and delivery</h1>
-          <p>
-            Template changes apply only to communications created afterward.
-          </p>
+          <h1>Keep every message moving.</h1>
+          <p>Edit future messages or recover failed delivery.</p>
         </div>
       </section>
+      <nav aria-label="Communications" className="local-navigation">
+        <NavLink end to={`/events/${slug}/communications`}>
+          Templates
+        </NavLink>
+        <NavLink to={`/events/${slug}/communications/deliveries`}>
+          Deliveries
+        </NavLink>
+      </nav>
       <MutationStatus
         error={communicationStatus.error}
         success={communicationStatus.success}
       />
+      <Routes>
+        <Route
+          index
+          element={
+            <CommunicationTemplatesPage
+              pendingFor={(purpose) =>
+                communicationStatus.isPendingFor(update, "purpose", purpose)
+              }
+              save={(purpose, subject, body, expectedRevision) =>
+                update.mutate({
+                  slug,
+                  purpose,
+                  subject,
+                  body,
+                  expectedRevision,
+                })
+              }
+              slug={slug}
+            />
+          }
+        />
+        <Route
+          path="deliveries"
+          element={
+            <CommunicationDeliveriesPage
+              pendingFor={(communicationId) =>
+                communicationStatus.isPendingFor(
+                  retry,
+                  "communicationId",
+                  communicationId,
+                )
+              }
+              retry={(communicationId) =>
+                retry.mutate({ slug, communicationId })
+              }
+              slug={slug}
+            />
+          }
+        />
+      </Routes>
+    </div>
+  );
+}
+
+function CommunicationTemplatesPage({
+  pendingFor,
+  save,
+  slug,
+}: {
+  pendingFor: (purpose: string) => boolean;
+  save: (
+    purpose: CommunicationPurpose,
+    subject: string,
+    body: string,
+    expectedRevision: number,
+  ) => void;
+  slug: string;
+}) {
+  const trpc = useTRPC();
+  const templates = useQuery(
+    trpc.communications.templates.queryOptions({ slug }),
+  );
+  if (templates.isPending) return <BoardStatus label="Loading templates" />;
+  if (templates.isError)
+    return (
+      <BoardStatus
+        label="Templates unavailable"
+        detail={templates.error.message}
+      />
+    );
+  return (
+    <section className="communications-section">
+      <div className="section-introduction">
+        <h2>Message templates</h2>
+        <p>Changes apply only to communications created afterward.</p>
+      </div>
       <div className="review-list">
         {templates.data.map((template) => (
           <CommunicationTemplateForm
             key={template.purpose}
             onSave={(subject, body) =>
-              update.mutate({
-                slug,
-                purpose: template.purpose,
-                subject,
-                body,
-                expectedRevision: template.revision,
-              })
+              save(template.purpose, subject, body, template.revision)
             }
-            pending={communicationStatus.isPendingFor(
-              update,
-              "purpose",
-              template.purpose,
-            )}
+            pending={pendingFor(template.purpose)}
             template={template}
           />
         ))}
       </div>
-      <section className="assignment-cards">
+    </section>
+  );
+}
+
+function CommunicationDeliveriesPage({
+  pendingFor,
+  retry,
+  slug,
+}: {
+  pendingFor: (communicationId: string) => boolean;
+  retry: (communicationId: string) => void;
+  slug: string;
+}) {
+  const trpc = useTRPC();
+  const failures = useQuery(
+    trpc.communications.failures.queryOptions({ slug }),
+  );
+  if (failures.isPending) return <BoardStatus label="Loading deliveries" />;
+  if (failures.isError)
+    return (
+      <BoardStatus
+        label="Deliveries unavailable"
+        detail={failures.error.message}
+      />
+    );
+  return (
+    <section className="assignment-cards communications-section">
+      <div className="section-introduction">
         <h2>Failed delivery</h2>
-        {failures.data.length === 0 ? (
-          <p>No retryable failures.</p>
-        ) : (
-          failures.data.map((failure) => (
-            <article className="task-card" key={failure.communicationId}>
-              <div>
-                <div className="eyebrow">{failure.purpose}</div>
-                <h3>{failure.subject}</h3>
-                <p>{failure.error}</p>
-              </div>
-              {failure.status === "failed" ? (
-                <button
-                  className="text-button"
-                  disabled={communicationStatus.isPendingFor(
-                    retry,
-                    "communicationId",
-                    failure.communicationId,
-                  )}
-                  onClick={() =>
-                    retry.mutate({
-                      slug,
-                      communicationId: failure.communicationId,
-                    })
-                  }
-                  type="button"
-                >
-                  {communicationStatus.isPendingFor(
-                    retry,
-                    "communicationId",
-                    failure.communicationId,
-                  )
-                    ? "Queuing…"
-                    : "Retry delivery"}
-                </button>
-              ) : (
-                <span className="eyebrow">Not retryable</span>
-              )}
-            </article>
-          ))
-        )}
-      </section>
-    </div>
+        <p>Retry recoverable failures. Terminal failures remain visible.</p>
+      </div>
+      {failures.data.length === 0 ? (
+        <BoardStatus
+          label="Delivery is clear"
+          detail="No communication needs a retry."
+        />
+      ) : (
+        failures.data.map((failure) => (
+          <article className="task-card" key={failure.communicationId}>
+            <div>
+              <div className="eyebrow">{failure.purpose}</div>
+              <h3>{failure.subject}</h3>
+              <p>{failure.error}</p>
+            </div>
+            {failure.status === "failed" ? (
+              <button
+                className="text-button"
+                disabled={pendingFor(failure.communicationId)}
+                onClick={() => retry(failure.communicationId)}
+                type="button"
+              >
+                {pendingFor(failure.communicationId)
+                  ? "Queuing…"
+                  : "Retry delivery"}
+              </button>
+            ) : (
+              <span className="eyebrow">Not retryable</span>
+            )}
+          </article>
+        ))
+      )}
+    </section>
   );
 }
 

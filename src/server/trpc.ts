@@ -25,7 +25,12 @@ import {
   revokeEventRoleSchema,
   revokeInvitationSchema,
 } from "../shared/event-team";
-import { eventInputSchema, roomIdSchema, type UserId } from "../shared/events";
+import {
+  eventInputSchema,
+  eventSettingsInputSchema,
+  roomIdSchema,
+  type UserId,
+} from "../shared/events";
 import {
   assignmentInputSchema,
   assignmentReasonSchema,
@@ -95,6 +100,7 @@ import {
   findEventForUser,
   listEventsForUser,
   renameOwnedEvent,
+  updateEventSettings,
 } from "./events/repository";
 import { getEventWorkspace } from "./events/workspace";
 import type { Auth } from "./identity/auth";
@@ -451,6 +457,17 @@ export const appRouter = trpc.router({
           });
         }
 
+        return event;
+      }),
+    updateSettings: authenticatedProcedure
+      .input(eventSettingsInputSchema)
+      .mutation(async ({ ctx, input }) => {
+        const event = await updateEventSettings(
+          ctx.database,
+          ctx.userId,
+          input,
+        );
+        if (!event) throwEventNotFound();
         return event;
       }),
   }),

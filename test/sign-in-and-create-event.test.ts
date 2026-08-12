@@ -37,6 +37,11 @@ describe("sign in and create an event", () => {
       name: "Not signed in",
     });
     expect(unauthenticatedMutation.status).toBe(401);
+    const unauthenticatedSettings = await callTrpc(
+      "events.updateSettings",
+      eventInput,
+    );
+    expect(unauthenticatedSettings.status).toBe(401);
 
     const owner = await signIn("owner@example.com");
     const invalidDates = await callTrpc(
@@ -105,6 +110,12 @@ describe("sign in and create an event", () => {
       unrelated.cookie,
     );
     expect(privateMutation.status).toBe(404);
+    const privateSettings = await callTrpc(
+      "events.updateSettings",
+      { ...eventInput, name: "Not theirs" },
+      unrelated.cookie,
+    );
+    expect(privateSettings.status).toBe(404);
 
     const duplicate = await callTrpc(
       "events.create",
@@ -122,6 +133,62 @@ describe("sign in and create an event", () => {
     expect(getResult(renamed.body, eventSchema)).toMatchObject({
       name: "Northstar 2027",
     });
+
+    const updatedSettings = await callTrpc(
+      "events.updateSettings",
+      {
+        ...eventInput,
+        name: "Northstar Summit",
+        startsOn: "2028-06-20",
+        endsOn: "2028-06-22",
+        timezone: "America/Toronto",
+      },
+      owner.cookie,
+    );
+    expect(updatedSettings.status).toBe(200);
+    expect(getResult(updatedSettings.body, eventSchema)).toMatchObject({
+      name: "Northstar Summit",
+      startsOn: "2028-06-20",
+      endsOn: "2028-06-22",
+      timezone: "America/Toronto",
+    });
+
+    const organizer = await signIn("settings-organizer@example.com");
+    await testEnvironment.DB.prepare(
+      `INSERT INTO event_roles
+       (id, event_id, user_id, role, granted_by_user_id, created_at)
+       VALUES (?, ?, ?, 'organizer', ?, ?)`,
+    )
+      .bind(
+        crypto.randomUUID(),
+        created.id,
+        organizer.userId,
+        owner.userId,
+        Date.now(),
+      )
+      .run();
+    const organizerSettings = await callTrpc(
+      "events.updateSettings",
+      {
+        ...eventInput,
+        name: "Organizer-updated Summit",
+        startsOn: "2028-07-01",
+        endsOn: "2028-07-03",
+      },
+      organizer.cookie,
+    );
+    expect(organizerSettings.status).toBe(200);
+
+    const invalidSettings = await callTrpc(
+      "events.updateSettings",
+      {
+        ...eventInput,
+        startsOn: "2028-06-23",
+        endsOn: "2028-06-22",
+      },
+      owner.cookie,
+    );
+    expect(invalidSettings.status).toBe(400);
   });
 
   test("keeps authenticated session reads outside the anonymous limit", async () => {

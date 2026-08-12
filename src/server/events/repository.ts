@@ -5,6 +5,7 @@ import type {
   EventAccess,
   EventId,
   EventInput,
+  EventSettingsInput,
   EventPermission,
   UserId,
 } from "../../shared/events";
@@ -210,6 +211,28 @@ export async function renameOwnedEvent(
   }
 
   return findOwnedEvent(database, ownerUserId, slug);
+}
+
+export async function updateEventSettings(
+  database: Database,
+  userId: UserId,
+  input: EventSettingsInput,
+): Promise<Event | undefined> {
+  const event = await findEventForOrganizer(database, userId, input.slug);
+  if (!event) return undefined;
+
+  await database
+    .update(events)
+    .set({
+      name: input.name,
+      startsOn: input.startsOn,
+      endsOn: input.endsOn,
+      timezone: input.timezone,
+      updatedAt: new Date(),
+    })
+    .where(eq(events.id, event.id));
+
+  return findEventForUser(database, userId, input.slug);
 }
 
 function selectAccessibleEvents(

@@ -34,6 +34,9 @@ describe("event navigation", () => {
     expect(eventSwitchPath("/events/current/cfp/manage", owner)).toBe(
       "/events/owner-event/cfp/manage",
     );
+    expect(
+      eventSwitchPath("/events/current/communications/deliveries", owner),
+    ).toBe("/events/owner-event/communications/deliveries");
   });
 
   test("opens Home when the target event cannot access the area", () => {

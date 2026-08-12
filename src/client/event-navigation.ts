@@ -15,7 +15,8 @@ export function eventSwitchPath(
   pathname: string,
   event: NavigationEvent,
 ): string {
-  const area = pathname.match(/^\/events\/[^/]+\/([^/]+)/)?.[1] ?? "";
+  const route = pathname.match(/^\/events\/[^/]+\/(.+)$/)?.[1] ?? "";
+  const area = route.split("/")[0] ?? "";
   const organizerOnly = new Set([
     "tracks",
     "rooms",
@@ -33,6 +34,6 @@ export function eventSwitchPath(
   ) {
     return `/events/${event.slug}`;
   }
-  const targetArea = area === "cfp" ? ORGANIZER_CFP_AREA : area;
+  const targetArea = area === "cfp" ? ORGANIZER_CFP_AREA : route;
   return `/events/${event.slug}${targetArea ? `/${targetArea}` : ""}`;
 }
