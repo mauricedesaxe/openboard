@@ -1210,8 +1210,7 @@ export const appRouter = trpc.router({
             code:
               result.error === "not_a_speaker"
                 ? "FORBIDDEN"
-                : result.error === "headshot_conflict" ||
-                    result.error === "profile_conflict"
+                : result.error === "profile_conflict"
                   ? "CONFLICT"
                   : result.error === "invalid_file"
                     ? "BAD_REQUEST"
@@ -1219,13 +1218,11 @@ export const appRouter = trpc.router({
             message:
               result.error === "not_a_speaker"
                 ? "Claim a proposed-speaker invitation before creating a profile."
-                : result.error === "headshot_conflict"
-                  ? "The headshot changed while this profile was saving. Try again."
-                  : result.error === "profile_conflict"
-                    ? "The profile changed while this save was in progress. Try again."
-                    : result.error === "invalid_file"
-                      ? "Choose a valid JPEG, PNG, or WebP image under 10 MB."
-                      : "The speaker profile could not be saved.",
+                : result.error === "profile_conflict"
+                  ? "The profile changed while this save was in progress. Try again."
+                  : result.error === "invalid_file"
+                    ? "Choose a valid JPEG, PNG, or WebP image under 10 MB."
+                    : "The speaker profile could not be saved.",
           });
         }
         return result.value;

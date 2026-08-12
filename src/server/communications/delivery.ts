@@ -16,7 +16,7 @@ const maxAttempts = 8;
 export async function processCommunicationDeliveryWork(
   database: Database,
   config: AppConfig,
-  options: { now?: Date; limit?: number } = {},
+  options: { now?: Date; clock?: () => Date; limit?: number } = {},
 ) {
   const now = currentTime(options);
   const staleClaim = new Date(now.getTime() - claimTimeoutMs);
@@ -163,8 +163,8 @@ export async function processCommunicationDeliveryWork(
   return summary;
 }
 
-function currentTime(options: { now?: Date }): Date {
-  return options.now ?? new Date();
+function currentTime(options: { now?: Date; clock?: () => Date }): Date {
+  return options.clock?.() ?? options.now ?? new Date();
 }
 
 async function finishCommunicationAttempt(

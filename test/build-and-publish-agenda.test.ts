@@ -359,19 +359,24 @@ describe("build and publish an agenda", () => {
       body: "Hello Shared Speaker, Opening systems is at OpenBoard Live.",
     });
 
-    const concurrentUpdatedAt = new Date("2028-01-01T00:00:00.000Z");
+    const profileBeforeConflict = await testEnvironment.DB.prepare(
+      "SELECT updated_at AS updatedAt, revision FROM speaker_profiles WHERE user_id = ?",
+    )
+      .bind(sharedSpeaker.userId)
+      .first<{ updatedAt: number; revision: number }>();
+    expect(profileBeforeConflict).toBeTruthy();
     const putFile = testEnvironment.FILES.put.bind(testEnvironment.FILES);
     const putFileSpy = vi
       .spyOn(testEnvironment.FILES, "put")
       .mockImplementationOnce(async (...arguments_) => {
         const result = await putFile(...arguments_);
         await testEnvironment.DB.prepare(
-          "UPDATE speaker_profiles SET display_name = ?, bio = ?, updated_at = ? WHERE user_id = ?",
+          "UPDATE speaker_profiles SET display_name = ?, bio = ?, revision = revision + 1, updated_at = ? WHERE user_id = ?",
         )
           .bind(
             "Concurrent Speaker",
             "Saved while the headshot uploaded.",
-            concurrentUpdatedAt.getTime(),
+            profileBeforeConflict?.updatedAt,
             sharedSpeaker.userId,
           )
           .run();
@@ -395,29 +400,50 @@ describe("build and publish an agenda", () => {
     putFileSpy.mockRestore();
     expect(conflictingProfileSave).toEqual({
       ok: false,
-      error: "headshot_conflict",
+      error: "profile_conflict",
     });
     expect(
       await testEnvironment.DB.prepare(
-        "SELECT display_name AS displayName, bio FROM speaker_profiles WHERE user_id = ?",
+        "SELECT display_name AS displayName, bio, revision, updated_at AS updatedAt FROM speaker_profiles WHERE user_id = ?",
       )
         .bind(sharedSpeaker.userId)
         .first(),
     ).toEqual({
       displayName: "Concurrent Speaker",
       bio: "Saved while the headshot uploaded.",
+      revision: (profileBeforeConflict?.revision ?? 0) + 1,
+      updatedAt: profileBeforeConflict?.updatedAt,
     });
 
+    const deliveryClaims: number[] = [];
+    let deliveryClock = new Date("2028-01-01T00:00:00.000Z").getTime();
     const failedDelivery = await processAgendaDeliveryWork(
       createDatabase(testEnvironment.DB),
-      () => Promise.reject(new Error("Calendar transport unavailable")),
+      async (delivery) => {
+        const claim = await testEnvironment.DB.prepare(
+          "SELECT claimed_at AS claimedAt FROM agenda_delivery_work WHERE id = ?",
+        )
+          .bind(delivery.workId)
+          .first<{ claimedAt: number }>();
+        deliveryClaims.push(claim?.claimedAt ?? 0);
+        throw new Error("Calendar transport unavailable");
+      },
       {
         organizerEmail: "calendar@example.com",
-        now: new Date("2028-01-01T00:00:00.000Z"),
+        clock: () => {
+          const current = new Date(deliveryClock);
+          deliveryClock += 3 * 60_000;
+          return current;
+        },
         limit: 100,
       },
     );
     expect(failedDelivery).toEqual({ delivered: 0, failed: 3, superseded: 0 });
+    expect(deliveryClaims).toEqual([
+      new Date("2028-01-01T00:03:00.000Z").getTime(),
+      new Date("2028-01-01T00:09:00.000Z").getTime(),
+      new Date("2028-01-01T00:15:00.000Z").getTime(),
+    ]);
 
     const initialRetries: Array<{
       workId: string;

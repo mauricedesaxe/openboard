@@ -322,6 +322,72 @@ describe("templated communications", () => {
       attemptCount: 1,
       result: "terminal_failure",
     });
+    const leaseBatch = await Promise.all(
+      ["first", "second"].map((name) =>
+        prepareCommunication(database, {
+          eventId: event?.id ?? "",
+          purpose: "submission_confirmation",
+          recipient: {
+            key: `speaker:lease-${name}`,
+            userId: null,
+            invitationId: null,
+            destination: `${name}@example.com`,
+            name,
+          },
+          variables: {
+            eventName: "Communication Conf",
+            submissionTitle: `${name} lease`,
+            recipientName: name,
+          },
+          context: { submissionId: `submission-lease-${name}` },
+          now,
+        }),
+      ),
+    );
+    for (const item of leaseBatch) {
+      await database.batch([...communicationInsertStatements(database, item)]);
+    }
+    const communicationClaims: number[] = [];
+    let communicationClock = new Date("2029-01-05T00:00:00.000Z").getTime();
+    expect(
+      await processCommunicationDeliveryWork(
+        database,
+        {
+          appEnv: "test",
+          appUrl: "https://localhost",
+          authSecret: "test-secret-that-is-at-least-thirty-two-characters",
+          email: {
+            type: "cloudflare",
+            from: "auth@alexlazar.dev",
+            sender: {
+              send: async (message) => {
+                const claim = await testEnvironment.DB.prepare(
+                  `SELECT work.claimed_at AS claimedAt
+                   FROM communication_delivery_work AS work
+                   JOIN communications ON communications.id = work.communication_id
+                   WHERE communications.destination = ?`,
+                )
+                  .bind(message.to)
+                  .first<{ claimedAt: number }>();
+                communicationClaims.push(claim?.claimedAt ?? 0);
+                return { messageId: crypto.randomUUID() };
+              },
+            },
+          },
+        },
+        {
+          clock: () => {
+            const current = new Date(communicationClock);
+            communicationClock += 3 * 60_000;
+            return current;
+          },
+        },
+      ),
+    ).toEqual({ delivered: 2, failed: 0, terminal: 0 });
+    expect(communicationClaims).toEqual([
+      new Date("2029-01-05T00:03:00.000Z").getTime(),
+      new Date("2029-01-05T00:09:00.000Z").getTime(),
+    ]);
     await expect(
       testEnvironment.DB.prepare(
         "UPDATE communications SET subject = 'Changed' WHERE id = ?",
