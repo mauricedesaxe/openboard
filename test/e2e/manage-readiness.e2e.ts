@@ -59,11 +59,14 @@ test("manages readiness across overview, definitions, and assignments", async ({
   await expect(
     page.getByRole("heading", { name: "Reusable requirements" }),
   ).toHaveCount(0);
-
   await page.goBack();
   await expect(page).toHaveURL(`/events/${slug}/readiness/task-definitions`);
   await page.goBack();
   await expect(page).toHaveURL(`/events/${slug}/readiness`);
+  await page.goto(`/events/${slug}/readiness/task-assignments/`);
+  await expect(
+    page.getByRole("heading", { name: "Assign and resolve readiness work." }),
+  ).toBeVisible();
 
   await page.goto(`/events/${slug}/onboarding`);
   await expect(page).toHaveURL(`/events/${slug}/onboarding`);
