@@ -320,7 +320,11 @@ function AppNavigation({
               onChange={(event) => onSwitch(event.target.value)}
               value={activeEvent?.slug ?? ""}
             >
-              {!activeEvent && <option value="">Choose an event</option>}
+              {!activeEvent && (
+                <option key="choose-event" value="">
+                  Choose an event
+                </option>
+              )}
               {events.map((event) => (
                 <option key={event.slug} value={event.slug}>
                   {event.name}
@@ -1128,6 +1132,7 @@ function EventSettingsForm({
     startsOn: string;
     endsOn: string;
     timezone: string;
+    revision: number;
   };
 }) {
   const trpc = useTRPC();
@@ -1138,6 +1143,7 @@ function EventSettingsForm({
     startsOn: event.startsOn,
     endsOn: event.endsOn,
     timezone: event.timezone,
+    expectedRevision: event.revision,
   });
   const [validationError, setValidationError] = useState<string>();
   const updateSettings = useMutation(
@@ -1395,7 +1401,7 @@ function CommunicationTemplatesPage({
       <div className="review-list">
         {templates.data.map((template) => (
           <CommunicationTemplateForm
-            key={template.purpose}
+            key={`${slug}:${template.purpose}`}
             onSave={(subject, body) =>
               save(template.purpose, subject, body, template.revision)
             }
