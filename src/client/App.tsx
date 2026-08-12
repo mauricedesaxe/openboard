@@ -11,6 +11,7 @@ import type { FormEvent, ReactNode } from "react";
 import {
   Link,
   Navigate,
+  NavLink,
   Route,
   Routes,
   useLocation,
@@ -220,8 +221,16 @@ function AuthenticatedApp({ email }: { email: string }) {
             element={<CommunicationSettingsPage />}
           />
           <Route
-            path="events/:slug/onboarding"
-            element={<OrganizerOnboardingPage />}
+            path="events/:slug/readiness"
+            element={<OrganizerReadinessPage />}
+          />
+          <Route
+            path="events/:slug/readiness/task-definitions"
+            element={<OrganizerReadinessPage />}
+          />
+          <Route
+            path="events/:slug/readiness/task-assignments"
+            element={<OrganizerReadinessPage />}
           />
           <Route
             path="submissions/:submissionId"
@@ -811,16 +820,16 @@ function EventPage() {
       {event.data.access !== "reviewer" && (
         <section className="setup-callout onboarding-callout">
           <div>
-            <div className="eyebrow">Speaker readiness</div>
+            <div className="eyebrow">Readiness</div>
             <h2>Turn accepted work into a ready program.</h2>
             <p>
-              Assign onboarding requirements, review evidence, and see every
-              current blocker without maintaining a separate status field.
+              Assign task requirements, review evidence, and see every current
+              blocker without maintaining a separate status field.
             </p>
           </div>
           <Link
             className="primary-button link-button"
-            to={`/events/${slug}/onboarding`}
+            to={`/events/${slug}/readiness`}
           >
             Open readiness
           </Link>
@@ -1033,8 +1042,9 @@ function CommunicationTemplateForm({
   );
 }
 
-function OrganizerOnboardingPage() {
+function OrganizerReadinessPage() {
   const { slug = "" } = useParams();
+  const location = useLocation();
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const board = useQuery(
@@ -1152,6 +1162,29 @@ function OrganizerOnboardingPage() {
     ? onboardingTargetOptions(board.data.targets, selectedDefinition.scope)
     : [];
   const eventWindow = board.data.event;
+  const activeView = location.pathname.endsWith("/task-definitions")
+    ? "definitions"
+    : location.pathname.endsWith("/task-assignments")
+      ? "assignments"
+      : "overview";
+  const viewCopy = {
+    overview: {
+      eyebrow: "Readiness overview",
+      title: "Act on what is blocking the program.",
+      detail: "Completion comes from current evidence, not a status checkbox.",
+    },
+    definitions: {
+      eyebrow: "Task definitions",
+      title: "Define each reusable requirement.",
+      detail:
+        "Definitions set the scope and evidence that assignments require.",
+    },
+    assignments: {
+      eyebrow: "Task assignments",
+      title: "Assign and resolve readiness work.",
+      detail: "Target accepted work, review evidence, and handle exceptions.",
+    },
+  }[activeView];
 
   function addDefinition(event: FormEvent) {
     event.preventDefault();
@@ -1232,455 +1265,524 @@ function OrganizerOnboardingPage() {
       </Link>
       <section className="review-heading">
         <div>
-          <div className="eyebrow">Speaker readiness</div>
-          <h1>Act on what is blocking the program.</h1>
-          <p>Completion comes from current evidence, not a status checkbox.</p>
+          <div className="eyebrow">{viewCopy.eyebrow}</div>
+          <h1>{viewCopy.title}</h1>
+          <p>{viewCopy.detail}</p>
         </div>
       </section>
+      <nav aria-label="Readiness" className="readiness-navigation">
+        <NavLink end to={`/events/${slug}/readiness`}>
+          Overview
+        </NavLink>
+        <NavLink to={`/events/${slug}/readiness/task-definitions`}>
+          Task definitions
+        </NavLink>
+        <NavLink to={`/events/${slug}/readiness/task-assignments`}>
+          Task assignments
+        </NavLink>
+      </nav>
       {onboardingStatus.error && (
         <MutationStatus error={onboardingStatus.error} />
       )}
       {onboardingStatus.success && (
         <MutationStatus success={onboardingStatus.success} />
       )}
-      {communicationFailures.data?.some(
-        (failure) => failure.purpose === "task_reminder",
-      ) && (
-        <p className="form-error" role="alert">
-          A task reminder failed. Open communications to retry delivery.
-        </p>
-      )}
-      {communicationFailures.isError && (
+      {activeView === "assignments" &&
+        communicationFailures.data?.some(
+          (failure) => failure.purpose === "task_reminder",
+        ) && (
+          <p className="form-error" role="alert">
+            A task reminder failed. Open communications to retry delivery.
+          </p>
+        )}
+      {activeView === "assignments" && communicationFailures.isError && (
         <p className="form-error" role="alert">
           Reminder delivery status is unavailable. Try again before you leave
-          onboarding.
+          task assignments.
         </p>
       )}
-      <div className="onboarding-builders">
-        <form className="form-board" onSubmit={addDefinition}>
-          <div className="eyebrow">New task definition</div>
-          <h2>Define the onboarding task</h2>
-          <Field label="Name" name="task-name">
-            <input
-              id="task-name"
-              onChange={(event) =>
-                setDefinition((current) => ({
-                  ...current,
-                  name: event.target.value,
-                }))
-              }
-              required
-              value={definition.name}
-            />
-          </Field>
-          <div className="field-pair">
-            <Field label="Scope" name="task-scope">
-              <select
-                id="task-scope"
-                onChange={(event) =>
-                  setDefinition((current) => ({
-                    ...current,
-                    scope: event.target.value as typeof current.scope,
-                    completionMechanism:
-                      event.target.value !== "event_speaker" &&
-                      current.completionMechanism === "profile"
-                        ? "manual"
-                        : current.completionMechanism,
-                  }))
-                }
-                value={definition.scope}
-              >
-                <option value="event_speaker">Event-speaker task</option>
-                <option value="program_item">Program-item task</option>
-                <option value="program_item_speaker">
-                  Program-item-speaker task
-                </option>
-              </select>
-            </Field>
-            <Field label="Completion" name="task-mechanism">
-              <select
-                id="task-mechanism"
-                onChange={(event) =>
-                  setDefinition((current) => ({
-                    ...current,
-                    completionMechanism: event.target
-                      .value as typeof current.completionMechanism,
-                    scope:
-                      event.target.value === "profile"
-                        ? "event_speaker"
-                        : current.scope,
-                  }))
-                }
-                value={definition.completionMechanism}
-              >
-                <option value="manual">Manual confirmation</option>
-                <option value="profile">Speaker profile</option>
-                <option value="form">Form response</option>
-                <option value="file">File upload</option>
-              </select>
-            </Field>
-          </div>
-          {definition.completionMechanism === "profile" && (
-            <Field label="Profile requirement" name="profile-requirement">
-              <select
-                id="profile-requirement"
-                onChange={(event) =>
-                  setDefinition((current) => ({
-                    ...current,
-                    profileRequirement: event.target
-                      .value as typeof current.profileRequirement,
-                  }))
-                }
-                value={definition.profileRequirement}
-              >
-                <option value="complete">Name and bio</option>
-                <option value="bio">Bio</option>
-                <option value="headshot">Headshot</option>
-              </select>
-            </Field>
-          )}
-          {definition.completionMechanism === "form" && (
-            <Field label="Required question" name="form-label">
+      {activeView === "definitions" && (
+        <div className="onboarding-builders readiness-definition-layout">
+          <form className="form-board" onSubmit={addDefinition}>
+            <div className="eyebrow">New task definition</div>
+            <h2>Define the readiness task</h2>
+            <Field label="Name" name="task-name">
               <input
-                id="form-label"
+                id="task-name"
                 onChange={(event) =>
                   setDefinition((current) => ({
                     ...current,
-                    formLabel: event.target.value,
+                    name: event.target.value,
                   }))
                 }
                 required
-                value={definition.formLabel}
+                value={definition.name}
               />
             </Field>
-          )}
-          <button
-            className="primary-button"
-            disabled={createDefinition.isPending}
-            type="submit"
-          >
-            {createDefinition.isPending
-              ? "Creating…"
-              : "Create task definition"}
-          </button>
-        </form>
-        <form className="form-board" onSubmit={addAssignment}>
-          <div className="eyebrow">New assignment</div>
-          <h2>Target accepted work</h2>
-          <Field label="Task definition" name="assignment-definition">
-            <select
-              id="assignment-definition"
-              onChange={(event) =>
-                setAssignment((current) => ({
-                  ...current,
-                  taskDefinitionId: event.target.value,
-                  target: "",
-                }))
-              }
-              required
-              value={assignment.taskDefinitionId}
-            >
-              <option value="">Choose requirement</option>
-              {board.data.definitions.map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
-                  {candidate.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Target" name="assignment-target">
-            <select
-              disabled={!selectedDefinition}
-              id="assignment-target"
-              onChange={(event) =>
-                setAssignment((current) => ({
-                  ...current,
-                  target: event.target.value,
-                }))
-              }
-              required
-              value={assignment.target}
-            >
-              <option value="">Choose target</option>
-              {targetOptions.map((target) => (
-                <option key={target.value} value={target.value}>
-                  {target.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field
-            hint={`Event runs ${formatEventDateRange(eventWindow.startsOn, eventWindow.endsOn)} · ${eventWindow.timezone}`}
-            label="Due date and time"
-            name="assignment-due"
-          >
-            <input
-              id="assignment-due"
-              onChange={(event) =>
-                setAssignment((current) => ({
-                  ...current,
-                  dueAt: event.target.value,
-                }))
-              }
-              type="datetime-local"
-              value={assignment.dueAt}
-            />
-            {assignmentTimeError && (
-              <span className="form-error" role="alert">
-                {assignmentTimeError}
-              </span>
-            )}
-            {assignment.dueAt.slice(0, 10) > eventWindow.endsOn && (
-              <span className="form-warning" role="status">
-                The due date is after the event ends. Check this is intentional.
-              </span>
-            )}
-          </Field>
-          <label className="publication-selection">
-            <input
-              checked={assignment.required}
-              onChange={(event) =>
-                setAssignment((current) => ({
-                  ...current,
-                  required: event.target.checked,
-                }))
-              }
-              type="checkbox"
-            />
-            Required for readiness
-          </label>
-          <button
-            className="primary-button"
-            disabled={createAssignment.isPending}
-            type="submit"
-          >
-            {createAssignment.isPending ? "Creating…" : "Create assignment"}
-          </button>
-        </form>
-      </div>
-      <section className="readiness-section">
-        <div className="eyebrow">Fixed readiness view</div>
-        <h2>Program items</h2>
-        <div className="readiness-table" role="table">
-          {board.data.readiness.programItems.map((item) => (
-            <div className="readiness-row" key={item.id} role="row">
-              <strong>{item.title}</strong>
-              <span
-                className={`status-chip ${item.ready ? "status-open" : "status-closed"}`}
-              >
-                {item.ready ? "Ready" : "Blocked"}
-              </span>
-              <span>
-                {item.blockers
-                  .map((blocker) => blocker.requirement)
-                  .join(", ") || "No blockers"}
-              </span>
-              <span>
-                {item.nextDueAt
-                  ? formatDeadline(item.nextDueAt, eventWindow.timezone)
-                  : "No due date"}
-              </span>
-            </div>
-          ))}
-        </div>
-        <h2>Speakers</h2>
-        <div className="readiness-table" role="table">
-          {board.data.readiness.speakers.map((speaker) => (
-            <div className="readiness-row" key={speaker.key} role="row">
-              <strong>{speaker.name}</strong>
-              <span
-                className={`status-chip ${speaker.ready ? "status-open" : "status-closed"}`}
-              >
-                {speaker.ready ? "Ready" : "Blocked"}
-              </span>
-              <span>
-                {speaker.blockers
-                  .map((blocker) => blocker.requirement)
-                  .join(", ") || "No blockers"}
-              </span>
-              <span>
-                {speaker.nextDueAt
-                  ? formatDeadline(speaker.nextDueAt, eventWindow.timezone)
-                  : "No due date"}
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
-      <section className="assignment-cards">
-        {board.data.assignments.map((item) => (
-          <article className="task-card" key={item.id}>
-            <div>
-              <div className="eyebrow">Revision {item.completionRevision}</div>
-              <h3>{item.name}</h3>
-              <p>
-                {item.required ? "Required" : "Optional"} ·{" "}
-                {item.completionMechanism}
-              </p>
-              {item.lastReminderAt && (
-                <p>
-                  Last reminder queued{" "}
-                  {new Date(item.lastReminderAt).toLocaleString()}
-                </p>
-              )}
-            </div>
-            <span
-              className={`status-chip ${item.completed ? "status-open" : "status-closed"}`}
-            >
-              {item.completed ? "Complete" : "Incomplete"}
-            </span>
-            <div className="task-actions">
-              <button
-                className="text-button"
-                disabled={onboardingStatus.isPendingFor(
-                  recordReminder,
-                  "assignmentId",
-                  item.id,
-                )}
-                onClick={() => recordReminder.mutate({ assignmentId: item.id })}
-                type="button"
-              >
-                {onboardingStatus.isPendingFor(
-                  recordReminder,
-                  "assignmentId",
-                  item.id,
-                )
-                  ? "Sending…"
-                  : "Send reminder"}
-              </button>
-              <button
-                className="text-button"
-                disabled={onboardingStatus.isPendingFor(
-                  reopen,
-                  "assignmentId",
-                  item.id,
-                )}
-                onClick={() => {
-                  const reason = reasonFor("reopen this assignment");
-                  if (reason) reopen.mutate({ assignmentId: item.id, reason });
-                }}
-                type="button"
-              >
-                {onboardingStatus.isPendingFor(reopen, "assignmentId", item.id)
-                  ? "Reopening…"
-                  : "Reopen"}
-              </button>
-              <button
-                className="text-button"
-                disabled={onboardingStatus.isPendingFor(
-                  waive,
-                  "assignmentId",
-                  item.id,
-                )}
-                onClick={() => {
-                  const reason = reasonFor("waive this assignment");
-                  if (reason) waive.mutate({ assignmentId: item.id, reason });
-                }}
-                type="button"
-              >
-                {onboardingStatus.isPendingFor(waive, "assignmentId", item.id)
-                  ? "Waiving…"
-                  : "Waive"}
-              </button>
-              <button
-                className="text-button"
-                disabled={onboardingStatus.isPendingFor(
-                  override,
-                  "assignmentId",
-                  item.id,
-                )}
-                onClick={() => {
-                  const reason = reasonFor("override this assignment");
-                  if (reason)
-                    override.mutate({ assignmentId: item.id, reason });
-                }}
-                type="button"
-              >
-                {onboardingStatus.isPendingFor(
-                  override,
-                  "assignmentId",
-                  item.id,
-                )
-                  ? "Overriding…"
-                  : "Organizer override"}
-              </button>
-              <button
-                className="text-button"
-                disabled={onboardingStatus.isPendingFor(
-                  cancelAssignment,
-                  "assignmentId",
-                  item.id,
-                )}
-                onClick={() => {
-                  if (window.confirm("Cancel this assignment?")) {
-                    cancelAssignment.mutate({ assignmentId: item.id });
+            <div className="field-pair">
+              <Field label="Scope" name="task-scope">
+                <select
+                  id="task-scope"
+                  onChange={(event) =>
+                    setDefinition((current) => ({
+                      ...current,
+                      scope: event.target.value as typeof current.scope,
+                      completionMechanism:
+                        event.target.value !== "event_speaker" &&
+                        current.completionMechanism === "profile"
+                          ? "manual"
+                          : current.completionMechanism,
+                    }))
                   }
-                }}
-                type="button"
-              >
-                {onboardingStatus.isPendingFor(
-                  cancelAssignment,
-                  "assignmentId",
-                  item.id,
-                )
-                  ? "Canceling…"
-                  : "Cancel assignment"}
-              </button>
+                  value={definition.scope}
+                >
+                  <option value="event_speaker">Event-speaker task</option>
+                  <option value="program_item">Program-item task</option>
+                  <option value="program_item_speaker">
+                    Program-item-speaker task
+                  </option>
+                </select>
+              </Field>
+              <Field label="Completion" name="task-mechanism">
+                <select
+                  id="task-mechanism"
+                  onChange={(event) =>
+                    setDefinition((current) => ({
+                      ...current,
+                      completionMechanism: event.target
+                        .value as typeof current.completionMechanism,
+                      scope:
+                        event.target.value === "profile"
+                          ? "event_speaker"
+                          : current.scope,
+                    }))
+                  }
+                  value={definition.completionMechanism}
+                >
+                  <option value="manual">Manual confirmation</option>
+                  <option value="profile">Speaker profile</option>
+                  <option value="form">Form response</option>
+                  <option value="file">File upload</option>
+                </select>
+              </Field>
             </div>
-            {item.evidence.map((evidence) => (
-              <div className="evidence-row" key={evidence.id}>
-                <span>
-                  {evidence.kind}
-                  {evidence.fileName && evidence.fileId ? (
-                    <>
-                      {" · "}
-                      <a href={`/api/task-files/${evidence.fileId}`}>
-                        {evidence.fileName}
-                      </a>
-                    </>
-                  ) : null}
+            {definition.completionMechanism === "profile" && (
+              <Field label="Profile requirement" name="profile-requirement">
+                <select
+                  id="profile-requirement"
+                  onChange={(event) =>
+                    setDefinition((current) => ({
+                      ...current,
+                      profileRequirement: event.target
+                        .value as typeof current.profileRequirement,
+                    }))
+                  }
+                  value={definition.profileRequirement}
+                >
+                  <option value="complete">Name and bio</option>
+                  <option value="bio">Bio</option>
+                  <option value="headshot">Headshot</option>
+                </select>
+              </Field>
+            )}
+            {definition.completionMechanism === "form" && (
+              <Field label="Required question" name="form-label">
+                <input
+                  id="form-label"
+                  onChange={(event) =>
+                    setDefinition((current) => ({
+                      ...current,
+                      formLabel: event.target.value,
+                    }))
+                  }
+                  required
+                  value={definition.formLabel}
+                />
+              </Field>
+            )}
+            <button
+              className="primary-button"
+              disabled={createDefinition.isPending}
+              type="submit"
+            >
+              {createDefinition.isPending
+                ? "Creating…"
+                : "Create task definition"}
+            </button>
+          </form>
+          <section
+            aria-labelledby="definitions-title"
+            className="definition-list"
+          >
+            <div className="eyebrow">Existing definitions</div>
+            <h2 id="definitions-title">Reusable requirements</h2>
+            {board.data.definitions.length === 0 ? (
+              <p>No task definitions yet.</p>
+            ) : (
+              board.data.definitions.map((candidate) => (
+                <article className="definition-row" key={candidate.id}>
+                  <strong>{candidate.name}</strong>
+                  <span>
+                    {formatTaskScope(candidate.scope)} ·{" "}
+                    {formatCompletionMechanism(candidate.completionMechanism)}
+                  </span>
+                </article>
+              ))
+            )}
+          </section>
+        </div>
+      )}
+      {activeView === "assignments" && (
+        <div className="onboarding-builders readiness-assignment-layout">
+          <form className="form-board" onSubmit={addAssignment}>
+            <div className="eyebrow">New assignment</div>
+            <h2>Target accepted work</h2>
+            <Field label="Task definition" name="assignment-definition">
+              <select
+                id="assignment-definition"
+                onChange={(event) =>
+                  setAssignment((current) => ({
+                    ...current,
+                    taskDefinitionId: event.target.value,
+                    target: "",
+                  }))
+                }
+                required
+                value={assignment.taskDefinitionId}
+              >
+                <option value="">Choose requirement</option>
+                {board.data.definitions.map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    {candidate.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Target" name="assignment-target">
+              <select
+                disabled={!selectedDefinition}
+                id="assignment-target"
+                onChange={(event) =>
+                  setAssignment((current) => ({
+                    ...current,
+                    target: event.target.value,
+                  }))
+                }
+                required
+                value={assignment.target}
+              >
+                <option value="">Choose target</option>
+                {targetOptions.map((target) => (
+                  <option key={target.value} value={target.value}>
+                    {target.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field
+              hint={`Event runs ${formatEventDateRange(eventWindow.startsOn, eventWindow.endsOn)} · ${eventWindow.timezone}`}
+              label="Due date and time"
+              name="assignment-due"
+            >
+              <input
+                id="assignment-due"
+                onChange={(event) =>
+                  setAssignment((current) => ({
+                    ...current,
+                    dueAt: event.target.value,
+                  }))
+                }
+                type="datetime-local"
+                value={assignment.dueAt}
+              />
+              {assignmentTimeError && (
+                <span className="form-error" role="alert">
+                  {assignmentTimeError}
+                </span>
+              )}
+              {assignment.dueAt.slice(0, 10) > eventWindow.endsOn && (
+                <span className="form-warning" role="status">
+                  The due date is after the event ends. Check this is
+                  intentional.
+                </span>
+              )}
+            </Field>
+            <label className="publication-selection">
+              <input
+                checked={assignment.required}
+                onChange={(event) =>
+                  setAssignment((current) => ({
+                    ...current,
+                    required: event.target.checked,
+                  }))
+                }
+                type="checkbox"
+              />
+              Required for readiness
+            </label>
+            <button
+              className="primary-button"
+              disabled={createAssignment.isPending}
+              type="submit"
+            >
+              {createAssignment.isPending ? "Creating…" : "Create assignment"}
+            </button>
+          </form>
+        </div>
+      )}
+      {activeView === "overview" && (
+        <section className="readiness-section">
+          <div className="eyebrow">Fixed readiness view</div>
+          <h2>Program items</h2>
+          <div className="readiness-table" role="table">
+            {board.data.readiness.programItems.map((item) => (
+              <div className="readiness-row" key={item.id} role="row">
+                <strong>{item.title}</strong>
+                <span
+                  className={`status-chip ${item.ready ? "status-open" : "status-closed"}`}
+                >
+                  {item.ready ? "Ready" : "Blocked"}
                 </span>
                 <span>
-                  {evidence.rejectedReason
-                    ? `Rejected: ${evidence.rejectedReason}`
-                    : evidence.supersededBy
-                      ? "Superseded"
-                      : "Current history"}
+                  {item.blockers
+                    .map((blocker) => blocker.requirement)
+                    .join(", ") || "No blockers"}
                 </span>
-                {!evidence.rejectedReason && !evidence.supersededBy && (
-                  <button
-                    className="text-button"
-                    disabled={onboardingStatus.isPendingFor(
-                      rejectEvidence,
-                      "evidenceId",
-                      evidence.id,
-                    )}
-                    onClick={() => {
-                      const reason = reasonFor("reject this evidence");
-                      if (reason)
-                        rejectEvidence.mutate({
-                          evidenceId: evidence.id,
-                          reason,
-                        });
-                    }}
-                    type="button"
-                  >
-                    {onboardingStatus.isPendingFor(
-                      rejectEvidence,
-                      "evidenceId",
-                      evidence.id,
-                    )
-                      ? "Rejecting…"
-                      : "Reject"}
-                  </button>
-                )}
+                <span>
+                  {item.nextDueAt
+                    ? formatDeadline(item.nextDueAt, eventWindow.timezone)
+                    : "No due date"}
+                </span>
               </div>
             ))}
-          </article>
-        ))}
-      </section>
+          </div>
+          <h2>Speakers</h2>
+          <div className="readiness-table" role="table">
+            {board.data.readiness.speakers.map((speaker) => (
+              <div className="readiness-row" key={speaker.key} role="row">
+                <strong>{speaker.name}</strong>
+                <span
+                  className={`status-chip ${speaker.ready ? "status-open" : "status-closed"}`}
+                >
+                  {speaker.ready ? "Ready" : "Blocked"}
+                </span>
+                <span>
+                  {speaker.blockers
+                    .map((blocker) => blocker.requirement)
+                    .join(", ") || "No blockers"}
+                </span>
+                <span>
+                  {speaker.nextDueAt
+                    ? formatDeadline(speaker.nextDueAt, eventWindow.timezone)
+                    : "No due date"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+      {activeView === "assignments" && (
+        <section className="assignment-cards">
+          {board.data.assignments.map((item) => (
+            <article className="task-card" key={item.id}>
+              <div>
+                <div className="eyebrow">
+                  Revision {item.completionRevision}
+                </div>
+                <h3>{item.name}</h3>
+                <p>
+                  {item.required ? "Required" : "Optional"} ·{" "}
+                  {item.completionMechanism}
+                </p>
+                {item.lastReminderAt && (
+                  <p>
+                    Last reminder queued{" "}
+                    {new Date(item.lastReminderAt).toLocaleString()}
+                  </p>
+                )}
+              </div>
+              <span
+                className={`status-chip ${item.completed ? "status-open" : "status-closed"}`}
+              >
+                {item.completed ? "Complete" : "Incomplete"}
+              </span>
+              <div className="task-actions">
+                <button
+                  className="text-button"
+                  disabled={onboardingStatus.isPendingFor(
+                    recordReminder,
+                    "assignmentId",
+                    item.id,
+                  )}
+                  onClick={() =>
+                    recordReminder.mutate({ assignmentId: item.id })
+                  }
+                  type="button"
+                >
+                  {onboardingStatus.isPendingFor(
+                    recordReminder,
+                    "assignmentId",
+                    item.id,
+                  )
+                    ? "Sending…"
+                    : "Send reminder"}
+                </button>
+                <button
+                  className="text-button"
+                  disabled={onboardingStatus.isPendingFor(
+                    reopen,
+                    "assignmentId",
+                    item.id,
+                  )}
+                  onClick={() => {
+                    const reason = reasonFor("reopen this assignment");
+                    if (reason)
+                      reopen.mutate({ assignmentId: item.id, reason });
+                  }}
+                  type="button"
+                >
+                  {onboardingStatus.isPendingFor(
+                    reopen,
+                    "assignmentId",
+                    item.id,
+                  )
+                    ? "Reopening…"
+                    : "Reopen"}
+                </button>
+                <button
+                  className="text-button"
+                  disabled={onboardingStatus.isPendingFor(
+                    waive,
+                    "assignmentId",
+                    item.id,
+                  )}
+                  onClick={() => {
+                    const reason = reasonFor("waive this assignment");
+                    if (reason) waive.mutate({ assignmentId: item.id, reason });
+                  }}
+                  type="button"
+                >
+                  {onboardingStatus.isPendingFor(waive, "assignmentId", item.id)
+                    ? "Waiving…"
+                    : "Waive"}
+                </button>
+                <button
+                  className="text-button"
+                  disabled={onboardingStatus.isPendingFor(
+                    override,
+                    "assignmentId",
+                    item.id,
+                  )}
+                  onClick={() => {
+                    const reason = reasonFor("override this assignment");
+                    if (reason)
+                      override.mutate({ assignmentId: item.id, reason });
+                  }}
+                  type="button"
+                >
+                  {onboardingStatus.isPendingFor(
+                    override,
+                    "assignmentId",
+                    item.id,
+                  )
+                    ? "Overriding…"
+                    : "Organizer override"}
+                </button>
+                <button
+                  className="text-button"
+                  disabled={onboardingStatus.isPendingFor(
+                    cancelAssignment,
+                    "assignmentId",
+                    item.id,
+                  )}
+                  onClick={() => {
+                    if (window.confirm("Cancel this assignment?")) {
+                      cancelAssignment.mutate({ assignmentId: item.id });
+                    }
+                  }}
+                  type="button"
+                >
+                  {onboardingStatus.isPendingFor(
+                    cancelAssignment,
+                    "assignmentId",
+                    item.id,
+                  )
+                    ? "Canceling…"
+                    : "Cancel assignment"}
+                </button>
+              </div>
+              {item.evidence.map((evidence) => (
+                <div className="evidence-row" key={evidence.id}>
+                  <span>
+                    {evidence.kind}
+                    {evidence.fileName && evidence.fileId ? (
+                      <>
+                        {" · "}
+                        <a href={`/api/task-files/${evidence.fileId}`}>
+                          {evidence.fileName}
+                        </a>
+                      </>
+                    ) : null}
+                  </span>
+                  <span>
+                    {evidence.rejectedReason
+                      ? `Rejected: ${evidence.rejectedReason}`
+                      : evidence.supersededBy
+                        ? "Superseded"
+                        : "Current history"}
+                  </span>
+                  {!evidence.rejectedReason && !evidence.supersededBy && (
+                    <button
+                      className="text-button"
+                      disabled={onboardingStatus.isPendingFor(
+                        rejectEvidence,
+                        "evidenceId",
+                        evidence.id,
+                      )}
+                      onClick={() => {
+                        const reason = reasonFor("reject this evidence");
+                        if (reason)
+                          rejectEvidence.mutate({
+                            evidenceId: evidence.id,
+                            reason,
+                          });
+                      }}
+                      type="button"
+                    >
+                      {onboardingStatus.isPendingFor(
+                        rejectEvidence,
+                        "evidenceId",
+                        evidence.id,
+                      )
+                        ? "Rejecting…"
+                        : "Reject"}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </article>
+          ))}
+        </section>
+      )}
     </div>
   );
+}
+
+function formatTaskScope(
+  scope: "event_speaker" | "program_item" | "program_item_speaker",
+): string {
+  if (scope === "event_speaker") return "Event-speaker task";
+  if (scope === "program_item") return "Program-item task";
+  return "Program-item-speaker task";
+}
+
+function formatCompletionMechanism(
+  mechanism: "manual" | "profile" | "form" | "file",
+): string {
+  if (mechanism === "manual") return "Manual confirmation";
+  if (mechanism === "profile") return "Speaker profile";
+  if (mechanism === "form") return "Form response";
+  return "File upload";
 }
 
 function onboardingTargetOptions(
