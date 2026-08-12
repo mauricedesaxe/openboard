@@ -38,6 +38,7 @@ import {
   isoToEventLocalDateTime,
   resolveEventLocalDateTime,
 } from "../shared/date-time";
+import { ORGANIZER_CFP_AREA } from "../shared/event-routes";
 import type { EventRole, InvitationId } from "../shared/event-team";
 import {
   eventInputSchema,
@@ -247,9 +248,12 @@ function AuthenticatedApp({ email }: { email: string }) {
             path="events/:slug/home"
             element={<Navigate to=".." replace />}
           />
-          <Route path="events/:slug/tracks" element={<CfpSetupPage />} />
-          <Route path="events/:slug/rooms" element={<CfpSetupPage />} />
-          <Route path="events/:slug/cfp/setup" element={<CfpSetupPage />} />
+          <Route path="events/:slug/tracks" element={<TracksPage />} />
+          <Route path="events/:slug/rooms" element={<RoomsPage />} />
+          <Route
+            path={`events/:slug/${ORGANIZER_CFP_AREA}`}
+            element={<CfpManagePage />}
+          />
           <Route path="events/:slug/review" element={<ReviewPage />} />
           <Route path="events/:slug/agenda" element={<AgendaPage />} />
           <Route
@@ -351,7 +355,7 @@ const organizerNavigation = [
     items: [
       ["Tracks", "tracks"],
       ["Rooms", "rooms"],
-      ["CFP", "cfp/setup"],
+      ["CFP", ORGANIZER_CFP_AREA],
       ["Review", "review"],
       ["Agenda", "agenda"],
     ],
@@ -383,7 +387,7 @@ function EventNavigation({
       return workspace.data.reviewer?.remaining ?? 0;
     }
     const keys: Record<string, string[]> = {
-      "cfp/setup": ["cfp"],
+      [ORGANIZER_CFP_AREA]: ["cfp"],
       review: ["review", "decisions"],
       agenda: ["agenda-conflicts", "unplaced"],
       readiness: ["readiness"],
@@ -3345,28 +3349,17 @@ function EventTeamPanel({ slug }: { slug: string }) {
 type EventOption = { id: string; name: string; position: number };
 const publicCfpSteps = ["Proposal", "Speakers", "Event questions"] as const;
 
-function CfpSetupPage() {
+function TracksPage() {
   const { slug = "" } = useParams();
   const queryClient = useQueryClient();
   const trpc = useTRPC();
   const event = useQuery(trpc.events.get.queryOptions({ slug }));
   const tracks = useQuery(trpc.tracks.list.queryOptions({ slug }));
-  const rooms = useQuery(trpc.rooms.list.queryOptions({ slug }));
   const cfp = useQuery(trpc.cfps.getSetup.queryOptions({ slug }));
-
   const refreshTracks = async () => {
     await queryClient.invalidateQueries(trpc.tracks.list.queryFilter({ slug }));
     await queryClient.invalidateQueries(
       trpc.cfps.publicByEventSlug.queryFilter({ slug }),
-    );
-  };
-  const refreshRooms = async () => {
-    await queryClient.invalidateQueries(trpc.rooms.list.queryFilter({ slug }));
-    await queryClient.invalidateQueries(
-      trpc.cfps.publicByEventSlug.queryFilter({ slug }),
-    );
-    await queryClient.invalidateQueries(
-      trpc.agendas.working.queryFilter({ slug }),
     );
   };
   const createTrack = useMutation(
@@ -3380,18 +3373,6 @@ function CfpSetupPage() {
   );
   const reorderTracks = useMutation(
     trpc.tracks.reorder.mutationOptions({ onSuccess: refreshTracks }),
-  );
-  const createRoom = useMutation(
-    trpc.rooms.create.mutationOptions({ onSuccess: refreshRooms }),
-  );
-  const updateRoom = useMutation(
-    trpc.rooms.update.mutationOptions({ onSuccess: refreshRooms }),
-  );
-  const archiveRoom = useMutation(
-    trpc.rooms.archive.mutationOptions({ onSuccess: refreshRooms }),
-  );
-  const reorderRooms = useMutation(
-    trpc.rooms.reorder.mutationOptions({ onSuccess: refreshRooms }),
   );
   const optionStatus = useMutationStatuses([
     {
@@ -3414,6 +3395,88 @@ function CfpSetupPage() {
       mutationKey: trpc.tracks.reorder.mutationKey(),
       success: "Tracks reordered",
     },
+  ]);
+
+  if (event.isPending || tracks.isPending || cfp.isPending) {
+    return <FullPageStatus label="Opening tracks" />;
+  }
+  const error = event.error ?? tracks.error ?? cfp.error;
+  if (error) {
+    return (
+      <div className="page">
+        <BoardStatus label="Tracks unavailable" detail={error.message} />
+      </div>
+    );
+  }
+  if (!event.data || !tracks.data || cfp.data === undefined) {
+    return <FullPageStatus label="Opening tracks" />;
+  }
+  const structureLocked = Boolean(
+    cfp.data.open?.structureLocked || cfp.data.draft?.structureLocked,
+  );
+
+  return (
+    <FocusedOptionPage
+      eventName={event.data.name}
+      mutationError={optionStatus.error}
+      mutationSuccess={optionStatus.success}
+      title="Tracks"
+    >
+      <OptionEditor
+        creating={createTrack.isPending}
+        disabled={structureLocked}
+        title="Tracks"
+        detail="Each submission has one track."
+        error={
+          createTrack.error ??
+          updateTrack.error ??
+          archiveTrack.error ??
+          reorderTracks.error
+        }
+        items={tracks.data}
+        archiving={(id) =>
+          optionStatus.isPendingFor(archiveTrack, "trackId", id)
+        }
+        renaming={(id) => optionStatus.isPendingFor(updateTrack, "trackId", id)}
+        reordering={reorderTracks.isPending}
+        onCreate={(name) => createTrack.mutateAsync({ slug, name })}
+        onRename={(id, name) => updateTrack.mutate({ slug, trackId: id, name })}
+        onArchive={(id) => {
+          if (window.confirm("Archive this track?")) {
+            archiveTrack.mutate({ slug, trackId: id });
+          }
+        }}
+        onReorder={(orderedIds) => reorderTracks.mutate({ slug, orderedIds })}
+      />
+    </FocusedOptionPage>
+  );
+}
+
+function RoomsPage() {
+  const { slug = "" } = useParams();
+  const queryClient = useQueryClient();
+  const trpc = useTRPC();
+  const event = useQuery(trpc.events.get.queryOptions({ slug }));
+  const rooms = useQuery(trpc.rooms.list.queryOptions({ slug }));
+  const refreshRooms = async () => {
+    await queryClient.invalidateQueries(trpc.rooms.list.queryFilter({ slug }));
+    await queryClient.invalidateQueries(
+      trpc.agendas.working.queryFilter({ slug }),
+    );
+  };
+  const createRoom = useMutation(
+    trpc.rooms.create.mutationOptions({ onSuccess: refreshRooms }),
+  );
+  const updateRoom = useMutation(
+    trpc.rooms.update.mutationOptions({ onSuccess: refreshRooms }),
+  );
+  const archiveRoom = useMutation(
+    trpc.rooms.archive.mutationOptions({ onSuccess: refreshRooms }),
+  );
+  const reorderRooms = useMutation(
+    trpc.rooms.reorder.mutationOptions({ onSuccess: refreshRooms }),
+  );
+  const optionStatus = useMutationStatuses([
     {
       mutation: createRoom,
       mutationKey: trpc.rooms.create.mutationKey(),
@@ -3436,97 +3499,115 @@ function CfpSetupPage() {
     },
   ]);
 
-  if (event.isPending || tracks.isPending || rooms.isPending || cfp.isPending) {
-    return <FullPageStatus label="Opening CFP setup" />;
+  if (event.isPending || rooms.isPending) {
+    return <FullPageStatus label="Opening rooms" />;
   }
-  const error = event.error ?? tracks.error ?? rooms.error ?? cfp.error;
+  const error = event.error ?? rooms.error;
   if (error) {
     return (
       <div className="page">
-        <BoardStatus label="CFP setup unavailable" detail={error.message} />
+        <BoardStatus label="Rooms unavailable" detail={error.message} />
       </div>
     );
   }
-  if (!event.data || !tracks.data || !rooms.data || cfp.data === undefined) {
-    return <FullPageStatus label="Opening CFP setup" />;
+  if (!event.data || !rooms.data) {
+    return <FullPageStatus label="Opening rooms" />;
   }
-  const structureLocked = Boolean(
-    cfp.data.open?.structureLocked || cfp.data.draft?.structureLocked,
+
+  return (
+    <FocusedOptionPage
+      eventName={event.data.name}
+      mutationError={optionStatus.error}
+      mutationSuccess={optionStatus.success}
+      title="Rooms"
+    >
+      <OptionEditor
+        creating={createRoom.isPending}
+        disabled={false}
+        title="Rooms"
+        detail="Rooms define where agenda items can be placed."
+        error={
+          createRoom.error ??
+          updateRoom.error ??
+          archiveRoom.error ??
+          reorderRooms.error
+        }
+        items={rooms.data}
+        archiving={(id) => optionStatus.isPendingFor(archiveRoom, "roomId", id)}
+        renaming={(id) => optionStatus.isPendingFor(updateRoom, "roomId", id)}
+        reordering={reorderRooms.isPending}
+        onCreate={(name) => createRoom.mutateAsync({ slug, name })}
+        onRename={(id, name) => updateRoom.mutate({ slug, roomId: id, name })}
+        onArchive={(id) => {
+          if (window.confirm("Archive this room?")) {
+            archiveRoom.mutate({ slug, roomId: id });
+          }
+        }}
+        onReorder={(orderedIds) => reorderRooms.mutate({ slug, orderedIds })}
+      />
+    </FocusedOptionPage>
   );
+}
+
+function FocusedOptionPage({
+  children,
+  eventName,
+  mutationError,
+  mutationSuccess,
+  title,
+}: {
+  children: ReactNode;
+  eventName: string;
+  mutationError: string | undefined;
+  mutationSuccess: string | undefined;
+  title: string;
+}) {
+  return (
+    <div className="page setup-page">
+      <section className="page-heading setup-heading">
+        <div>
+          <div className="eyebrow">{eventName}</div>
+          <h1>{title}</h1>
+        </div>
+      </section>
+      <MutationStatus error={mutationError} success={mutationSuccess} />
+      <div className="focused-option-board">{children}</div>
+    </div>
+  );
+}
+
+function CfpManagePage() {
+  const { slug = "" } = useParams();
+  const trpc = useTRPC();
+  const event = useQuery(trpc.events.get.queryOptions({ slug }));
+  const cfp = useQuery(trpc.cfps.getSetup.queryOptions({ slug }));
+
+  if (event.isPending || cfp.isPending) {
+    return <FullPageStatus label="Opening CFP management" />;
+  }
+  const error = event.error ?? cfp.error;
+  if (error) {
+    return (
+      <div className="page">
+        <BoardStatus
+          label="CFP management unavailable"
+          detail={error.message}
+        />
+      </div>
+    );
+  }
+  if (!event.data || cfp.data === undefined) {
+    return <FullPageStatus label="Opening CFP management" />;
+  }
 
   return (
     <div className="page setup-page">
-      <Link className="arrow-link" to={`/events/${slug}`}>
-        ← Back to event
-      </Link>
       <section className="page-heading setup-heading">
         <div>
           <div className="eyebrow">Program intake</div>
           <h1>{event.data.name} CFP</h1>
         </div>
       </section>
-      <MutationStatus
-        error={optionStatus.error}
-        success={optionStatus.success}
-      />
-      <div className="setup-grid">
-        <OptionEditor
-          creating={createTrack.isPending}
-          disabled={structureLocked}
-          title="Tracks"
-          detail="Each submission has one track."
-          error={
-            createTrack.error ??
-            updateTrack.error ??
-            archiveTrack.error ??
-            reorderTracks.error
-          }
-          items={tracks.data}
-          archiving={(id) =>
-            optionStatus.isPendingFor(archiveTrack, "trackId", id)
-          }
-          renaming={(id) =>
-            optionStatus.isPendingFor(updateTrack, "trackId", id)
-          }
-          reordering={reorderTracks.isPending}
-          onCreate={(name) => createTrack.mutateAsync({ slug, name })}
-          onRename={(id, name) =>
-            updateTrack.mutate({ slug, trackId: id, name })
-          }
-          onArchive={(id) => {
-            if (window.confirm("Archive this track?")) {
-              archiveTrack.mutate({ slug, trackId: id });
-            }
-          }}
-          onReorder={(orderedIds) => reorderTracks.mutate({ slug, orderedIds })}
-        />
-        <OptionEditor
-          creating={createRoom.isPending}
-          disabled={false}
-          title="Rooms"
-          detail="Rooms are ready for later agenda placement."
-          error={
-            createRoom.error ??
-            updateRoom.error ??
-            archiveRoom.error ??
-            reorderRooms.error
-          }
-          items={rooms.data}
-          archiving={(id) =>
-            optionStatus.isPendingFor(archiveRoom, "roomId", id)
-          }
-          renaming={(id) => optionStatus.isPendingFor(updateRoom, "roomId", id)}
-          reordering={reorderRooms.isPending}
-          onCreate={(name) => createRoom.mutateAsync({ slug, name })}
-          onRename={(id, name) => updateRoom.mutate({ slug, roomId: id, name })}
-          onArchive={(id) => {
-            if (window.confirm("Archive this room?")) {
-              archiveRoom.mutate({ slug, roomId: id });
-            }
-          }}
-          onReorder={(orderedIds) => reorderRooms.mutate({ slug, orderedIds })}
-        />
-      </div>
       {cfp.data.open && (
         <CfpBuilder
           cfp={cfp.data.open}

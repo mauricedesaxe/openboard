@@ -1,4 +1,9 @@
-import { expect, test, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+} from "@playwright/test";
 
 import { requestSignInCode } from "./support";
 
@@ -10,12 +15,17 @@ test("refreshes the public CFP after its definition changes", async ({
   await page.goto("/");
   await signIn(page, `browser-cfp-owner-${suffix}@example.com`);
   await createEvent(page, slug);
-  await page.goto(`/events/${slug}/cfp/setup`);
+  await page.goto(`/events/${slug}/tracks`);
   await page
     .getByRole("textbox", { name: "New track name" })
     .fill("Web systems");
   await page.getByRole("button", { name: "Add" }).first().click();
   await expect(page.getByText("Track created", { exact: true })).toBeVisible();
+  await page.goto(`/events/${slug}/rooms`);
+  await page.getByRole("textbox", { name: "New room name" }).fill("Studio");
+  await page.getByRole("button", { name: "Add" }).click();
+  await expect(page.getByText("Room created", { exact: true })).toBeVisible();
+  await page.goto(`/events/${slug}/cfp/manage`);
 
   const formats = page.getByRole("textbox", { name: "Formats" });
   await formats.fill("");
@@ -68,7 +78,7 @@ test("defaults and explains the CFP deadline in event time", async ({
   await page.goto("/");
   await signIn(page, `browser-cfp-deadline-owner-${suffix}@example.com`);
   await createEvent(page, slug);
-  await page.goto(`/events/${slug}/cfp/setup`);
+  await page.goto(`/events/${slug}/cfp/manage`);
 
   const deadline = page.getByLabel("Deadline");
   await expect(deadline).toHaveValue("2028-08-10T17:00");
@@ -85,11 +95,12 @@ test("refreshes the public CFP after its tracks change", async ({ page }) => {
   await page.goto("/");
   await signIn(page, `browser-cfp-track-owner-${suffix}@example.com`);
   await createEvent(page, slug);
-  await page.goto(`/events/${slug}/cfp/setup`);
+  await page.goto(`/events/${slug}/tracks`);
   await page
     .getByRole("textbox", { name: "New track name" })
     .fill("Web systems");
   await page.getByRole("button", { name: "Add" }).first().click();
+  await page.goto(`/events/${slug}/cfp/manage`);
   await page.getByRole("textbox", { name: "CFP name" }).fill("Browser CFP");
   await page.getByRole("button", { name: "Create draft" }).click();
   await page.getByRole("button", { name: "Open CFP" }).click();
@@ -98,14 +109,105 @@ test("refreshes the public CFP after its tracks change", async ({ page }) => {
   await expect(page.getByLabel("Track")).toContainText("Web systems");
 
   await page.goBack();
+  await page.goto(`/events/${slug}/tracks`);
   await page
     .getByRole("textbox", { name: "New track name" })
     .fill("AI systems");
   await page.getByRole("button", { name: "Add" }).first().click();
   await expect(page.getByText("Track created", { exact: true })).toBeVisible();
+  await page.goto(`/events/${slug}/cfp/manage`);
   await page.getByRole("link", { name: "View public form →" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByLabel("Track")).toContainText("AI systems");
+});
+
+test("keeps focused routes direct and removes the combined setup route", async ({
+  page,
+}) => {
+  const suffix = `${Date.now()}`;
+  const slug = `browser-focused-routes-${suffix}`;
+  const ownerEmail = `browser-focused-owner-${suffix}@example.com`;
+  await page.goto("/");
+  await signIn(page, ownerEmail);
+  await createEvent(page, slug);
+
+  await page.goto(`/events/${slug}/tracks`);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Tracks" }),
+  ).toBeVisible();
+  await page.goto(`/events/${slug}/rooms`);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Rooms" }),
+  ).toBeVisible();
+  await page.goto(`/events/${slug}/cfp/manage`);
+  await expect(
+    page.getByRole("heading", { name: "Browser CFP Input Conference CFP" }),
+  ).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/events/${slug}/tracks`);
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  const mobileNavigation = page.locator(".app-sidebar.navigation-open");
+  await mobileNavigation
+    .getByRole("navigation", {
+      name: "Browser CFP Input Conference navigation",
+    })
+    .getByRole("link", { name: "CFP" })
+    .click();
+  await expect(page).toHaveURL(`/events/${slug}/cfp/manage`);
+
+  await page.goto(`/events/${slug}/cfp/setup`);
+  await expect(page).toHaveURL(`/events/${slug}/cfp/setup`);
+  await expect(page.locator(".workspace-main")).toBeEmpty();
+});
+
+test("locks track structure after the first submission", async ({ page }) => {
+  const suffix = `${Date.now()}`;
+  const slug = `browser-locked-tracks-${suffix}`;
+  const ownerEmail = `browser-locked-owner-${suffix}@example.com`;
+  await page.goto("/");
+  await signIn(page, ownerEmail);
+  await createEvent(page, slug);
+  const track = await mutate(page.request, "tracks.create", {
+    slug,
+    name: "Web systems",
+  });
+  const cfp = await mutate(page.request, "cfps.createDraft", {
+    slug,
+    name: "Locked CFP",
+    deadline: "2028-08-01T00:00:00Z",
+    formats: ["Talk"],
+    customFields: [],
+  });
+  await mutate(page.request, "cfps.open", {
+    slug,
+    cfpId: cfp.id,
+    name: cfp.name,
+    deadline: cfp.deadline,
+    formats: cfp.formats,
+    customFields: cfp.customFields,
+  });
+  await mutate(page.request, "submissions.submit", {
+    slug,
+    cfpId: cfp.id,
+    clientDraftId: crypto.randomUUID(),
+    title: "A locked structure",
+    abstract: "This proposal locks the event track structure for organizers.",
+    format: "Talk",
+    trackId: track.id,
+    proposedSpeakers: [{ name: "Owner Speaker", email: ownerEmail }],
+    customAnswers: {},
+  });
+
+  await page.goto(`/events/${slug}/tracks`);
+  await expect(
+    page.getByRole("textbox", { name: "New track name" }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("textbox", { name: "track name: Web systems" }),
+  ).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Archive" })).toBeDisabled();
 });
 
 async function signIn(page: Page, email: string) {
@@ -128,4 +230,22 @@ async function createEvent(page: Page, slug: string) {
     },
   });
   expect(response.ok()).toBe(true);
+}
+
+async function mutate(
+  request: APIRequestContext,
+  path: string,
+  input: unknown,
+): Promise<Record<string, unknown>> {
+  const response = await request.post(`/api/trpc/${path}`, { data: input });
+  const body = (await response.json()) as {
+    result?: { data: Record<string, unknown> };
+    error?: { message?: string };
+  };
+  if (!response.ok() || !body.result) {
+    throw new Error(
+      `${path} failed with ${response.status()}: ${body.error?.message ?? "unknown error"}`,
+    );
+  }
+  return body.result.data;
 }

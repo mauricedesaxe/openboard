@@ -1668,6 +1668,11 @@ a {
   border-top: 1px solid var(--ink);
   border-left: 1px solid var(--ink);
 }
+.focused-option-board {
+  max-width: 900px;
+  border-top: 1px solid var(--ink);
+  border-left: 1px solid var(--ink);
+}
 .option-board {
   min-height: 330px;
   padding: clamp(28px, 4vw, 48px);
