@@ -2950,10 +2950,25 @@ function OrganizerReviewBoard({
       submission.status === "active" &&
       submission.review.completed < submission.review.assigned,
   );
-  const submissions = sortReviewSubmissions(
-    board.data.submissions,
-    mode === "overview" ? reviewSort : "original",
-  );
+  const submissions =
+    mode !== "overview" || reviewSort === "original"
+      ? board.data.submissions
+      : board.data.submissions
+          .map((submission, index) => ({ submission, index }))
+          .toSorted((left, right) => {
+            const leftAverage = left.submission.review.average;
+            const rightAverage = right.submission.review.average;
+            if (leftAverage === null) {
+              return rightAverage === null ? left.index - right.index : 1;
+            }
+            if (rightAverage === null) return -1;
+            const direction = reviewSort === "average-asc" ? 1 : -1;
+            return (
+              (leftAverage - rightAverage) * direction ||
+              left.index - right.index
+            );
+          })
+          .map(({ submission }) => submission);
 
   function closeWithConfirmation() {
     if (!hasMissingReviews) {
@@ -3340,26 +3355,6 @@ function OrganizerReviewBoard({
         )}
     </div>
   );
-}
-
-function sortReviewSubmissions<
-  Submission extends { review: { average: number | null } },
->(submissions: Submission[], sort: ReviewSort): Submission[] {
-  if (sort === "original") return submissions;
-  const direction = sort === "average-asc" ? 1 : -1;
-  return submissions
-    .map((submission, index) => ({ submission, index }))
-    .toSorted((left, right) => {
-      const leftAverage = left.submission.review.average;
-      const rightAverage = right.submission.review.average;
-      if (leftAverage === null)
-        return rightAverage === null ? left.index - right.index : 1;
-      if (rightAverage === null) return -1;
-      return (
-        (leftAverage - rightAverage) * direction || left.index - right.index
-      );
-    })
-    .map(({ submission }) => submission);
 }
 
 function reviewSummary(
