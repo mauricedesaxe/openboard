@@ -46,7 +46,7 @@ test("manages readiness across overview, definitions, and assignments", async ({
   await page.getByLabel("Task definition").selectOption({
     label: "Speaker agreement",
   });
-  await page.getByLabel("Target").selectOption({ index: 1 });
+  await page.getByLabel("Target", { exact: true }).selectOption({ index: 1 });
   await page.getByRole("button", { name: "Create assignment" }).click();
   await expect(page.getByText("Assignment created")).toBeVisible();
   await expect(
@@ -59,10 +59,104 @@ test("manages readiness across overview, definitions, and assignments", async ({
   await expect(
     page.getByRole("heading", { name: "Reusable requirements" }),
   ).toHaveCount(0);
+
+  const initialBoard = await query(page.request, "onboarding.organizerBoard", {
+    slug,
+  });
+  const programItem = (
+    initialBoard.targets as {
+      programItems: Array<{ id: string; title: string }>;
+    }
+  ).programItems[0];
+  if (!programItem) throw new Error("Expected readiness program item");
+  const fileDefinition = await mutate(
+    page.request,
+    "onboarding.createDefinition",
+    {
+      slug,
+      name: "Upload slides",
+      scope: "program_item",
+      completionMechanism: "file",
+      profileRequirement: null,
+      formFields: null,
+    },
+  );
+  await mutate(page.request, "onboarding.createAssignment", {
+    slug,
+    taskDefinitionId: fileDefinition.id,
+    target: { scope: "program_item", programItemId: programItem.id },
+    required: true,
+    dueAt: "2028-06-01T10:00:00Z",
+  });
+
+  const speakerEmail = `browser-readiness-speaker-${suffix}@example.com`;
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.goto("/sign-in");
+  await signIn(page, speakerEmail, "Open my board");
+  await page.goto("/tasks");
+  await expect(page.getByText("Any file type up to 10 MB")).toBeVisible();
+  await chooseFile(page, "slides-v1.pdf", "application/pdf", 5);
+  await expect(page.getByText("File uploaded")).toBeVisible();
+  await page.waitForTimeout(10);
+  await chooseFile(page, "slides-v2.pdf", "application/pdf", 6);
+  await expect(page.getByText("Version 1")).toBeVisible();
+  await expect(page.getByText("Version 2")).toBeVisible();
+  await expect(page.getByText("Latest", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Uploaded/)).toHaveCount(2);
+  await expect(page.getByRole("link", { name: "slides-v1.pdf" })).toBeVisible();
+  await chooseFile(
+    page,
+    "too-large.bin",
+    "application/octet-stream",
+    10_000_001,
+  );
+  await expect(
+    page.getByText("Choose a file no larger than 10 MB."),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.goto("/sign-in");
+  await signIn(page, ownerEmail, "Open my board");
+  await page.goto(`/events/${slug}/readiness/task-assignments`);
+  await expect(page.getByText("Showing 2 of 2 assignments")).toBeVisible();
+  await expect(page.getByText(`Target: ${programItem.title}`)).toBeVisible();
+  await expect(page.getByText(/Due Jun 1, 2028/)).toBeVisible();
+  await page.getByLabel("Filter by completion state").selectOption("complete");
+  await expect(page).toHaveURL(/completion=complete/);
+  await expect(page.getByText("Showing 1 of 2 assignments")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Upload slides" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Speaker agreement" }),
+  ).toHaveCount(0);
+  await page.getByLabel("Filter by completion state").selectOption("all");
+  await page.getByLabel("Filter by due state").selectOption("none");
+  await expect(page).toHaveURL(/due=none/);
+  await expect(
+    page.getByRole("heading", { name: "Speaker agreement" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Upload slides" }),
+  ).toHaveCount(0);
+  await page.getByLabel("Filter by due state").selectOption("all");
+  await page
+    .getByLabel("Filter by target")
+    .selectOption(`program_item:${programItem.id}`);
+  await expect(page).toHaveURL(/target=program_item/);
+  await expect(
+    page.getByRole("heading", { name: "Upload slides" }),
+  ).toBeVisible();
+  await expect(page.getByText("Version 1")).toBeVisible();
+  await expect(page.getByText("Version 2")).toBeVisible();
+  await expect(page.getByText("Latest", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "slides-v1.pdf" })).toBeVisible();
   await page.goBack();
-  await expect(page).toHaveURL(`/events/${slug}/readiness/task-definitions`);
+  await expect(page).toHaveURL(`/events/${slug}/readiness/task-assignments`);
+  await page.goto(`/events/${slug}/readiness/task-definitions`);
   await page.goBack();
-  await expect(page).toHaveURL(`/events/${slug}/readiness`);
+  await expect(page).toHaveURL(/readiness\/task-assignments/);
+  await page.goto(`/events/${slug}/readiness`);
   await page.goto(`/events/${slug}/readiness/task-assignments/`);
   await expect(
     page.getByRole("heading", { name: "Assign and resolve readiness work." }),
@@ -72,6 +166,25 @@ test("manages readiness across overview, definitions, and assignments", async ({
   await expect(page).toHaveURL(`/events/${slug}/onboarding`);
   await expect(page.locator("main")).toBeEmpty();
 });
+
+async function chooseFile(
+  page: Page,
+  name: string,
+  type: string,
+  size: number,
+) {
+  await page.getByLabel("Upload current file").evaluate(
+    (input, file) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(
+        new File([new Uint8Array(file.size)], file.name, { type: file.type }),
+      );
+      (input as HTMLInputElement).files = transfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    { name, type, size },
+  );
+}
 
 async function createAcceptedProgramItem(
   page: Page,

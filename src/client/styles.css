@@ -2275,6 +2275,31 @@ a {
   display: grid;
   gap: 22px;
 }
+.assignment-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid var(--ink);
+}
+.assignment-filters label {
+  display: grid;
+  gap: 8px;
+  font: 10px "DM Mono";
+  text-transform: uppercase;
+}
+.assignment-filters select {
+  width: 100%;
+  border: 1px solid var(--line);
+  padding: 10px;
+  background: var(--paper);
+  color: var(--ink);
+}
+.assignment-filter-count {
+  margin: -8px 0 0;
+  color: rgba(27, 39, 36, 0.62);
+  font: 11px "DM Mono";
+}
 .task-card {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) auto;
@@ -2312,6 +2337,14 @@ a {
   padding-top: 16px;
   border-top: 1px solid var(--line);
   font-size: 12px;
+}
+.latest-file {
+  margin-left: 8px;
+  border: 1px solid var(--ink);
+  padding: 3px 6px;
+  background: var(--acid);
+  font: 9px "DM Mono";
+  text-transform: uppercase;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2390,6 +2423,9 @@ a {
     grid-template-columns: 1fr;
   }
   .onboarding-builders {
+    grid-template-columns: 1fr;
+  }
+  .assignment-filters {
     grid-template-columns: 1fr;
   }
   .readiness-navigation {

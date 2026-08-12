@@ -1540,6 +1540,7 @@ function OrganizerReadinessPage({
   view: "overview" | "definitions" | "assignments";
 }) {
   const { slug = "" } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const board = useQuery(
@@ -1639,6 +1640,7 @@ function OrganizerReadinessPage({
     dueAt: "",
   });
   const [assignmentTimeError, setAssignmentTimeError] = useState<string>();
+  const [filterNow] = useState(Date.now);
 
   if (board.isPending)
     return <FullPageStatus label="Opening speaker readiness" />;
@@ -1660,6 +1662,36 @@ function OrganizerReadinessPage({
     ? onboardingTargetOptions(board.data.targets, selectedDefinition.scope)
     : [];
   const eventWindow = board.data.event;
+  const assignmentFilters = {
+    target: searchParams.get("target") ?? "all",
+    due: searchParams.get("due") ?? "all",
+    completion: searchParams.get("completion") ?? "all",
+  };
+  const assignmentTargetOptions = onboardingAssignmentTargetOptions(
+    board.data.targets,
+  );
+  const filteredAssignments = board.data.assignments.filter((item) => {
+    const target = assignmentTargetValue(item);
+    const dueMatches =
+      assignmentFilters.due === "all" ||
+      (assignmentFilters.due === "none" && !item.dueAt) ||
+      (assignmentFilters.due === "overdue" &&
+        item.dueAt !== null &&
+        Date.parse(item.dueAt) < filterNow) ||
+      (assignmentFilters.due === "upcoming" &&
+        item.dueAt !== null &&
+        Date.parse(item.dueAt) >= filterNow);
+    const completionMatches =
+      assignmentFilters.completion === "all" ||
+      (assignmentFilters.completion === "complete" && item.completed) ||
+      (assignmentFilters.completion === "incomplete" && !item.completed);
+    return (
+      (assignmentFilters.target === "all" ||
+        assignmentFilters.target === target) &&
+      dueMatches &&
+      completionMatches
+    );
+  });
   const viewCopy = {
     overview: {
       eyebrow: "Readiness overview",
@@ -1749,6 +1781,18 @@ function OrganizerReadinessPage({
   function reasonFor(action: string): string | undefined {
     const reason = window.prompt(`Reason to ${action}`)?.trim();
     return reason || undefined;
+  }
+
+  function updateAssignmentFilter(
+    name: "target" | "due" | "completion",
+    value: string,
+  ) {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (value === "all") next.delete(name);
+      else next.set(name, value);
+      return next;
+    });
   }
 
   return (
@@ -2076,7 +2120,65 @@ function OrganizerReadinessPage({
       )}
       {view === "assignments" && (
         <section className="assignment-cards">
-          {board.data.assignments.map((item) => (
+          <div className="assignment-filters" aria-label="Assignment filters">
+            <label>
+              <span>Target</span>
+              <select
+                aria-label="Filter by target"
+                onChange={(event) =>
+                  updateAssignmentFilter("target", event.target.value)
+                }
+                value={assignmentFilters.target}
+              >
+                <option value="all">All targets</option>
+                {assignmentTargetOptions.map((target) => (
+                  <option key={target.value} value={target.value}>
+                    {target.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Due state</span>
+              <select
+                aria-label="Filter by due state"
+                onChange={(event) =>
+                  updateAssignmentFilter("due", event.target.value)
+                }
+                value={assignmentFilters.due}
+              >
+                <option value="all">All</option>
+                <option value="overdue">Overdue</option>
+                <option value="upcoming">Upcoming</option>
+                <option value="none">No due date</option>
+              </select>
+            </label>
+            <label>
+              <span>Completion state</span>
+              <select
+                aria-label="Filter by completion state"
+                onChange={(event) =>
+                  updateAssignmentFilter("completion", event.target.value)
+                }
+                value={assignmentFilters.completion}
+              >
+                <option value="all">All</option>
+                <option value="incomplete">Incomplete</option>
+                <option value="complete">Complete</option>
+              </select>
+            </label>
+          </div>
+          <p className="assignment-filter-count" role="status">
+            Showing {filteredAssignments.length} of{" "}
+            {board.data.assignments.length} assignments
+          </p>
+          {filteredAssignments.length === 0 && (
+            <BoardStatus
+              label="No assignments match"
+              detail="Change a filter to see other readiness assignments."
+            />
+          )}
+          {filteredAssignments.map((item) => (
             <article className="task-card" key={item.id}>
               <div>
                 <div className="eyebrow">
@@ -2086,6 +2188,12 @@ function OrganizerReadinessPage({
                 <p>
                   {item.required ? "Required" : "Optional"} ·{" "}
                   {item.completionMechanism}
+                </p>
+                <p>
+                  Target: {assignmentTargetLabel(item, board.data.targets)} ·{" "}
+                  {item.dueAt
+                    ? `Due ${formatDeadline(item.dueAt, eventWindow.timezone)}`
+                    : "No due date"}
                 </p>
                 {item.lastReminderAt && (
                   <p>
@@ -2204,55 +2312,23 @@ function OrganizerReadinessPage({
                     : "Cancel assignment"}
                 </button>
               </div>
-              {item.evidence.map((evidence) => (
-                <div className="evidence-row" key={evidence.id}>
-                  <span>
-                    {evidence.kind}
-                    {evidence.fileName && evidence.fileId ? (
-                      <>
-                        {" · "}
-                        <a href={`/api/task-files/${evidence.fileId}`}>
-                          {evidence.fileName}
-                        </a>
-                      </>
-                    ) : null}
-                  </span>
-                  <span>
-                    {evidence.rejectedReason
-                      ? `Rejected: ${evidence.rejectedReason}`
-                      : evidence.supersededBy
-                        ? "Superseded"
-                        : "Current history"}
-                  </span>
-                  {!evidence.rejectedReason && !evidence.supersededBy && (
-                    <button
-                      className="text-button"
-                      disabled={onboardingStatus.isPendingFor(
-                        rejectEvidence,
-                        "evidenceId",
-                        evidence.id,
-                      )}
-                      onClick={() => {
-                        const reason = reasonFor("reject this evidence");
-                        if (reason)
-                          rejectEvidence.mutate({
-                            evidenceId: evidence.id,
-                            reason,
-                          });
-                      }}
-                      type="button"
-                    >
-                      {onboardingStatus.isPendingFor(
-                        rejectEvidence,
-                        "evidenceId",
-                        evidence.id,
-                      )
-                        ? "Rejecting…"
-                        : "Reject"}
-                    </button>
-                  )}
-                </div>
-              ))}
+              <EvidenceHistory
+                evidence={item.evidence}
+                onReject={(evidenceId) => {
+                  const reason = reasonFor("reject this evidence");
+                  if (reason) rejectEvidence.mutate({ evidenceId, reason });
+                }}
+                pendingEvidenceId={
+                  item.evidence.find((evidence) =>
+                    onboardingStatus.isPendingFor(
+                      rejectEvidence,
+                      "evidenceId",
+                      evidence.id,
+                    ),
+                  )?.id
+                }
+                timezone={eventWindow.timezone}
+              />
             </article>
           ))}
         </section>
@@ -2306,6 +2382,127 @@ function onboardingTargetOptions(
       value: `program_item_speaker:${speaker.id}`,
       label: `${item.title} · ${speaker.name}`,
     })),
+  );
+}
+
+function onboardingAssignmentTargetOptions(targets: {
+  speakers: Array<{ userId: string; name: string }>;
+  programItems: Array<{
+    id: string;
+    title: string;
+    speakers: Array<{ id: string; name: string }>;
+  }>;
+}) {
+  return [
+    ...onboardingTargetOptions(targets, "event_speaker"),
+    ...onboardingTargetOptions(targets, "program_item"),
+    ...onboardingTargetOptions(targets, "program_item_speaker"),
+  ];
+}
+
+function assignmentTargetValue(assignment: {
+  targetUserId: string | null;
+  targetProgramItemId: string | null;
+  targetSubmissionSpeakerId: string | null;
+}): string {
+  if (assignment.targetUserId)
+    return `event_speaker:${assignment.targetUserId}`;
+  if (assignment.targetProgramItemId)
+    return `program_item:${assignment.targetProgramItemId}`;
+  return `program_item_speaker:${assignment.targetSubmissionSpeakerId}`;
+}
+
+function assignmentTargetLabel(
+  assignment: Parameters<typeof assignmentTargetValue>[0],
+  targets: Parameters<typeof onboardingAssignmentTargetOptions>[0],
+): string {
+  const value = assignmentTargetValue(assignment);
+  return (
+    onboardingAssignmentTargetOptions(targets).find(
+      (target) => target.value === value,
+    )?.label ?? "Unavailable target"
+  );
+}
+
+type TaskEvidence = {
+  id: string;
+  kind: string;
+  createdAt: string;
+  rejectedReason: string | null;
+  supersededBy: string | null;
+  fileId: string | null;
+  fileName: string | null;
+};
+
+function EvidenceHistory({
+  evidence,
+  onReject,
+  pendingEvidenceId,
+  timezone,
+}: {
+  evidence: TaskEvidence[];
+  onReject?: (evidenceId: string) => void;
+  pendingEvidenceId?: string | undefined;
+  timezone: string;
+}) {
+  if (evidence.length === 0) return null;
+  const fileEvidence = evidence
+    .filter(
+      (item): item is TaskEvidence & { fileId: string; fileName: string } =>
+        Boolean(item.fileId && item.fileName),
+    )
+    .toSorted(
+      (left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt),
+    );
+  const versions = new Map(
+    fileEvidence.map((item, index) => [item.id, index + 1]),
+  );
+  const latestFile = fileEvidence.findLast((item) => !item.supersededBy);
+  return (
+    <div className="evidence-history">
+      <div className="eyebrow">Evidence history</div>
+      {evidence.map((item) => (
+        <div className="evidence-row" key={item.id}>
+          <span>
+            {item.fileName && item.fileId ? (
+              <>
+                <strong>Version {versions.get(item.id)}</strong> ·{" "}
+                <a href={`/api/task-files/${item.fileId}`}>{item.fileName}</a>
+                {latestFile?.id === item.id && (
+                  <span className="latest-file">Latest</span>
+                )}
+              </>
+            ) : (
+              item.kind
+            )}
+          </span>
+          <span>
+            {item.fileId && (
+              <time dateTime={item.createdAt}>
+                Uploaded {formatDeadline(item.createdAt, timezone)}
+              </time>
+            )}
+            {item.rejectedReason
+              ? `${item.fileId ? " · " : ""}Rejected: ${item.rejectedReason}`
+              : item.supersededBy
+                ? `${item.fileId ? " · " : ""}Superseded`
+                : !item.fileId
+                  ? "Current history"
+                  : ""}
+          </span>
+          {onReject && !item.rejectedReason && !item.supersededBy && (
+            <button
+              className="text-button"
+              disabled={pendingEvidenceId === item.id}
+              onClick={() => onReject(item.id)}
+              type="button"
+            >
+              {pendingEvidenceId === item.id ? "Rejecting…" : "Reject"}
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -2392,6 +2589,10 @@ function SpeakerTasksPage() {
   async function uploadFile(assignmentId: string, file: File | undefined) {
     if (!file || uploadingFor) return;
     setUploadError(undefined);
+    if (file.size > MAX_STORED_FILE_BYTES) {
+      setUploadError("Choose a file no larger than 10 MB.");
+      return;
+    }
     setUploadingFor(assignmentId);
     try {
       const contentBase64 = await browserFileToBase64(file);
@@ -2504,7 +2705,11 @@ function SpeakerTasksPage() {
                 </button>
               )}
               {task.completionMechanism === "file" && (
-                <Field label="Upload current file" name={`file-${task.id}`}>
+                <Field
+                  hint="Any file type up to 10 MB"
+                  label="Upload current file"
+                  name={`file-${task.id}`}
+                >
                   <input
                     disabled={Boolean(uploadingFor)}
                     id={`file-${task.id}`}
@@ -2590,29 +2795,10 @@ function SpeakerTasksPage() {
                   </button>
                 </form>
               )}
-              {task.evidence.length > 0 && (
-                <div className="evidence-history">
-                  <div className="eyebrow">Evidence history</div>
-                  {task.evidence.map((evidence) => (
-                    <p key={evidence.id}>
-                      {evidence.kind}
-                      {evidence.fileName && evidence.fileId ? (
-                        <>
-                          {" · "}
-                          <a href={`/api/task-files/${evidence.fileId}`}>
-                            {evidence.fileName}
-                          </a>
-                        </>
-                      ) : null}
-                      {evidence.rejectedReason
-                        ? ` · Rejected: ${evidence.rejectedReason}`
-                        : evidence.supersededBy
-                          ? " · Superseded"
-                          : ""}
-                    </p>
-                  ))}
-                </div>
-              )}
+              <EvidenceHistory
+                evidence={task.evidence}
+                timezone={task.eventTimezone}
+              />
             </article>
           );
         })}

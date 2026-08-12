@@ -23,6 +23,7 @@ const mineSchema = z.array(
       z.object({
         id: z.string(),
         kind: z.string(),
+        createdAt: z.string(),
         rejectedReason: z.string().nullable(),
         supersededBy: z.string().nullable(),
         fileId: z.string().nullable(),
@@ -39,7 +40,13 @@ const boardSchema = z.object({
       completed: z.boolean(),
       completionRevision: z.number(),
       lastReminderAt: z.string().nullable(),
-      evidence: z.array(z.object({ id: z.string(), kind: z.string() })),
+      evidence: z.array(
+        z.object({
+          id: z.string(),
+          kind: z.string(),
+          createdAt: z.string(),
+        }),
+      ),
     }),
   ),
   targets: z.object({
@@ -572,6 +579,11 @@ describe("complete speaker onboarding tasks", () => {
       slides?.evidence.find((evidence) => evidence.fileName === "slides-v2.pdf")
         ?.supersededBy,
     ).toEqual(expect.any(String));
+    expect(
+      slides?.evidence
+        .filter((evidence) => evidence.fileId)
+        .every((evidence) => !Number.isNaN(Date.parse(evidence.createdAt))),
+    ).toBe(true);
     expect(
       await testEnvironment.DB.prepare(
         "SELECT COUNT(*) AS count FROM stored_files WHERE id IN (SELECT stored_file_id FROM task_assignment_attachments WHERE assignment_id = ?)",
