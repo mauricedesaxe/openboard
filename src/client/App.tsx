@@ -661,6 +661,32 @@ function EventPage() {
   const trpc = useTRPC();
   const event = useQuery(trpc.events.get.queryOptions({ slug }));
 
+  const isOrganizer = event.data?.access !== "reviewer";
+  const disabled = isOrganizer ? {} : { enabled: false };
+
+  const reviewBoard = useQuery(
+    trpc.reviews.organizerBoard.queryOptions({ slug }, disabled),
+  );
+  const onboardingBoard = useQuery(
+    trpc.onboarding.organizerBoard.queryOptions({ slug }, disabled),
+  );
+  const cfpSetup = useQuery(
+    trpc.cfps.getSetup.queryOptions({ slug }, disabled),
+  );
+  const commsFailures = useQuery(
+    trpc.communications.failures.queryOptions({ slug }, disabled),
+  );
+  const workingAgenda = useQuery(
+    trpc.agendas.working.queryOptions({ slug }, disabled),
+  );
+  const team = useQuery(trpc.eventTeam.list.queryOptions({ slug }, disabled));
+  const reviewerAssignments = useQuery(
+    trpc.reviews.mine.queryOptions(
+      { slug },
+      isOrganizer ? { enabled: false } : {},
+    ),
+  );
+
   if (event.isPending) return <FullPageStatus label="Opening event" />;
   if (event.isError)
     return (
@@ -669,118 +695,562 @@ function EventPage() {
       </div>
     );
 
+  if (!isOrganizer) {
+    return (
+      <ReviewerEventWorkspace
+        slug={slug}
+        eventName={event.data.name}
+        startsOn={event.data.startsOn}
+        endsOn={event.data.endsOn}
+        timezone={event.data.timezone}
+        assignments={reviewerAssignments}
+      />
+    );
+  }
+
+  const cfp = cfpSetup.data
+    ? summarizeCfp(cfpSetup.data, event.data.timezone)
+    : undefined;
+  const review = reviewBoard.data
+    ? summarizeReview(reviewBoard.data)
+    : undefined;
+  const readiness = onboardingBoard.data
+    ? summarizeReadiness(onboardingBoard.data)
+    : undefined;
+  const agenda = workingAgenda.data
+    ? summarizeAgenda(workingAgenda.data)
+    : undefined;
+  const comms = commsFailures.data
+    ? { failures: commsFailures.data.length }
+    : undefined;
+  const teamSummary = team.data ? summarizeTeam(team.data) : undefined;
+
+  const attention = collectAttention({
+    cfp,
+    review,
+    readiness,
+    agenda,
+    comms,
+    team: teamSummary,
+  });
+
   return (
-    <div className="page event-page">
-      <Link className="arrow-link" to="/">
-        ← All events
-      </Link>
-      <div className="event-title-block">
-        <div className="eyebrow">Working event</div>
-        <h1>{event.data.name}</h1>
-        <div className="event-meta">
-          <span>{formatDateRange(event.data.startsOn, event.data.endsOn)}</span>
-          <span>{event.data.timezone}</span>
-          <span>Private</span>
-        </div>
-      </div>
-      <section className="agenda-board">
-        <div>
-          <div className="eyebrow">Working agenda</div>
-          <h2>Build a conflict-free program.</h2>
-          <p>
-            Place accepted program items and service blocks. Working conflicts
-            stay visible until you correct and publish them.
-          </p>
-        </div>
-        {event.data.access !== "reviewer" && (
-          <Link
-            className="primary-button link-button"
-            to={`/events/${slug}/agenda`}
-          >
-            Open working agenda
-          </Link>
-        )}
-      </section>
-      {event.data.access === "owner" && (
-        <EventTeamPanel slug={event.data.slug} />
-      )}
-      {event.data.access !== "reviewer" && (
-        <section className="setup-callout">
-          <div>
-            <div className="eyebrow">Call for proposals</div>
-            <h2>Shape what speakers send you.</h2>
-            <p>
-              Configure tracks, rooms, formats, and conditional proposal fields
-              before you open the public form.
-            </p>
-          </div>
-          <Link
-            className="primary-button link-button"
-            to={`/events/${slug}/cfp/setup`}
-          >
-            Configure CFP
-          </Link>
-        </section>
-      )}
-      <section className="setup-callout review-callout">
-        <div>
-          <div className="eyebrow">Review and decisions</div>
-          <h2>
-            {event.data.access === "reviewer"
-              ? "Score your assigned proposals."
-              : "Move proposals into the program."}
-          </h2>
-          <p>
-            {event.data.access === "reviewer"
-              ? "Your assignments stay blinded and editable while the round is open."
-              : "Assign reviewers, watch progress, queue outcomes, and publish them together."}
-          </p>
-        </div>
-        <Link
-          className="primary-button link-button"
-          to={`/events/${slug}/review`}
-        >
-          Open review board
+    <div className="event-rail-shell">
+      <aside className="event-rail">
+        <Link className="arrow-link rail-back" to="/">
+          ← All events
         </Link>
-      </section>
-      {event.data.access !== "reviewer" && (
-        <section className="setup-callout onboarding-callout">
-          <div>
-            <div className="eyebrow">Speaker readiness</div>
-            <h2>Turn accepted work into a ready program.</h2>
-            <p>
-              Assign onboarding requirements, review evidence, and see every
-              current blocker without maintaining a separate status field.
-            </p>
-          </div>
-          <Link
-            className="primary-button link-button"
+        <div className="eyebrow rail-eyebrow">Areas</div>
+        <nav className="rail-nav">
+          <RailLink
+            to={`/events/${slug}/agenda`}
+            label="Agenda"
+            dot={agenda?.dot ?? "muted"}
+            count={agenda?.conflicts ?? undefined}
+          />
+          <RailLink
+            to={`/events/${slug}/cfp/setup`}
+            label="Call for proposals"
+            dot={cfp?.dot ?? "muted"}
+            count={undefined}
+          />
+          <RailLink
+            to={`/events/${slug}/review`}
+            label="Review"
+            dot={review?.dot ?? "muted"}
+            count={review?.reviewsDue ?? undefined}
+          />
+          <RailLink
             to={`/events/${slug}/onboarding`}
-          >
-            Open readiness
-          </Link>
-        </section>
-      )}
-      {event.data.access !== "reviewer" && (
-        <section className="setup-callout">
-          <div>
-            <div className="eyebrow">Communications</div>
-            <h2>Control what each workflow sends.</h2>
-            <p>
-              Edit message templates and retry failed delivery without changing
-              domain state.
-            </p>
-          </div>
-          <Link
-            className="primary-button link-button"
+            label="Readiness"
+            dot={readiness?.dot ?? "muted"}
+            count={readiness?.blockers ?? undefined}
+          />
+          <RailLink
+            to="#team"
+            label="Team"
+            dot={teamSummary?.dot ?? "muted"}
+            count={teamSummary?.pending ?? undefined}
+          />
+          <RailLink
             to={`/events/${slug}/communications`}
-          >
-            Open communications
-          </Link>
+            label="Communications"
+            dot={comms?.failures ? "alert" : "muted"}
+            count={comms?.failures ?? undefined}
+          />
+        </nav>
+      </aside>
+
+      <main className="event-focus">
+        <header className="focus-header">
+          <div className="eyebrow">Working event</div>
+          <h1>{event.data.name}</h1>
+          <div className="event-meta">
+            <span>
+              {formatDateRange(event.data.startsOn, event.data.endsOn)}
+            </span>
+            <span>{event.data.timezone}</span>
+            <span>Private</span>
+          </div>
+        </header>
+
+        <section className="focus-attention">
+          <div className="focus-attention-head">
+            <div className="eyebrow">Needs attention</div>
+            <span
+              className={`focus-attention-pill focus-attention-${attention.tone}`}
+            >
+              {attention.label}
+            </span>
+          </div>
+          {attention.items.length === 0 ? (
+            <p className="focus-attention-empty">
+              Nothing outstanding. The program is on track.
+            </p>
+          ) : (
+            <ul className="attention-list">
+              {attention.items.map((item) => (
+                <li key={item.key} className="attention-row">
+                  <span
+                    className={`attention-dot attention-dot-${item.tone}`}
+                  />
+                  <span className="attention-text">{item.text}</span>
+                  {item.to ? (
+                    <Link className="arrow-link attention-cta" to={item.to}>
+                      Open
+                    </Link>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
-      )}
+
+        <section className="focus-areas">
+          <AreaRow
+            eyebrow="Working agenda"
+            to={`/events/${slug}/agenda`}
+            cta="Open working agenda"
+            primary={`${agenda?.placed ?? 0} placed items`}
+            secondary={
+              agenda
+                ? agenda.conflicts
+                  ? `${agenda.conflicts} conflict${agenda.conflicts === 1 ? "" : "s"} to resolve`
+                  : agenda.unplaced
+                    ? `${agenda.unplaced} unplaced program item${agenda.unplaced === 1 ? "" : "s"}`
+                    : "Every accepted item is placed"
+                : "Loading the working agenda"
+            }
+          />
+          <AreaRow
+            eyebrow="Call for proposals"
+            to={`/events/${slug}/cfp/setup`}
+            cta="Configure CFP"
+            primary={cfp?.headline ?? "Not configured"}
+            secondary={cfp?.detail ?? "Loading the CFP setup."}
+          />
+          <AreaRow
+            eyebrow="Review and decisions"
+            to={`/events/${slug}/review`}
+            cta="Open review board"
+            primary={
+              review
+                ? `${review.proposals} proposals · ${review.reviewsDue} reviews due`
+                : "Loading the review board"
+            }
+            secondary={
+              review
+                ? `${review.queued} queued for publication`
+                : "Loading the review board."
+            }
+          />
+          <AreaRow
+            eyebrow="Speaker readiness"
+            to={`/events/${slug}/onboarding`}
+            cta="Open readiness"
+            primary={
+              readiness
+                ? `${readiness.readySpeakers} of ${readiness.speakers} speakers ready`
+                : "Loading readiness"
+            }
+            secondary={
+              readiness
+                ? readiness.blockers
+                  ? `${readiness.blockers} open blocker${readiness.blockers === 1 ? "" : "s"}`
+                  : "No outstanding blockers"
+                : "Loading readiness."
+            }
+          />
+          <AreaRow
+            eyebrow="Communications"
+            to={`/events/${slug}/communications`}
+            cta="Open communications"
+            primary={
+              comms
+                ? comms.failures
+                  ? `${comms.failures} failed deliver${comms.failures === 1 ? "y" : "ies"}`
+                  : "Templates configured"
+                : "Loading communications"
+            }
+            secondary={
+              comms?.failures
+                ? "Retry failed delivery without changing domain state."
+                : "Edit message templates for each workflow."
+            }
+          />
+        </section>
+
+        {event.data.access === "owner" && (
+          <div id="team" className="focus-team-anchor">
+            <EventTeamPanel slug={event.data.slug} />
+          </div>
+        )}
+      </main>
     </div>
   );
+}
+
+type RailTone = "ok" | "alert" | "muted";
+
+function RailLink({
+  to,
+  label,
+  dot,
+  count,
+}: {
+  to: string;
+  label: string;
+  dot: RailTone;
+  count: number | undefined;
+}) {
+  return (
+    <Link className="rail-item" to={to}>
+      <span className={`rail-dot rail-dot-${dot}`} />
+      <span className="rail-label">{label}</span>
+      {count !== undefined && count > 0 ? (
+        <span className="rail-count">{count}</span>
+      ) : null}
+    </Link>
+  );
+}
+
+function AreaRow({
+  eyebrow,
+  to,
+  cta,
+  primary,
+  secondary,
+}: {
+  eyebrow: string;
+  to: string;
+  cta: string;
+  primary: string;
+  secondary: string;
+}) {
+  return (
+    <article className="area-row">
+      <div className="area-row-body">
+        <div className="eyebrow">{eyebrow}</div>
+        <div className="area-row-primary">{primary}</div>
+        <div className="area-row-secondary">{secondary}</div>
+      </div>
+      <Link className="arrow-link area-row-cta" to={to}>
+        {cta}
+      </Link>
+    </article>
+  );
+}
+
+function ReviewerEventWorkspace({
+  slug,
+  eventName,
+  startsOn,
+  endsOn,
+  timezone,
+  assignments,
+}: {
+  slug: string;
+  eventName: string;
+  startsOn: string;
+  endsOn: string;
+  timezone: string;
+  assignments: {
+    isPending: boolean;
+    data:
+      | {
+          review: { score: number; comment: string | null } | null;
+          roundStatus: string;
+        }[]
+      | undefined;
+  };
+}) {
+  const list = assignments.data ?? [];
+  const outstanding = list.filter((row) => row.review === null);
+  const roundOpen = list.some((row) => row.roundStatus === "open");
+  return (
+    <div className="event-rail-shell">
+      <aside className="event-rail">
+        <Link className="arrow-link rail-back" to="/">
+          ← All events
+        </Link>
+        <div className="eyebrow rail-eyebrow">Areas</div>
+        <nav className="rail-nav">
+          <RailLink
+            to={`/events/${slug}/review`}
+            label="Review"
+            dot={roundOpen ? "ok" : "muted"}
+            count={outstanding.length || undefined}
+          />
+        </nav>
+      </aside>
+      <main className="event-focus">
+        <header className="focus-header">
+          <div className="eyebrow">Reviewer assignment</div>
+          <h1>{eventName}</h1>
+          <div className="event-meta">
+            <span>{formatDateRange(startsOn, endsOn)}</span>
+            <span>{timezone}</span>
+            <span>Reviewer</span>
+          </div>
+        </header>
+        <section className="focus-attention">
+          <div className="focus-attention-head">
+            <div className="eyebrow">Your queue</div>
+            <span
+              className={`focus-attention-pill focus-attention-${outstanding.length ? "alert" : "ok"}`}
+            >
+              {outstanding.length} of {list.length} left to score
+            </span>
+          </div>
+          {assignments.isPending ? (
+            <p className="focus-attention-empty">Loading your assignments.</p>
+          ) : list.length === 0 ? (
+            <p className="focus-attention-empty">
+              You have no active assignments yet.
+            </p>
+          ) : (
+            <ul className="attention-list">
+              <li className="attention-row">
+                <span
+                  className={`attention-dot attention-dot-${outstanding.length ? "alert" : "ok"}`}
+                />
+                <span className="attention-text">
+                  {outstanding.length
+                    ? `${outstanding.length} assignment${outstanding.length === 1 ? "" : "s"} still to score.`
+                    : "Every assigned proposal is scored."}
+                </span>
+                <Link
+                  className="arrow-link attention-cta"
+                  to={`/events/${slug}/review`}
+                >
+                  Open review board
+                </Link>
+              </li>
+            </ul>
+          )}
+        </section>
+      </main>
+    </div>
+  );
+}
+
+type AreaSummary = {
+  dot: RailTone;
+  headline: string;
+  detail: string;
+};
+
+function summarizeCfp(
+  data: {
+    draft: { deadline: string } | null;
+    open: { deadline: string } | null;
+  },
+  timezone: string,
+): AreaSummary {
+  if (data.open) {
+    return {
+      dot: "ok",
+      headline: "Open",
+      detail: `Accepting proposals until ${formatDeadline(data.open.deadline, timezone)}.`,
+    };
+  }
+  if (data.draft) {
+    return {
+      dot: "muted",
+      headline: "Draft",
+      detail: `Draft deadline ${formatDeadline(data.draft.deadline, timezone)}.`,
+    };
+  }
+  return {
+    dot: "alert",
+    headline: "Not configured",
+    detail: "Set up tracks, formats, and fields before opening the form.",
+  };
+}
+
+function summarizeReview(data: {
+  round: { status: string };
+  submissions: {
+    status: string;
+    decision: { status: string };
+    review: { assigned: number; completed: number };
+  }[];
+}): {
+  dot: RailTone;
+  proposals: number;
+  reviewsDue: number;
+  queued: number;
+} {
+  const active = data.submissions.filter((row) => row.status === "active");
+  const due = active.reduce(
+    (sum, row) => sum + (row.review.assigned - row.review.completed),
+    0,
+  );
+  const queued = data.submissions.filter(
+    (row) =>
+      row.decision.status === "accept_queued" ||
+      row.decision.status === "decline_queued",
+  ).length;
+  return {
+    dot: due > 0 ? "alert" : "ok",
+    proposals: active.length,
+    reviewsDue: due,
+    queued,
+  };
+}
+
+function summarizeReadiness(data: {
+  readiness: { speakers: { ready: boolean }[] };
+  assignments: { required: boolean; completed: boolean }[];
+}): {
+  dot: RailTone;
+  speakers: number;
+  readySpeakers: number;
+  blockers: number;
+} {
+  const speakers = data.readiness?.speakers ?? [];
+  const readySpeakers = speakers.filter((row) => row.ready).length;
+  const blockers = (data.assignments ?? []).filter(
+    (row) => row.required && !row.completed,
+  ).length;
+  return {
+    dot: blockers ? "alert" : "ok",
+    speakers: speakers.length,
+    readySpeakers,
+    blockers,
+  };
+}
+
+function summarizeAgenda(data: {
+  items: { canceled: boolean; conflicts: string[] }[];
+  unplacedProgramItems: unknown[];
+}): {
+  dot: RailTone;
+  placed: number;
+  unplaced: number;
+  conflicts: number;
+} {
+  const active = data.items.filter((row) => !row.canceled);
+  const conflicts = active.reduce((sum, row) => sum + row.conflicts.length, 0);
+  return {
+    dot: conflicts ? "alert" : active.length ? "ok" : "muted",
+    placed: active.length,
+    unplaced: data.unplacedProgramItems.length,
+    conflicts,
+  };
+}
+
+function summarizeTeam(data: {
+  roles?: unknown[];
+  invitations?: { status: string }[];
+}): {
+  dot: RailTone;
+  members: number;
+  pending: number;
+} {
+  const members = (data.roles?.length ?? 0) + 1;
+  const pending =
+    data.invitations?.filter((row) => row.status === "pending").length ?? 0;
+  return {
+    dot: pending ? "alert" : "ok",
+    members,
+    pending,
+  };
+}
+
+type AttentionInput = {
+  cfp: AreaSummary | undefined;
+  review: { reviewsDue: number } | undefined;
+  readiness: { blockers: number } | undefined;
+  agenda: { conflicts: number } | undefined;
+  comms: { failures: number } | undefined;
+  team: { pending: number } | undefined;
+};
+
+type AttentionItem = {
+  key: string;
+  text: string;
+  tone: RailTone;
+  to: string | undefined;
+};
+
+function collectAttention(input: AttentionInput): {
+  items: AttentionItem[];
+  tone: RailTone;
+  label: string;
+} {
+  const items: AttentionItem[] = [];
+  if (input.agenda?.conflicts) {
+    items.push({
+      key: "agenda-conflicts",
+      text: `${input.agenda.conflicts} agenda conflict${input.agenda.conflicts === 1 ? "" : "s"} to resolve`,
+      tone: "alert",
+      to: undefined,
+    });
+  }
+  if (input.review?.reviewsDue) {
+    items.push({
+      key: "reviews-due",
+      text: `${input.review.reviewsDue} review${input.review.reviewsDue === 1 ? "" : "s"} outstanding`,
+      tone: "alert",
+      to: undefined,
+    });
+  }
+  if (input.readiness?.blockers) {
+    items.push({
+      key: "readiness-blockers",
+      text: `${input.readiness.blockers} readiness blocker${input.readiness.blockers === 1 ? "" : "s"}`,
+      tone: "alert",
+      to: undefined,
+    });
+  }
+  if (input.comms?.failures) {
+    items.push({
+      key: "comms-failures",
+      text: `${input.comms.failures} failed communication${input.comms.failures === 1 ? "" : "s"}`,
+      tone: "alert",
+      to: undefined,
+    });
+  }
+  if (input.team?.pending) {
+    items.push({
+      key: "team-pending",
+      text: `${input.team.pending} team invitation${input.team.pending === 1 ? "" : "s"} pending`,
+      tone: "alert",
+      to: undefined,
+    });
+  }
+  if (input.cfp?.dot === "alert") {
+    items.push({
+      key: "cfp-missing",
+      text: "The call for proposals is not configured yet.",
+      tone: "alert",
+      to: undefined,
+    });
+  }
+  const tone: RailTone = items.length > 0 ? "alert" : "ok";
+  const label = items.length > 0 ? `${items.length} to clear` : "On track";
+  return { items, tone, label };
 }
 
 function CommunicationSettingsPage() {
