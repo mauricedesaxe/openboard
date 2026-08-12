@@ -77,6 +77,36 @@ test("refreshes the organizer average after saving a review", async ({
       customAnswers: {},
     },
   );
+  const lowerScoredSubmission = await mutate<{ id: string }>(
+    page.request,
+    "submissions.submit",
+    {
+      slug,
+      cfpId: cfp.id,
+      clientDraftId: crypto.randomUUID(),
+      title: "A lower scored proposal",
+      abstract: "This proposal gives the organizer a second average to sort.",
+      format: "Talk",
+      trackId: track.id,
+      proposedSpeakers: [{ name: "Second Submitter", email: submitterEmail }],
+      customAnswers: {},
+    },
+  );
+  const unscoredSubmission = await mutate<{ id: string }>(
+    page.request,
+    "submissions.submit",
+    {
+      slug,
+      cfpId: cfp.id,
+      clientDraftId: crypto.randomUUID(),
+      title: "An unscored proposal",
+      abstract: "This proposal stays last whichever score direction is used.",
+      format: "Talk",
+      trackId: track.id,
+      proposedSpeakers: [{ name: "Third Submitter", email: submitterEmail }],
+      customAnswers: {},
+    },
+  );
 
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.goto("/sign-in");
@@ -93,7 +123,16 @@ test("refreshes the organizer average after saving a review", async ({
     submissionId: submission.id,
     reviewerUserId: reviewer?.id,
   });
-  await mutate(page.request, "reviews.openRound", { slug });
+  await mutate(page.request, "reviews.assign", {
+    slug,
+    submissionId: lowerScoredSubmission.id,
+    reviewerUserId: reviewer?.id,
+  });
+  await mutate(page.request, "reviews.assign", {
+    slug,
+    submissionId: unscoredSubmission.id,
+    reviewerUserId: reviewer?.id,
+  });
 
   await page.goto(`/events/${slug}/review`);
   const reviewNavigation = page.getByRole("navigation", {
@@ -111,39 +150,91 @@ test("refreshes the organizer average after saving a review", async ({
   await expect(
     reviewNavigation.getByRole("link", { name: "My reviews" }),
   ).toBeVisible();
-  await expect(page.getByText("0/1 reviewed")).toBeVisible();
-  await expect(page.getByText("Average —")).toBeVisible();
+  await expect(page.getByText("Reviewing has not opened.")).toBeVisible();
+  await page.getByRole("button", { name: "Open reviewing" }).click();
+  await expect(page.getByRole("status")).toHaveText("Reviewing opened");
+  const overviewProposal = page
+    .locator(".review-proposal")
+    .filter({ hasText: "A proposal to review" });
+  await expect(overviewProposal.getByText("0/1 reviewed")).toBeVisible();
+  await expect(overviewProposal.getByText("Average —")).toBeVisible();
   await reviewNavigation.getByRole("link", { name: "Assignments" }).click();
   await expect(page).toHaveURL(`/events/${slug}/review/assignments`);
   await expect(
     page.getByLabel("Reviewer for A proposal to review"),
   ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Reviewer progress" }),
+  ).toContainText("0/3 reviewed");
   await reviewNavigation.getByRole("link", { name: "Decisions" }).click();
   await expect(page).toHaveURL(`/events/${slug}/review/decisions`);
-  await expect(page.getByLabel("Internal outcome")).toBeVisible();
+  await expect(page.getByLabel("Internal outcome").first()).toBeVisible();
   await reviewNavigation.getByRole("link", { name: "My reviews" }).click();
   await expect(page).toHaveURL(`/events/${slug}/review/my-reviews`);
   const reviewCard = page
     .locator(".reviewer-card")
     .filter({ hasText: "A proposal to review" });
   await reviewCard.getByLabel("Score").selectOption("5");
+  await reviewCard
+    .getByLabel("Private reviewer comment")
+    .fill("Exact browser review comment.");
   await reviewCard.getByRole("button", { name: "Save review" }).click();
-  await expect(page.getByRole("status")).toHaveText("Review saved");
+  await expect(reviewCard.getByRole("status")).toHaveText("Review saved");
+  const lowerScoredCard = page
+    .locator(".reviewer-card")
+    .filter({ hasText: "A lower scored proposal" });
+  await lowerScoredCard.getByLabel("Score").selectOption("3");
+  await lowerScoredCard
+    .getByLabel("Private reviewer comment")
+    .fill("Useful, with a narrower scope.");
+  await lowerScoredCard.getByRole("button", { name: "Save review" }).click();
+  await expect(lowerScoredCard.getByRole("status")).toHaveText("Review saved");
+  await reviewNavigation.getByRole("link", { name: "Assignments" }).click();
+  await expect(
+    page.getByRole("region", { name: "Reviewer progress" }),
+  ).toContainText("2/3 reviewed");
   await reviewNavigation.getByRole("link", { name: "Overview" }).click();
-  await expect(page.getByText("1/1 reviewed")).toBeVisible();
-  await expect(page.getByText("Average 5.0")).toBeVisible();
+  await expect(overviewProposal.getByText("1/1 reviewed")).toBeVisible();
+  await expect(overviewProposal.getByText("Average 5.0")).toBeVisible();
+  await expect(page.getByText("Exact browser review comment.")).toBeVisible();
+  await expect(page.getByText(`Score 5`)).toBeVisible();
+  const sort = page.getByLabel("Sort proposals");
+  await sort.selectOption("average-asc");
+  await expect(page.locator(".review-proposal h2")).toHaveText([
+    "A lower scored proposal",
+    "A proposal to review",
+    "An unscored proposal",
+  ]);
+  await sort.selectOption("average-desc");
+  await expect(page.locator(".review-proposal h2")).toHaveText([
+    "A proposal to review",
+    "A lower scored proposal",
+    "An unscored proposal",
+  ]);
 
   await reviewNavigation.getByRole("link", { name: "My reviews" }).click();
-  await page.route(/\/api\/trpc\/reviews\.save(?:\?|$)/, async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 750));
-    await route.continue();
-  });
+  await page.route(/\/api\/trpc\/reviews\.save(?:\?|$)/, (route) =>
+    route.abort("failed"),
+  );
   await reviewCard.getByLabel("Score").selectOption("4");
+  await reviewCard
+    .getByLabel("Private reviewer comment")
+    .fill("Keep this comment after failure.");
   await reviewCard.getByRole("button", { name: "Update review" }).click();
+  await expect(reviewCard.getByRole("alert")).toBeVisible();
+  await expect(reviewCard.getByLabel("Score")).toHaveValue("4");
+  await expect(reviewCard.getByLabel("Private reviewer comment")).toHaveValue(
+    "Keep this comment after failure.",
+  );
+  await page.unroute(/\/api\/trpc\/reviews\.save(?:\?|$)/);
+  await reviewCard.getByRole("button", { name: "Update review" }).click();
+  await expect(reviewCard.getByRole("status")).toHaveText("Review saved");
   await reviewNavigation.getByRole("link", { name: "Overview" }).click();
   await expect(page).toHaveURL(`/events/${slug}/review`);
-  await expect(page.getByRole("status")).toHaveText("Review saved");
-  await expect(page.getByText("Average 4.0")).toBeVisible();
+  await expect(overviewProposal.getByText("Average 4.0")).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Close reviewing" }).click();
+  await expect(page.getByText("Reviewing is closed.")).toBeVisible();
 
   const pureReviewerEmail = `browser-pure-reviewer-${suffix}@example.com`;
   const pureOrganizerEmail = `browser-pure-organizer-${suffix}@example.com`;
