@@ -34,6 +34,18 @@ export function eventSwitchPath(
   ) {
     return `/events/${event.slug}`;
   }
-  const targetArea = area === "cfp" ? ORGANIZER_CFP_AREA : route;
+  const reviewPath = route.match(
+    /^review\/(assignments|decisions|my-reviews)$/,
+  )?.[0];
+  const canOpenReviewPath =
+    reviewPath === "review/my-reviews"
+      ? event.permissions.includes("reviewer")
+      : event.permissions.includes("organizer");
+  const targetArea =
+    area === "cfp"
+      ? ORGANIZER_CFP_AREA
+      : reviewPath && canOpenReviewPath
+        ? reviewPath
+        : route;
   return `/events/${event.slug}${targetArea ? `/${targetArea}` : ""}`;
 }

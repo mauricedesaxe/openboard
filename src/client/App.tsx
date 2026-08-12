@@ -257,7 +257,22 @@ function AuthenticatedApp({ email }: { email: string }) {
             path={`events/:slug/${ORGANIZER_CFP_AREA}`}
             element={<CfpManagePage />}
           />
-          <Route path="events/:slug/review" element={<ReviewPage />} />
+          <Route
+            path="events/:slug/review"
+            element={<ReviewPage mode="overview" />}
+          />
+          <Route
+            path="events/:slug/review/assignments"
+            element={<ReviewPage mode="assignments" />}
+          />
+          <Route
+            path="events/:slug/review/decisions"
+            element={<ReviewPage mode="decisions" />}
+          />
+          <Route
+            path="events/:slug/review/my-reviews"
+            element={<ReviewPage mode="my-reviews" />}
+          />
           <Route path="events/:slug/agenda" element={<AgendaPage />} />
           <Route
             path="events/:slug/communications/*"
@@ -2529,7 +2544,9 @@ async function browserFileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
-function ReviewPage() {
+type ReviewPageMode = "overview" | "assignments" | "decisions" | "my-reviews";
+
+function ReviewPage({ mode }: { mode: ReviewPageMode }) {
   const { slug = "" } = useParams();
   const trpc = useTRPC();
   const event = useQuery(trpc.events.get.queryOptions({ slug }));
@@ -2546,14 +2563,68 @@ function ReviewPage() {
     );
   }
 
-  return event.data.access === "reviewer" ? (
-    <ReviewerAssignments slug={slug} />
+  const organizer = event.data.permissions.includes("organizer");
+  const reviewer = event.data.permissions.includes("reviewer");
+  if (mode === "my-reviews" && !reviewer) {
+    return <Navigate to={`/events/${slug}/review`} replace />;
+  }
+  if (mode !== "my-reviews" && !organizer) {
+    return reviewer ? (
+      <Navigate to={`/events/${slug}/review/my-reviews`} replace />
+    ) : (
+      <Navigate to={`/events/${slug}`} replace />
+    );
+  }
+
+  return mode === "my-reviews" ? (
+    <ReviewerAssignments permissions={event.data.permissions} slug={slug} />
   ) : (
-    <OrganizerReviewBoard slug={slug} />
+    <OrganizerReviewBoard
+      mode={mode}
+      permissions={event.data.permissions}
+      slug={slug}
+    />
   );
 }
 
-function OrganizerReviewBoard({ slug }: { slug: string }) {
+function ReviewLocalNavigation({
+  permissions,
+  slug,
+}: {
+  permissions: Array<"organizer" | "reviewer">;
+  slug: string;
+}) {
+  const organizer = permissions.includes("organizer");
+  const reviewer = permissions.includes("reviewer");
+  return (
+    <nav aria-label="Review navigation" className="review-navigation">
+      {organizer && (
+        <>
+          <NavLink end to={`/events/${slug}/review`}>
+            Overview
+          </NavLink>
+          <NavLink to={`/events/${slug}/review/assignments`}>
+            Assignments
+          </NavLink>
+          <NavLink to={`/events/${slug}/review/decisions`}>Decisions</NavLink>
+        </>
+      )}
+      {reviewer && (
+        <NavLink to={`/events/${slug}/review/my-reviews`}>My reviews</NavLink>
+      )}
+    </nav>
+  );
+}
+
+function OrganizerReviewBoard({
+  mode,
+  permissions,
+  slug,
+}: {
+  mode: Exclude<ReviewPageMode, "my-reviews">;
+  permissions: Array<"organizer" | "reviewer">;
+  slug: string;
+}) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const board = useQuery(trpc.reviews.organizerBoard.queryOptions({ slug }));
@@ -2697,64 +2768,80 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
       </Link>
       <section className="review-heading">
         <div>
-          <div className="eyebrow">Review round</div>
-          <h1>{board.data.round.name}</h1>
+          <div className="eyebrow">
+            {mode === "overview"
+              ? "Review round"
+              : mode === "assignments"
+                ? "Reviewer assignments"
+                : "Program decisions"}
+          </div>
+          <h1>
+            {mode === "overview"
+              ? board.data.round.name
+              : mode === "assignments"
+                ? "Put every proposal in good hands."
+                : "Queue first. Publish together."}
+          </h1>
           <p>
             {board.data.submissions.length}{" "}
             {pluralize(board.data.submissions.length, "proposal")} ·{" "}
             {queued.length} queued {pluralize(queued.length, "outcome")}
           </p>
         </div>
-        <div className="round-control">
-          <span className={`status-chip status-${board.data.round.status}`}>
-            {board.data.round.status}
-          </span>
-          {board.data.round.status === "draft" && (
-            <button
-              className="primary-button"
-              disabled={openRound.isPending}
-              onClick={() => openRound.mutate({ slug })}
-              type="button"
-            >
-              {openRound.isPending ? "Opening…" : "Open reviewing"}
-            </button>
-          )}
-          {board.data.round.status === "open" && (
-            <button
-              className="primary-button"
-              disabled={closeRound.isPending}
-              onClick={closeWithConfirmation}
-              type="button"
-            >
-              {closeRound.isPending ? "Closing…" : "Close reviewing"}
-            </button>
-          )}
-          {board.data.round.status === "closed" && (
-            <button
-              className="text-button"
-              disabled={reopenRound.isPending}
-              onClick={() => reopenRound.mutate({ slug })}
-              type="button"
-            >
-              {reopenRound.isPending ? "Reopening…" : "Reopen round"}
-            </button>
-          )}
-        </div>
+        {mode === "overview" && (
+          <div className="round-control">
+            <span className={`status-chip status-${board.data.round.status}`}>
+              {board.data.round.status}
+            </span>
+            {board.data.round.status === "draft" && (
+              <button
+                className="primary-button"
+                disabled={openRound.isPending}
+                onClick={() => openRound.mutate({ slug })}
+                type="button"
+              >
+                {openRound.isPending ? "Opening…" : "Open reviewing"}
+              </button>
+            )}
+            {board.data.round.status === "open" && (
+              <button
+                className="primary-button"
+                disabled={closeRound.isPending}
+                onClick={closeWithConfirmation}
+                type="button"
+              >
+                {closeRound.isPending ? "Closing…" : "Close reviewing"}
+              </button>
+            )}
+            {board.data.round.status === "closed" && (
+              <button
+                className="text-button"
+                disabled={reopenRound.isPending}
+                onClick={() => reopenRound.mutate({ slug })}
+                type="button"
+              >
+                {reopenRound.isPending ? "Reopening…" : "Reopen round"}
+              </button>
+            )}
+          </div>
+        )}
       </section>
+      <ReviewLocalNavigation permissions={permissions} slug={slug} />
       {reviewBoardStatus.error && (
         <MutationStatus error={reviewBoardStatus.error} />
       )}
       {reviewBoardStatus.success && (
         <MutationStatus success={reviewBoardStatus.success} />
       )}
-      {communicationFailures.data?.some((failure) =>
-        failure.purpose.startsWith("decision_"),
-      ) && (
-        <p className="form-error" role="alert">
-          A decision message failed. Open communications to retry delivery.
-        </p>
-      )}
-      {communicationFailures.isError && (
+      {mode === "decisions" &&
+        communicationFailures.data?.some((failure) =>
+          failure.purpose.startsWith("decision_"),
+        ) && (
+          <p className="form-error" role="alert">
+            A decision message failed. Open communications to retry delivery.
+          </p>
+        )}
+      {mode === "decisions" && communicationFailures.isError && (
         <p className="form-error" role="alert">
           Decision delivery status is unavailable. Try again before you leave
           review.
@@ -2772,7 +2859,10 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
             submission.decision.status === "accepted" ||
             submission.decision.status === "declined";
           return (
-            <article className="review-proposal" key={submission.id}>
+            <article
+              className={`review-proposal review-proposal-${mode}`}
+              key={submission.id}
+            >
               <div className="review-proposal-copy">
                 <div className="eyebrow">
                   {submission.track} · {submission.format}
@@ -2790,208 +2880,219 @@ function OrganizerReviewBoard({ slug }: { slug: string }) {
                   <span>{submission.status}</span>
                 </div>
               </div>
-              <div className="review-controls">
-                <Field
-                  label="Internal outcome"
-                  name={`decision-${submission.id}`}
-                >
-                  <select
-                    disabled={
-                      hasPublishedDecision ||
-                      submission.status === "withdrawn" ||
-                      reviewBoardStatus.isPendingFor(
-                        queue,
-                        "submissionId",
-                        submission.id,
-                      )
-                    }
-                    id={`decision-${submission.id}`}
-                    onChange={(event) =>
-                      queue.mutate({
-                        slug,
-                        submissionId: submission.id,
-                        status: event.target.value as
-                          "pending" | "accept_queued" | "decline_queued",
-                      })
-                    }
-                    value={submission.decision.status}
-                  >
-                    <option value="pending">Pending</option>
-                    <option value="accept_queued">Queue acceptance</option>
-                    <option value="decline_queued">Queue decline</option>
-                    {hasPublishedDecision && (
-                      <option value={submission.decision.status}>
-                        {submission.decision.status}
-                      </option>
-                    )}
-                  </select>
-                </Field>
-                {board.data.round.status === "closed" &&
-                  submission.decision.status.endsWith("_queued") && (
-                    <label className="publication-selection">
-                      <input
-                        checked={Boolean(selectedForPublication[submission.id])}
-                        onChange={(event) =>
-                          setSelectedForPublication((current) => ({
-                            ...current,
-                            [submission.id]: event.target.checked,
-                          }))
-                        }
-                        type="checkbox"
-                      />
-                      Include in this publication
-                    </label>
-                  )}
-                {!hasPublishedDecision &&
-                  submission.status === "active" &&
-                  board.data.round.status !== "closed" && (
-                    <div className="assignment-control">
-                      <select
-                        aria-label={`Reviewer for ${submission.title}`}
-                        onChange={(event) =>
-                          setReviewerBySubmission((current) => ({
-                            ...current,
-                            [submission.id]: event.target.value,
-                          }))
-                        }
-                        value={reviewerBySubmission[submission.id] ?? ""}
+              {mode !== "overview" && (
+                <div className="review-controls">
+                  {mode === "decisions" && (
+                    <>
+                      <Field
+                        label="Internal outcome"
+                        name={`decision-${submission.id}`}
                       >
-                        <option value="">Choose reviewer</option>
-                        {board.data.reviewers.map((reviewer) => (
-                          <option key={reviewer.id} value={reviewer.id}>
-                            {reviewer.name
-                              ? `${reviewer.name} · ${reviewer.email}`
-                              : reviewer.email}
+                        <select
+                          disabled={
+                            hasPublishedDecision ||
+                            submission.status === "withdrawn" ||
+                            reviewBoardStatus.isPendingFor(
+                              queue,
+                              "submissionId",
+                              submission.id,
+                            )
+                          }
+                          id={`decision-${submission.id}`}
+                          onChange={(event) =>
+                            queue.mutate({
+                              slug,
+                              submissionId: submission.id,
+                              status: event.target.value as
+                                "pending" | "accept_queued" | "decline_queued",
+                            })
+                          }
+                          value={submission.decision.status}
+                        >
+                          <option value="pending">Pending</option>
+                          <option value="accept_queued">
+                            Queue acceptance
                           </option>
-                        ))}
-                      </select>
-                      <button
-                        className="mini-button"
-                        disabled={
-                          !reviewerBySubmission[submission.id] ||
-                          reviewBoardStatus.isPendingFor(
+                          <option value="decline_queued">Queue decline</option>
+                          {hasPublishedDecision && (
+                            <option value={submission.decision.status}>
+                              {submission.decision.status}
+                            </option>
+                          )}
+                        </select>
+                      </Field>
+                      {board.data.round.status === "closed" &&
+                        submission.decision.status.endsWith("_queued") && (
+                          <label className="publication-selection">
+                            <input
+                              checked={Boolean(
+                                selectedForPublication[submission.id],
+                              )}
+                              onChange={(event) =>
+                                setSelectedForPublication((current) => ({
+                                  ...current,
+                                  [submission.id]: event.target.checked,
+                                }))
+                              }
+                              type="checkbox"
+                            />
+                            Include in this publication
+                          </label>
+                        )}
+                    </>
+                  )}
+                  {mode === "assignments" &&
+                    !hasPublishedDecision &&
+                    submission.status === "active" &&
+                    board.data.round.status !== "closed" && (
+                      <div className="assignment-control">
+                        <select
+                          aria-label={`Reviewer for ${submission.title}`}
+                          onChange={(event) =>
+                            setReviewerBySubmission((current) => ({
+                              ...current,
+                              [submission.id]: event.target.value,
+                            }))
+                          }
+                          value={reviewerBySubmission[submission.id] ?? ""}
+                        >
+                          <option value="">Choose reviewer</option>
+                          {board.data.reviewers.map((reviewer) => (
+                            <option key={reviewer.id} value={reviewer.id}>
+                              {reviewer.name
+                                ? `${reviewer.name} · ${reviewer.email}`
+                                : reviewer.email}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          className="mini-button"
+                          disabled={
+                            !reviewerBySubmission[submission.id] ||
+                            reviewBoardStatus.isPendingFor(
+                              assign,
+                              "submissionId",
+                              submission.id,
+                            )
+                          }
+                          onClick={() => {
+                            const reviewerUserId =
+                              reviewerBySubmission[submission.id];
+                            if (!reviewerUserId) return;
+                            assign.mutate({
+                              slug,
+                              submissionId: submission.id,
+                              reviewerUserId,
+                            });
+                          }}
+                          type="button"
+                        >
+                          {reviewBoardStatus.isPendingFor(
                             assign,
                             "submissionId",
                             submission.id,
                           )
-                        }
-                        onClick={() => {
-                          const reviewerUserId =
-                            reviewerBySubmission[submission.id];
-                          if (!reviewerUserId) return;
-                          assign.mutate({
-                            slug,
-                            submissionId: submission.id,
-                            reviewerUserId,
-                          });
-                        }}
-                        type="button"
-                      >
-                        {reviewBoardStatus.isPendingFor(
-                          assign,
-                          "submissionId",
-                          submission.id,
-                        )
-                          ? "Assigning…"
-                          : "Assign"}
-                      </button>
+                            ? "Assigning…"
+                            : "Assign"}
+                        </button>
+                      </div>
+                    )}
+                  {mode === "assignments" && (
+                    <div className="assignment-list">
+                      {submission.review.assignments.map((assignment) => (
+                        <div className="assignment-row" key={assignment.id}>
+                          <span>
+                            {assignment.reviewerName ||
+                              assignment.reviewerEmail}{" "}
+                            · {assignment.score ?? "not scored"}
+                          </span>
+                          {board.data.round.status !== "closed" && (
+                            <button
+                              className="text-button"
+                              disabled={reviewBoardStatus.isPendingFor(
+                                revoke,
+                                "assignmentId",
+                                assignment.id,
+                              )}
+                              onClick={() =>
+                                revoke.mutate({
+                                  slug,
+                                  assignmentId: assignment.id,
+                                })
+                              }
+                              type="button"
+                            >
+                              {reviewBoardStatus.isPendingFor(
+                                revoke,
+                                "assignmentId",
+                                assignment.id,
+                              )
+                                ? "Revoking…"
+                                : "Revoke"}
+                            </button>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
-                <div className="assignment-list">
-                  {submission.review.assignments.map((assignment) => (
-                    <div className="assignment-row" key={assignment.id}>
-                      <span>
-                        {assignment.reviewerName || assignment.reviewerEmail} ·{" "}
-                        {assignment.score ?? "not scored"}
-                      </span>
-                      {board.data.round.status !== "closed" && (
-                        <button
-                          className="text-button"
-                          disabled={reviewBoardStatus.isPendingFor(
-                            revoke,
-                            "assignmentId",
-                            assignment.id,
-                          )}
-                          onClick={() =>
-                            revoke.mutate({
-                              slug,
-                              assignmentId: assignment.id,
-                            })
-                          }
-                          type="button"
-                        >
-                          {reviewBoardStatus.isPendingFor(
-                            revoke,
-                            "assignmentId",
-                            assignment.id,
-                          )
-                            ? "Revoking…"
-                            : "Revoke"}
-                        </button>
-                      )}
-                    </div>
-                  ))}
                 </div>
-              </div>
+              )}
             </article>
           );
         })}
       </div>
-      {board.data.round.status === "closed" && queued.length > 0 && (
-        <section className="publication-bar">
-          <div>
-            <div className="eyebrow">Atomic publication</div>
-            <strong>
-              Publish {selectedQueued.length} selected{" "}
-              {pluralize(selectedQueued.length, "outcome")}
-              {selectedQueued.length > 1 ? " together" : ""}
-            </strong>
-          </div>
-          <button
-            className="primary-button"
-            disabled={publish.isPending || selectedQueued.length === 0}
-            onClick={() =>
-              publish.mutate({
-                slug,
-                selections: selectedQueued.map((submission) => ({
-                  submissionId: submission.id,
-                  expectedStatus: submission.decision.status as
-                    "accept_queued" | "decline_queued",
-                  expectedRevision: submission.decision.revision,
-                })),
-              })
-            }
-            type="button"
-          >
-            {publish.isPending ? "Publishing…" : "Publish decisions"}
-          </button>
-        </section>
-      )}
-      <ReviewerAssignments compact slug={slug} />
+      {mode === "decisions" &&
+        board.data.round.status === "closed" &&
+        queued.length > 0 && (
+          <section className="publication-bar">
+            <div>
+              <div className="eyebrow">Atomic publication</div>
+              <strong>
+                Publish {selectedQueued.length} selected{" "}
+                {pluralize(selectedQueued.length, "outcome")}
+                {selectedQueued.length > 1 ? " together" : ""}
+              </strong>
+            </div>
+            <button
+              className="primary-button"
+              disabled={publish.isPending || selectedQueued.length === 0}
+              onClick={() =>
+                publish.mutate({
+                  slug,
+                  selections: selectedQueued.map((submission) => ({
+                    submissionId: submission.id,
+                    expectedStatus: submission.decision.status as
+                      "accept_queued" | "decline_queued",
+                    expectedRevision: submission.decision.revision,
+                  })),
+                })
+              }
+              type="button"
+            >
+              {publish.isPending ? "Publishing…" : "Publish decisions"}
+            </button>
+          </section>
+        )}
     </div>
   );
 }
 
 function ReviewerAssignments({
-  compact = false,
+  permissions,
   slug,
 }: {
-  compact?: boolean;
+  permissions: Array<"organizer" | "reviewer">;
   slug: string;
 }) {
   const trpc = useTRPC();
   const assignments = useQuery(trpc.reviews.mine.queryOptions({ slug }));
 
   if (assignments.isPending) {
-    return compact ? (
-      <BoardStatus label="Loading your assignments" />
-    ) : (
-      <FullPageStatus label="Opening assignments" />
-    );
+    return <FullPageStatus label="Opening assignments" />;
   }
   if (assignments.isError) {
     return (
-      <div className={compact ? "" : "page"}>
+      <div className="page">
         <BoardStatus
           label="Assignments unavailable"
           detail={assignments.error.message}
@@ -3001,19 +3102,18 @@ function ReviewerAssignments({
   }
 
   return (
-    <section className={compact ? "own-review-section" : "page review-page"}>
-      {!compact && (
-        <Link className="arrow-link" to={`/events/${slug}`}>
-          ← Back to event
-        </Link>
-      )}
+    <section className="page review-page">
+      <Link className="arrow-link" to={`/events/${slug}`}>
+        ← Back to event
+      </Link>
       <div className="review-heading">
         <div>
           <div className="eyebrow">Your blinded assignments</div>
-          <h1>{compact ? "Your reviews" : "Read the work, not the name."}</h1>
+          <h1>Read the work, not the name.</h1>
           <p>Scores remain editable while the review round is open.</p>
         </div>
       </div>
+      <ReviewLocalNavigation permissions={permissions} slug={slug} />
       {assignments.data.length === 0 && (
         <BoardStatus
           label="No active assignments"

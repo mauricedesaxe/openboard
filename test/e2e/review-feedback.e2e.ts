@@ -91,14 +91,40 @@ test("refreshes the organizer average after saving a review", async ({
   await mutate(page.request, "reviews.openRound", { slug });
 
   await page.goto(`/events/${slug}/review`);
+  const reviewNavigation = page.getByRole("navigation", {
+    name: "Review navigation",
+  });
+  await expect(
+    reviewNavigation.getByRole("link", { name: "Overview" }),
+  ).toBeVisible();
+  await expect(
+    reviewNavigation.getByRole("link", { name: "Assignments" }),
+  ).toBeVisible();
+  await expect(
+    reviewNavigation.getByRole("link", { name: "Decisions" }),
+  ).toBeVisible();
+  await expect(
+    reviewNavigation.getByRole("link", { name: "My reviews" }),
+  ).toBeVisible();
   await expect(page.getByText("0/1 reviewed")).toBeVisible();
   await expect(page.getByText("Average —")).toBeVisible();
+  await reviewNavigation.getByRole("link", { name: "Assignments" }).click();
+  await expect(page).toHaveURL(`/events/${slug}/review/assignments`);
+  await expect(
+    page.getByLabel("Reviewer for A proposal to review"),
+  ).toBeVisible();
+  await reviewNavigation.getByRole("link", { name: "Decisions" }).click();
+  await expect(page).toHaveURL(`/events/${slug}/review/decisions`);
+  await expect(page.getByLabel("Internal outcome")).toBeVisible();
+  await reviewNavigation.getByRole("link", { name: "My reviews" }).click();
+  await expect(page).toHaveURL(`/events/${slug}/review/my-reviews`);
   const reviewCard = page
     .locator(".reviewer-card")
     .filter({ hasText: "A proposal to review" });
   await reviewCard.getByLabel("Score").selectOption("5");
   await reviewCard.getByRole("button", { name: "Save review" }).click();
   await expect(reviewCard.getByRole("status")).toHaveText("Review saved");
+  await reviewNavigation.getByRole("link", { name: "Overview" }).click();
   await expect(page.getByText("1/1 reviewed")).toBeVisible();
   await expect(page.getByText("Average 5.0")).toBeVisible();
 });
