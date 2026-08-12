@@ -1,106 +1,112 @@
+import { Draggable } from "@fullcalendar/interaction";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
-import { formatEventDateRange } from "../shared/date-time";
-
+import { AgendaCalendar, type AgendaCalendarItem } from "./AgendaCalendar";
 import { MutationStatus } from "./MutationStatus";
-import { useMutationStatuses } from "./mutation-feedback";
+import { addDays, clampVisibleStart } from "./agenda-calendar-model";
 import { useTRPC } from "./trpc";
 
-const defaultAgendaStartTime = "09:00";
-const defaultAgendaEndTime = "10:00";
+type WorkingAgenda = {
+  revision: number;
+  timezone: string;
+  startsOn: string;
+  endsOn: string;
+  rooms: Array<{
+    id: string;
+    name: string;
+    position: number;
+    archived: boolean;
+  }>;
+  unplacedProgramItems: Array<{
+    id: string;
+    title: string;
+    format: string;
+    track: string;
+  }>;
+  items: WorkingItem[];
+};
+
+type WorkingItem = {
+  id: string;
+  kind: "program" | "service";
+  title: string | null;
+  serviceTitle: string | null;
+  serviceScope: "event" | "room" | null;
+  roomId: string | null;
+  roomName: string | null;
+  roomArchivedAt: Date | null;
+  startsAtLocal: string;
+  endsAtLocal: string;
+  canceled: boolean;
+  trackName: string | null;
+  conflicts: Array<"room" | "speaker">;
+  speakers: Array<{ displayName: string }>;
+};
+
+type UndoAction = { label: string; run: () => void };
 
 export function AgendaPage() {
   const { slug = "" } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const agenda = useQuery(trpc.agendas.working.queryOptions({ slug }));
-  const communicationFailures = useQuery(
-    trpc.communications.failures.queryOptions({ slug }),
-  );
-  const [programItemId, setProgramItemId] = useState("");
-  const [programRoomId, setProgramRoomId] = useState("");
-  const [programStart, setProgramStart] = useState<string>();
-  const [programEnd, setProgramEnd] = useState<string>();
-  const [serviceTitle, setServiceTitle] = useState("");
-  const [serviceScope, setServiceScope] = useState<"event" | "room">("event");
-  const [serviceRoomId, setServiceRoomId] = useState("");
-  const [serviceStart, setServiceStart] = useState<string>();
-  const [serviceEnd, setServiceEnd] = useState<string>();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [track, setTrack] = useState("");
+  const [saveError, setSaveError] = useState<{
+    itemId: string;
+    message: string;
+    retry: () => void;
+    revert?: () => void;
+  }>();
+  const [undo, setUndo] = useState<UndoAction>();
   const refresh = () =>
     queryClient.invalidateQueries(trpc.agendas.working.queryFilter({ slug }));
   const placeProgram = useMutation(
     trpc.agendas.placeProgram.mutationOptions({
-      onSuccess: async () => {
-        setProgramItemId("");
-        await refresh();
-      },
+      onSuccess: () => void refresh(),
     }),
   );
   const placeService = useMutation(
     trpc.agendas.placeService.mutationOptions({
-      onSuccess: async () => {
-        setServiceTitle("");
-        await refresh();
-      },
+      onSuccess: () => void refresh(),
     }),
   );
-  const move = useMutation(
-    trpc.agendas.move.mutationOptions({ onSuccess: refresh }),
+  const move = useMutation(trpc.agendas.move.mutationOptions());
+  const updateService = useMutation(
+    trpc.agendas.updateService.mutationOptions(),
   );
-  const cancel = useMutation(
-    trpc.agendas.cancel.mutationOptions({ onSuccess: refresh }),
-  );
-  const restore = useMutation(
-    trpc.agendas.restore.mutationOptions({ onSuccess: refresh }),
-  );
+  const cancel = useMutation(trpc.agendas.cancel.mutationOptions());
+  const restore = useMutation(trpc.agendas.restore.mutationOptions());
+  const unplace = useMutation(trpc.agendas.unplaceProgram.mutationOptions());
   const removeService = useMutation(
-    trpc.agendas.removeService.mutationOptions({ onSuccess: refresh }),
+    trpc.agendas.removeService.mutationOptions(),
   );
   const publish = useMutation(
     trpc.agendas.publish.mutationOptions({
-      onSuccess: async () => {
-        await refresh();
-        await queryClient.invalidateQueries(
-          trpc.agendas.published.queryFilter({ slug }),
-        );
-      },
+      onSuccess: () => void refresh(),
     }),
   );
-  const agendaStatus = useMutationStatuses([
-    {
-      mutation: placeProgram,
-      mutationKey: trpc.agendas.placeProgram.mutationKey(),
-      success: "Program item placed",
-    },
-    {
-      mutation: placeService,
-      mutationKey: trpc.agendas.placeService.mutationKey(),
-      success: "Service block added",
-    },
-    {
-      mutation: move,
-      mutationKey: trpc.agendas.move.mutationKey(),
-      success: "Placement moved",
-    },
-    {
-      mutation: cancel,
-      mutationKey: trpc.agendas.cancel.mutationKey(),
-      success: "Placement canceled",
-    },
-    {
-      mutation: restore,
-      mutationKey: trpc.agendas.restore.mutationKey(),
-      success: "Placement restored",
-    },
-    {
-      mutation: removeService,
-      mutationKey: trpc.agendas.removeService.mutationKey(),
-      success: "Service block removed",
-    },
-  ]);
+  const pending =
+    move.isPending ||
+    updateService.isPending ||
+    cancel.isPending ||
+    restore.isPending ||
+    unplace.isPending ||
+    removeService.isPending;
+
+  useEffect(() => {
+    function warnBeforeLeave(event: BeforeUnloadEvent) {
+      if (!pending) return;
+      event.preventDefault();
+    }
+    window.addEventListener("beforeunload", warnBeforeLeave);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeave);
+  }, [pending]);
 
   if (agenda.isPending) return <AgendaStatus label="Opening working agenda" />;
   if (agenda.isError) {
@@ -112,37 +118,125 @@ export function AgendaPage() {
     );
   }
 
-  const eventTimeWindow = agendaTimeWindow(agenda.data);
-  const resolvedProgramStart = programStart ?? eventTimeWindow.defaultStart;
-  const resolvedProgramEnd = programEnd ?? eventTimeWindow.defaultEnd;
-  const resolvedServiceStart = serviceStart ?? eventTimeWindow.defaultStart;
-  const resolvedServiceEnd = serviceEnd ?? eventTimeWindow.defaultEnd;
+  const data = agenda.data as WorkingAgenda;
+  const roomId = effectiveRoom(searchParams.get("room"), data.rooms);
+  const selectedId = searchParams.get("item");
+  const selected = data.items.find((item) => item.id === selectedId) ?? null;
+  const visibleStart = clampVisibleStart(
+    searchParams.get("start"),
+    data.startsOn,
+    data.endsOn,
+  );
+  const conflicts = data.items.filter(
+    (item) => !item.canceled && item.conflicts.length > 0,
+  ).length;
+  const tracks = unique(data.unplacedProgramItems.map((item) => item.track));
+  const paletteItems = data.unplacedProgramItems.filter(
+    (item) =>
+      (!track || item.track === track) &&
+      item.title.toLowerCase().includes(search.toLowerCase()),
+  );
 
-  function submitProgram(event: FormEvent) {
-    event.preventDefault();
-    if (!programItemId) return;
-    placeProgram.mutate({
+  function updateUrl(values: Record<string, string | null>) {
+    const next = new URLSearchParams(searchParams);
+    for (const [key, value] of Object.entries(values)) {
+      if (value) next.set(key, value);
+      else next.delete(key);
+    }
+    setSearchParams(next, { replace: true });
+  }
+
+  function saveMove(
+    item: WorkingItem,
+    startsAtLocal: string,
+    endsAtLocal: string,
+    room: string | null,
+    revert?: () => void,
+  ) {
+    if (saveError?.itemId === item.id) return;
+    const previous = {
+      startsAtLocal: item.startsAtLocal,
+      endsAtLocal: item.endsAtLocal,
+      roomId: item.roomId,
+    };
+    const input = {
       slug,
-      programItemId,
-      roomId: programRoomId || null,
-      startsAtLocal: resolvedProgramStart,
-      endsAtLocal: resolvedProgramEnd,
+      agendaItemId: item.id,
+      roomId: room,
+      startsAtLocal,
+      endsAtLocal,
+    };
+    move.mutate(input, {
+      onSuccess: () => {
+        setSaveError(undefined);
+        setUndo({
+          label: "Move saved",
+          run: () =>
+            saveMove(
+              item,
+              previous.startsAtLocal,
+              previous.endsAtLocal,
+              previous.roomId,
+            ),
+        });
+        void refresh();
+      },
+      onError: (error) => {
+        revert?.();
+        setSaveError({
+          itemId: item.id,
+          message: error.message,
+          retry: () => saveMove(item, startsAtLocal, endsAtLocal, room, revert),
+          ...(revert ? { revert } : {}),
+        });
+      },
     });
   }
 
-  function submitService(event: FormEvent) {
-    event.preventDefault();
-    if (!serviceTitle) return;
-    placeService.mutate({
-      slug,
-      title: serviceTitle,
-      scope:
-        serviceScope === "event"
-          ? { type: "event" }
-          : { type: "room", roomId: serviceRoomId },
-      startsAtLocal: resolvedServiceStart,
-      endsAtLocal: resolvedServiceEnd,
-    });
+  function createService(startsAtLocal: string, endsAtLocal: string) {
+    placeService.mutate(
+      {
+        slug,
+        title: "New service block",
+        scope: roomId ? { type: "room", roomId } : { type: "event" },
+        startsAtLocal,
+        endsAtLocal,
+      },
+      {
+        onSuccess: (created) => {
+          updateUrl({ item: created.id });
+          setUndo({
+            label: "Service block added",
+            run: () =>
+              removeService.mutate(
+                { slug, agendaItemId: created.id },
+                { onSuccess: () => void refresh() },
+              ),
+          });
+        },
+      },
+    );
+  }
+
+  function dropPaletteItem(
+    paletteId: string,
+    startsAtLocal: string,
+    endsAtLocal: string,
+  ) {
+    if (paletteId === "new-service") {
+      createService(startsAtLocal, endsAtLocal);
+      return;
+    }
+    placeProgram.mutate(
+      {
+        slug,
+        programItemId: paletteId,
+        roomId: roomId || null,
+        startsAtLocal,
+        endsAtLocal,
+      },
+      { onSuccess: (created) => updateUrl({ item: created.id }) },
+    );
   }
 
   return (
@@ -155,204 +249,476 @@ export function AgendaPage() {
           View public agenda
         </Link>
       </div>
-      <header className="agenda-heading">
+      <header className="agenda-calendar-header">
         <div>
           <div className="eyebrow">
-            Private workspace · revision {agenda.data.revision}
+            Working agenda · revision {data.revision}
           </div>
-          <h1>Build the agenda.</h1>
-          <p>
-            Conflicts stay saveable here. Publication checks the current event
-            and only releases a coherent snapshot.
-          </p>
+          <h1>Shape the event.</h1>
+          <p>{data.timezone}</p>
         </div>
-        <button
-          className="primary-button"
-          disabled={publish.isPending}
-          onClick={() =>
-            publish.mutate({ slug, expectedRevision: agenda.data.revision })
-          }
-          type="button"
-        >
-          {publish.isPending ? "Publishing…" : "Publish agenda"}
-        </button>
-      </header>
-
-      <MutationStatus
-        error={agendaStatus.error}
-        success={agendaStatus.success}
-      />
-      {publish.error && <MutationStatus error={publish.error.message} />}
-      {communicationFailures.data?.some((failure) =>
-        failure.purpose.startsWith("agenda_"),
-      ) && (
-        <p className="form-error" role="alert">
-          A calendar message failed. Open communications to retry delivery.
-        </p>
-      )}
-      {communicationFailures.isError && (
-        <p className="form-error" role="alert">
-          Calendar delivery status is unavailable. Try again before you leave
-          this agenda.
-        </p>
-      )}
-      {publish.isSuccess && (
-        <p className="agenda-published" role="status">
-          Public revision {publish.data.revision} is live.{" "}
-          {publish.data.deliveryWork} calendar update
-          {publish.data.deliveryWork === 1 ? "" : "s"} recorded.
-        </p>
-      )}
-
-      <section className="agenda-composer">
-        <form onSubmit={submitProgram}>
-          <div className="eyebrow">Program placement</div>
-          <h2>Schedule an accepted item</h2>
+        <div className="agenda-header-controls">
           <label>
-            Program item
+            Room
             <select
-              onChange={(event) => setProgramItemId(event.target.value)}
-              required
-              value={programItemId}
+              onChange={(event) =>
+                updateUrl({ room: event.target.value || null })
+              }
+              value={roomId}
             >
-              <option value="">Choose accepted item</option>
-              {agenda.data.unplacedProgramItems.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.title} · {item.track}
+              <option value="">All rooms</option>
+              {data.rooms.map((room) => (
+                <option key={room.id} value={room.id}>
+                  {room.name}
+                  {room.archived ? " (archived)" : ""}
                 </option>
               ))}
             </select>
           </label>
-          <AgendaRoomSelect
-            allowEmpty
-            label="Room"
-            onChange={setProgramRoomId}
-            rooms={agenda.data.rooms}
-            value={programRoomId}
-          />
-          <AgendaTimeFields
-            end={resolvedProgramEnd}
-            max={eventTimeWindow.max}
-            min={eventTimeWindow.min}
-            onEnd={setProgramEnd}
-            onStart={setProgramStart}
-            start={resolvedProgramStart}
-          />
-          <AgendaEventContext eventTimeWindow={eventTimeWindow} />
-          <button
-            className="secondary-button"
-            disabled={placeProgram.isPending}
-            type="submit"
-          >
-            {placeProgram.isPending ? "Placing…" : "Place program item"}
-          </button>
-        </form>
-
-        <form onSubmit={submitService}>
-          <div className="eyebrow">Service block</div>
-          <h2>Block event time</h2>
-          <label>
-            Title
-            <input
-              maxLength={160}
-              onChange={(event) => setServiceTitle(event.target.value)}
-              required
-              value={serviceTitle}
-            />
-          </label>
-          <label>
-            Scope
-            <select
-              onChange={(event) =>
-                setServiceScope(event.target.value as "event" | "room")
+          <div className="agenda-range-controls">
+            <button
+              className="text-button"
+              disabled={visibleStart === data.startsOn}
+              onClick={() =>
+                updateUrl({
+                  start: maxDate(data.startsOn, addDays(visibleStart, -7)),
+                })
               }
-              value={serviceScope}
+              type="button"
             >
-              <option value="event">All rooms</option>
-              <option value="room">One room</option>
+              Previous
+            </button>
+            <button
+              className="text-button"
+              disabled={addDays(visibleStart, 7) > data.endsOn}
+              onClick={() => updateUrl({ start: addDays(visibleStart, 7) })}
+              type="button"
+            >
+              Next
+            </button>
+          </div>
+          <button
+            className="primary-button"
+            disabled={publish.isPending || conflicts > 0}
+            onClick={() =>
+              publish.mutate({ slug, expectedRevision: data.revision })
+            }
+            type="button"
+          >
+            {publish.isPending ? "Publishing…" : "Publish agenda"}
+          </button>
+        </div>
+      </header>
+      <div className="agenda-publication-summary">
+        <strong>{conflicts} conflicts</strong>
+        <span>{data.unplacedProgramItems.length} unplaced</span>
+        {conflicts > 0 && <span>Resolve conflicts before publication.</span>}
+      </div>
+      {(publish.error || placeProgram.error || placeService.error) && (
+        <MutationStatus
+          error={
+            (publish.error ?? placeProgram.error ?? placeService.error)?.message
+          }
+        />
+      )}
+      {undo && (
+        <div className="agenda-undo" role="status">
+          <span>{undo.label}</span>
+          <button className="text-button" onClick={undo.run} type="button">
+            Undo
+          </button>
+          <button
+            className="text-button"
+            onClick={() => setUndo(undefined)}
+            type="button"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+      <button
+        className="agenda-mobile-palette primary-button"
+        onClick={() => setPaletteOpen(true)}
+        type="button"
+      >
+        Add to agenda
+      </button>
+      <div className={`agenda-workspace${selected ? " has-inspector" : ""}`}>
+        <AgendaPalette
+          items={paletteItems}
+          onClose={() => setPaletteOpen(false)}
+          open={paletteOpen}
+          search={search}
+          setSearch={setSearch}
+          setTrack={setTrack}
+          track={track}
+          tracks={tracks}
+        />
+        <AgendaCalendar
+          editable
+          endsOn={data.endsOn}
+          items={data.items.map(toWorkingCalendarItem)}
+          onCreateService={createService}
+          onExternalDrop={dropPaletteItem}
+          onMove={(id, start, end, revert) => {
+            const item = data.items.find((candidate) => candidate.id === id);
+            if (item) saveMove(item, start, end, item.roomId, revert);
+          }}
+          onSelect={(id) => {
+            if (!pending) updateUrl({ item: id });
+          }}
+          onVisibleStartChange={(start) => updateUrl({ start })}
+          roomId={roomId}
+          selectedId={selectedId}
+          startsOn={data.startsOn}
+          timezone={data.timezone}
+          view="calendar"
+          visibleStart={visibleStart}
+        />
+        {selected && (
+          <WorkingInspector
+            busy={pending}
+            {...(saveError?.itemId === selected.id ? { error: saveError } : {})}
+            item={selected}
+            onCancel={() => {
+              const mutation = selected.canceled ? restore : cancel;
+              mutation.mutate(
+                { slug, agendaItemId: selected.id },
+                {
+                  onSuccess: () => {
+                    setUndo({
+                      label: selected.canceled
+                        ? "Placement restored"
+                        : "Placement canceled",
+                      run: () =>
+                        (selected.canceled ? cancel : restore).mutate(
+                          { slug, agendaItemId: selected.id },
+                          { onSuccess: () => void refresh() },
+                        ),
+                    });
+                    void refresh();
+                  },
+                },
+              );
+            }}
+            onClose={() => {
+              if (!pending) updateUrl({ item: null });
+            }}
+            onMove={(start, end, room) => saveMove(selected, start, end, room)}
+            onRemove={() => {
+              const mutation =
+                selected.kind === "program" ? unplace : removeService;
+              mutation.mutate(
+                { slug, agendaItemId: selected.id },
+                {
+                  onSuccess: () => {
+                    updateUrl({ item: null });
+                    void refresh();
+                  },
+                },
+              );
+            }}
+            onUpdateService={(input) => {
+              updateService.mutate(
+                { slug, agendaItemId: selected.id, ...input },
+                {
+                  onSuccess: () => void refresh(),
+                  onError: (error) =>
+                    setSaveError({
+                      itemId: selected.id,
+                      message: error.message,
+                      retry: () => undefined,
+                    }),
+                },
+              );
+            }}
+            rooms={data.rooms}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AgendaPalette({
+  items,
+  onClose,
+  open,
+  search,
+  setSearch,
+  setTrack,
+  track,
+  tracks,
+}: {
+  items: WorkingAgenda["unplacedProgramItems"];
+  onClose: () => void;
+  open: boolean;
+  search: string;
+  setSearch: (value: string) => void;
+  setTrack: (value: string) => void;
+  track: string;
+  tracks: string[];
+}) {
+  const paletteRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!paletteRef.current) return;
+    const draggable = new Draggable(paletteRef.current, {
+      itemSelector: ".agenda-palette-item",
+      eventData: (element) => ({
+        title: element.getAttribute("data-title") ?? "Agenda item",
+        duration: "01:00",
+        extendedProps: { paletteId: element.getAttribute("data-palette-id") },
+      }),
+    });
+    return () => draggable.destroy();
+  }, []);
+  return (
+    <aside
+      className={`agenda-palette${open ? " is-open" : ""}`}
+      ref={paletteRef}
+    >
+      <div className="agenda-palette-heading">
+        <div>
+          <div className="eyebrow">Unplaced</div>
+          <h2>{items.length ? "Ready to place" : "Agenda complete"}</h2>
+        </div>
+        <button className="text-button" onClick={onClose} type="button">
+          Close
+        </button>
+      </div>
+      <input
+        aria-label="Search unplaced items"
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder="Search program"
+        value={search}
+      />
+      <select
+        aria-label="Filter unplaced items by track"
+        onChange={(event) => setTrack(event.target.value)}
+        value={track}
+      >
+        <option value="">All tracks</option>
+        {tracks.map((option) => (
+          <option key={option}>{option}</option>
+        ))}
+      </select>
+      <button
+        className="agenda-palette-item service-template"
+        data-palette-id="new-service"
+        data-title="New service block"
+        type="button"
+      >
+        <strong>New service block</strong>
+        <span>Drag or click an empty slot</span>
+      </button>
+      <div className="agenda-palette-items">
+        {items.map((item) => (
+          <button
+            className="agenda-palette-item"
+            data-palette-id={item.id}
+            data-title={item.title}
+            key={item.id}
+            type="button"
+          >
+            <strong>{item.title}</strong>
+            <span>
+              {item.track} · {item.format}
+            </span>
+          </button>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+function WorkingInspector({
+  busy,
+  error,
+  item,
+  onCancel,
+  onClose,
+  onMove,
+  onRemove,
+  onUpdateService,
+  rooms,
+}: {
+  busy: boolean;
+  error?: { message: string; retry: () => void; revert?: () => void };
+  item: WorkingItem;
+  onCancel: () => void;
+  onClose: () => void;
+  onMove: (start: string, end: string, room: string | null) => void;
+  onRemove: () => void;
+  onUpdateService: (input: {
+    title: string;
+    scope: { type: "event" } | { type: "room"; roomId: string };
+    startsAtLocal: string;
+    endsAtLocal: string;
+  }) => void;
+  rooms: WorkingAgenda["rooms"];
+}) {
+  const [title, setTitle] = useState(item.serviceTitle ?? "");
+  const [scope, setScope] = useState<"event" | "room">(
+    item.serviceScope ?? "room",
+  );
+  const [roomId, setRoomId] = useState(item.roomId ?? "");
+  const [start, setStart] = useState(item.startsAtLocal);
+  const [end, setEnd] = useState(item.endsAtLocal);
+  function saveService() {
+    if (item.kind !== "service" || !title.trim()) return;
+    if (scope === "room" && !roomId) return;
+    onUpdateService({
+      title,
+      scope: scope === "event" ? { type: "event" } : { type: "room", roomId },
+      startsAtLocal: start,
+      endsAtLocal: end,
+    });
+  }
+  const saveServiceAfterDelay = useEffectEvent(saveService);
+  useEffect(() => {
+    if (item.kind !== "service" || title === item.serviceTitle) return;
+    const timer = window.setTimeout(saveServiceAfterDelay, 500);
+    return () => window.clearTimeout(timer);
+  }, [item.kind, item.serviceTitle, title]);
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (item.kind === "service") saveService();
+    else onMove(start, end, roomId || null);
+  }
+
+  return (
+    <aside className="agenda-inspector">
+      <div className="agenda-inspector-heading">
+        <div>
+          <div className="eyebrow">{item.kind} details</div>
+          <h2>{item.kind === "program" ? item.title : title}</h2>
+        </div>
+        <button
+          className="text-button"
+          disabled={busy}
+          onClick={onClose}
+          type="button"
+        >
+          Close
+        </button>
+      </div>
+      <form onSubmit={submit}>
+        {item.kind === "service" && (
+          <>
+            <label>
+              Title
+              <input
+                maxLength={160}
+                onChange={(event) => setTitle(event.target.value)}
+                value={title}
+              />
+            </label>
+            <label>
+              Scope
+              <select
+                onChange={(event) =>
+                  setScope(event.target.value as "event" | "room")
+                }
+                value={scope}
+              >
+                <option value="event">All rooms</option>
+                <option value="room">One room</option>
+              </select>
+            </label>
+          </>
+        )}
+        {(item.kind === "program" || scope === "room") && (
+          <label>
+            Room
+            <select
+              onChange={(event) => setRoomId(event.target.value)}
+              value={roomId}
+            >
+              <option value="">Unassigned</option>
+              {rooms.map((room) => (
+                <option key={room.id} value={room.id}>
+                  {room.name}
+                  {room.archived ? " (archived)" : ""}
+                </option>
+              ))}
             </select>
           </label>
-          {serviceScope === "room" && (
-            <AgendaRoomSelect
-              label="Room"
-              onChange={setServiceRoomId}
-              rooms={agenda.data.rooms}
-              value={serviceRoomId}
-            />
-          )}
-          <AgendaTimeFields
-            end={resolvedServiceEnd}
-            max={eventTimeWindow.max}
-            min={eventTimeWindow.min}
-            onEnd={setServiceEnd}
-            onStart={setServiceStart}
-            start={resolvedServiceStart}
-          />
-          <AgendaEventContext eventTimeWindow={eventTimeWindow} />
-          <button
-            className="secondary-button"
-            disabled={placeService.isPending}
-            type="submit"
-          >
-            {placeService.isPending ? "Adding…" : "Add service block"}
-          </button>
-        </form>
-      </section>
-
-      <section className="working-agenda-list">
-        <div className="agenda-list-heading">
-          <div>
-            <div className="eyebrow">Working agenda</div>
-            <h2>
-              {agenda.data.items.length} durable item
-              {agenda.data.items.length === 1 ? "" : "s"}
-            </h2>
-          </div>
-          <span>{agenda.data.timezone}</span>
-        </div>
-        {agenda.data.items.length === 0 ? (
-          <p className="empty-copy">
-            Accepted program items and service blocks appear here.
-          </p>
-        ) : (
-          agenda.data.items.map((item) => (
-            <AgendaItemEditor
-              busy={
-                agendaStatus.isPendingFor(move, "agendaItemId", item.id)
-                  ? "move"
-                  : agendaStatus.isPendingFor(cancel, "agendaItemId", item.id)
-                    ? "cancel"
-                    : agendaStatus.isPendingFor(
-                          restore,
-                          "agendaItemId",
-                          item.id,
-                        )
-                      ? "restore"
-                      : agendaStatus.isPendingFor(
-                            removeService,
-                            "agendaItemId",
-                            item.id,
-                          )
-                        ? "remove"
-                        : undefined
-              }
-              item={item}
-              key={item.id}
-              eventTimeWindow={eventTimeWindow}
-              onCancel={() => cancel.mutate({ slug, agendaItemId: item.id })}
-              onMove={(input) =>
-                move.mutate({ slug, agendaItemId: item.id, ...input })
-              }
-              onRemove={() =>
-                removeService.mutate({ slug, agendaItemId: item.id })
-              }
-              onRestore={() => restore.mutate({ slug, agendaItemId: item.id })}
-              rooms={agenda.data.rooms}
-            />
-          ))
         )}
-      </section>
-    </div>
+        <label>
+          Starts
+          <input
+            onChange={(event) => setStart(event.target.value)}
+            step={900}
+            type="datetime-local"
+            value={start}
+          />
+        </label>
+        <label>
+          Ends
+          <input
+            onChange={(event) => setEnd(event.target.value)}
+            step={900}
+            type="datetime-local"
+            value={end}
+          />
+        </label>
+        {item.conflicts.length > 0 && (
+          <p className="form-error">{item.conflicts.join(" and ")} conflict</p>
+        )}
+        {item.roomArchivedAt && (
+          <p className="form-error">
+            This placement references an archived room.
+          </p>
+        )}
+        {error && (
+          <div className="agenda-save-error" role="alert">
+            <p>{error.message}</p>
+            <button className="text-button" onClick={error.retry} type="button">
+              Retry
+            </button>
+            {error.revert && (
+              <button
+                className="text-button"
+                onClick={error.revert}
+                type="button"
+              >
+                Revert
+              </button>
+            )}
+          </div>
+        )}
+        <button
+          className="secondary-button"
+          disabled={busy || Boolean(error)}
+          type="submit"
+        >
+          {busy ? "Saving…" : "Save changes"}
+        </button>
+      </form>
+      <div className="agenda-inspector-actions">
+        {item.kind === "program" && (
+          <button
+            className="text-button"
+            disabled={busy}
+            onClick={onCancel}
+            type="button"
+          >
+            {item.canceled ? "Restore placement" : "Cancel placement"}
+          </button>
+        )}
+        <button
+          className="text-button destructive-button"
+          disabled={busy}
+          onClick={onRemove}
+          type="button"
+        >
+          {item.kind === "program"
+            ? "Return to unplaced"
+            : "Delete service block"}
+        </button>
+      </div>
+    </aside>
   );
 }
 
@@ -367,429 +733,203 @@ export function PublicAgendaPage() {
     ),
   );
   if (agenda.isPending) return <AgendaStatus label="Opening public agenda" />;
-  if (agenda.isError) {
+  if (agenda.isError)
     return (
       <AgendaStatus
         label="Agenda not published"
         detail={agenda.error.message}
       />
     );
-  }
-  const view = searchParams.get("view") ?? "list";
-  const track = searchParams.get("track");
-  const room = searchParams.get("room");
-  const date = searchParams.get("date");
-  const tracks = unique(
-    agenda.data.items.flatMap((item) => item.trackName ?? []),
-  );
+  const data = agenda.data;
+  const view = searchParams.get("view") === "list" ? "list" : "calendar";
+  const selectedId = searchParams.get("item");
+  const selected = data.items.find((item) => item.id === selectedId) ?? null;
   const rooms = unique(
-    agenda.data.items.flatMap((item) => item.roomName ?? []),
-  );
-  const dates = unique(
-    agenda.data.items.map((item) =>
-      localDate(item.startsAt, agenda.data.event.timezone),
+    data.items.flatMap((item) =>
+      item.roomId && item.roomName
+        ? [{ id: item.roomId, name: item.roomName }]
+        : [],
     ),
+    (room) => room.id,
   );
-  const weeks = unique(dates.map(localWeekStart));
-  const selectedTrack = effectiveFilter(track, tracks);
-  const selectedRoom = effectiveFilter(room, rooms);
-  const selectedDate = effectiveFilter(date, dates);
-  const selectedWeek = effectiveFilter(searchParams.get("week"), weeks);
-  const visible = agenda.data.items.filter((item) => {
-    const eventWideService = item.kind === "service" && item.roomName === null;
-    if (view === "track" && selectedTrack) {
-      return eventWideService || item.trackName === selectedTrack;
+  const roomId = rooms.some((room) => room.id === searchParams.get("room"))
+    ? (searchParams.get("room") ?? "")
+    : "";
+  const visibleStart = clampVisibleStart(
+    searchParams.get("start"),
+    data.event.startsOn,
+    data.event.endsOn,
+  );
+  function updateUrl(values: Record<string, string | null>) {
+    const next = new URLSearchParams(searchParams);
+    for (const [key, value] of Object.entries(values)) {
+      if (value) next.set(key, value);
+      else next.delete(key);
     }
-    if (view === "room" && selectedRoom) {
-      return eventWideService || item.roomName === selectedRoom;
-    }
-    const itemDate = localDate(item.startsAt, agenda.data.event.timezone);
-    if (view === "day" && selectedDate) {
-      return itemDate === selectedDate;
-    }
-    if (view === "week" && selectedWeek) {
-      return localWeekStart(itemDate) === selectedWeek;
-    }
-    return true;
-  });
-
-  function chooseView(nextView: string) {
-    const next = new URLSearchParams();
-    next.set("view", nextView);
-    if (nextView === "track" && tracks[0]) next.set("track", tracks[0]);
-    if (nextView === "room" && rooms[0]) next.set("room", rooms[0]);
-    if (nextView === "day" && dates[0]) next.set("date", dates[0]);
-    if (nextView === "week" && weeks[0]) next.set("week", weeks[0]);
-    setSearchParams(next);
+    setSearchParams(next, { replace: true });
   }
-
   return (
     <main className="public-agenda">
       <header className="public-agenda-header">
         <Link className="wordmark" to="/">
           <span className="wordmark-mark">OB</span>
-          <span>{agenda.data.event.name}</span>
+          <span>{data.event.name}</span>
         </Link>
         <div>
           <div className="eyebrow">
-            Published agenda · revision {agenda.data.revision}
+            Published agenda · revision {data.revision}
           </div>
           <h1>Where to be next.</h1>
-          <p>{agenda.data.event.timezone}</p>
+          <p>{data.event.timezone}</p>
         </div>
       </header>
-      <nav className="agenda-view-tabs" aria-label="Agenda views">
-        {["list", "day", "week", "track", "room"].map((candidate) => (
-          <button
-            aria-pressed={view === candidate}
-            key={candidate}
-            onClick={() => chooseView(candidate)}
-            type="button"
+      <div className="public-agenda-controls">
+        <nav className="agenda-view-tabs" aria-label="Agenda views">
+          {(["calendar", "list"] as const).map((candidate) => (
+            <button
+              aria-pressed={view === candidate}
+              key={candidate}
+              onClick={() => updateUrl({ view: candidate })}
+              type="button"
+            >
+              {candidate}
+            </button>
+          ))}
+        </nav>
+        <label>
+          Room
+          <select
+            onChange={(event) =>
+              updateUrl({ room: event.target.value || null })
+            }
+            value={roomId}
           >
-            {candidate}
-          </button>
-        ))}
-      </nav>
-      {view === "day" && (
-        <AgendaFilter
-          label="Day"
-          onChange={(value) => setSearchParams({ view, date: value })}
-          options={dates}
-          value={selectedDate ?? ""}
+            <option value="">All rooms</option>
+            {rooms.map((room) => (
+              <option key={room.id} value={room.id}>
+                {room.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div
+        className={`public-agenda-workspace${selected ? " has-inspector" : ""}`}
+      >
+        <AgendaCalendar
+          editable={false}
+          endsOn={data.event.endsOn}
+          items={data.items.map((item) => ({
+            id: item.id,
+            kind: item.kind,
+            title: item.title,
+            roomId: item.roomId,
+            roomName: item.roomName,
+            startsAt: item.startsAt,
+            endsAt: item.endsAt,
+            trackName: item.trackName,
+            speakers: item.speakers,
+          }))}
+          onSelect={(id) => updateUrl({ item: id })}
+          onVisibleStartChange={(start) => updateUrl({ start })}
+          roomId={roomId}
+          selectedId={selectedId}
+          startsOn={data.event.startsOn}
+          timezone={data.event.timezone}
+          view={view}
+          visibleStart={visibleStart}
         />
-      )}
-      {view === "week" && (
-        <AgendaFilter
-          label="Week"
-          onChange={(value) => setSearchParams({ view, week: value })}
-          optionLabel={formatWeek}
-          options={weeks}
-          value={selectedWeek ?? ""}
-        />
-      )}
-      {view === "track" && (
-        <AgendaFilter
-          label="Track"
-          onChange={(value) => setSearchParams({ view, track: value })}
-          options={tracks}
-          value={selectedTrack ?? ""}
-        />
-      )}
-      {view === "room" && (
-        <AgendaFilter
-          label="Room"
-          onChange={(value) => setSearchParams({ view, room: value })}
-          options={rooms}
-          value={selectedRoom ?? ""}
-        />
-      )}
-      <div className={`public-agenda-items public-agenda-${view}`}>
-        {visible.length === 0 ? (
-          <p className="empty-copy">No published items match this view.</p>
-        ) : (
-          visible.map((item) => (
-            <article className="public-agenda-item" key={item.id}>
-              <time>
-                {formatAgendaTime(item.startsAt, agenda.data.event.timezone)}
-                <span>
-                  – {formatAgendaTime(item.endsAt, agenda.data.event.timezone)}
-                </span>
-              </time>
-              <div>
-                <div className="agenda-item-tags">
-                  <span>{item.roomName ?? "All rooms"}</span>
-                  {item.trackName && <span>{item.trackName}</span>}
-                </div>
-                <h2>{item.title}</h2>
-                {item.speakers.length > 0 && (
-                  <p>
-                    {item.speakers
-                      .map((speaker) => speaker.displayName)
-                      .join(", ")}
-                  </p>
-                )}
-                {item.abstract && (
-                  <p className="agenda-abstract">{item.abstract}</p>
-                )}
-              </div>
-            </article>
-          ))
+        {selected && (
+          <aside className="agenda-inspector public-agenda-inspector">
+            <button
+              className="text-button"
+              onClick={() => updateUrl({ item: null })}
+              type="button"
+            >
+              Close
+            </button>
+            <div className="eyebrow">
+              {selected.roomName ?? "All rooms"}
+              {selected.trackName ? ` · ${selected.trackName}` : ""}
+            </div>
+            <h2>{selected.title}</h2>
+            <p>
+              {formatAgendaRange(
+                selected.startsAt,
+                selected.endsAt,
+                data.event.timezone,
+              )}
+            </p>
+            {selected.speakers.length > 0 && (
+              <p>
+                {selected.speakers
+                  .map((speaker) => speaker.displayName)
+                  .join(", ")}
+              </p>
+            )}
+            {selected.abstract && (
+              <p className="agenda-abstract">{selected.abstract}</p>
+            )}
+          </aside>
         )}
       </div>
     </main>
   );
 }
 
-function AgendaItemEditor({
-  item,
-  eventTimeWindow,
-  rooms,
-  onMove,
-  onCancel,
-  onRestore,
-  onRemove,
-  busy,
-}: {
-  item: {
-    id: string;
-    kind: "program" | "service";
-    title: string | null;
-    serviceTitle: string | null;
-    serviceScope: "event" | "room" | null;
-    roomId: string | null;
-    roomName: string | null;
-    startsAtLocal: string;
-    endsAtLocal: string;
-    canceled: boolean;
-    conflicts: Array<"room" | "speaker">;
-    speakers: Array<{ displayName: string }>;
-  };
-  eventTimeWindow: AgendaTimeWindow;
-  rooms: Array<{ id: string; name: string }>;
-  onMove: (input: {
-    roomId: string | null;
-    startsAtLocal: string;
-    endsAtLocal: string;
-  }) => void;
-  onCancel: () => void;
-  onRestore: () => void;
-  onRemove: () => void;
-  busy?: "move" | "cancel" | "restore" | "remove" | undefined;
-}) {
-  const [roomId, setRoomId] = useState(item.roomId ?? "");
-  const [start, setStart] = useState(item.startsAtLocal);
-  const [end, setEnd] = useState(item.endsAtLocal);
-  return (
-    <article
-      className={`working-agenda-item${item.canceled ? " is-canceled" : ""}`}
-    >
-      <div className="working-item-summary">
-        <div className="agenda-item-tags">
-          <span>
-            {item.kind === "program"
-              ? "Program"
-              : item.serviceScope === "event"
-                ? "All rooms"
-                : "Room block"}
-          </span>
-          {item.conflicts.map((conflict) => (
-            <strong key={conflict}>{conflict} conflict</strong>
-          ))}
-          {item.canceled && <strong>Canceled</strong>}
-        </div>
-        <h3>{item.kind === "program" ? item.title : item.serviceTitle}</h3>
-        {item.speakers.length > 0 && (
-          <p>
-            {item.speakers.map((speaker) => speaker.displayName).join(", ")}
-          </p>
-        )}
-      </div>
-      <form
-        className="working-item-controls"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onMove({
-            roomId: item.serviceScope === "event" ? null : roomId || null,
-            startsAtLocal: start,
-            endsAtLocal: end,
-          });
-        }}
-      >
-        {item.serviceScope !== "event" && (
-          <AgendaRoomSelect
-            allowEmpty={item.kind === "program"}
-            label="Room"
-            onChange={setRoomId}
-            rooms={rooms}
-            value={roomId}
-          />
-        )}
-        <AgendaTimeFields
-          end={end}
-          max={eventTimeWindow.max}
-          min={eventTimeWindow.min}
-          onEnd={setEnd}
-          onStart={setStart}
-          start={start}
-        />
-        <AgendaEventContext eventTimeWindow={eventTimeWindow} />
-        <div className="working-item-actions">
-          <button
-            className="text-button"
-            disabled={busy === "move"}
-            type="submit"
-          >
-            {busy === "move" ? "Saving…" : "Save move"}
-          </button>
-          {item.kind === "program" ? (
-            <button
-              className="text-button"
-              disabled={busy === "cancel" || busy === "restore"}
-              onClick={item.canceled ? onRestore : onCancel}
-              type="button"
-            >
-              {item.canceled
-                ? busy === "restore"
-                  ? "Restoring…"
-                  : "Restore"
-                : busy === "cancel"
-                  ? "Canceling…"
-                  : "Cancel"}
-            </button>
-          ) : (
-            <button
-              className="text-button"
-              disabled={busy === "remove"}
-              onClick={onRemove}
-              type="button"
-            >
-              {busy === "remove" ? "Removing…" : "Remove"}
-            </button>
-          )}
-        </div>
-      </form>
-    </article>
-  );
-}
-
-function AgendaRoomSelect({
-  label,
-  rooms,
-  value,
-  onChange,
-  allowEmpty = false,
-}: {
-  label: string;
-  rooms: Array<{ id: string; name: string }>;
-  value: string;
-  onChange: (value: string) => void;
-  allowEmpty?: boolean;
-}) {
-  return (
-    <label>
-      {label}
-      <select
-        onChange={(event) => onChange(event.target.value)}
-        required={!allowEmpty}
-        value={value}
-      >
-        <option value="">{allowEmpty ? "Unassigned" : "Choose room"}</option>
-        {rooms.map((room) => (
-          <option key={room.id} value={room.id}>
-            {room.name}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function AgendaTimeFields({
-  start,
-  end,
-  min,
-  max,
-  onStart,
-  onEnd,
-}: {
-  start: string;
-  end: string;
-  min: string;
-  max: string;
-  onStart: (value: string) => void;
-  onEnd: (value: string) => void;
-}) {
-  return (
-    <div className="agenda-time-fields">
-      <label>
-        Starts
-        <input
-          max={max}
-          min={min}
-          onChange={(event) => onStart(event.target.value)}
-          required
-          type="datetime-local"
-          value={start}
-        />
-      </label>
-      <label>
-        Ends
-        <input
-          max={max}
-          min={min}
-          onChange={(event) => onEnd(event.target.value)}
-          required
-          type="datetime-local"
-          value={end}
-        />
-      </label>
-    </div>
-  );
-}
-
-function AgendaEventContext({
-  eventTimeWindow,
-}: {
-  eventTimeWindow: AgendaTimeWindow;
-}) {
-  return (
-    <p className="agenda-event-context">
-      Event{" "}
-      {formatEventDateRange(eventTimeWindow.startsOn, eventTimeWindow.endsOn)} ·{" "}
-      {eventTimeWindow.timezone}
-    </p>
-  );
-}
-
-type AgendaTimeWindow = {
-  startsOn: string;
-  endsOn: string;
-  timezone: string;
-  min: string;
-  max: string;
-  defaultStart: string;
-  defaultEnd: string;
-};
-
-function agendaTimeWindow(event: {
-  startsOn: string;
-  endsOn: string;
-  timezone: string;
-}): AgendaTimeWindow {
+function toWorkingCalendarItem(item: WorkingItem): AgendaCalendarItem {
   return {
-    ...event,
-    min: `${event.startsOn}T00:00`,
-    max: `${event.endsOn}T23:59`,
-    defaultStart: `${event.startsOn}T${defaultAgendaStartTime}`,
-    defaultEnd: `${event.startsOn}T${defaultAgendaEndTime}`,
+    id: item.id,
+    kind: item.kind,
+    title:
+      item.kind === "program"
+        ? (item.title ?? "Untitled program item")
+        : (item.serviceTitle ?? "New service block"),
+    roomId: item.roomId,
+    roomName: item.roomName,
+    startsAt: item.startsAtLocal,
+    endsAt: item.endsAtLocal,
+    trackName: item.trackName,
+    speakers: item.speakers,
+    canceled: item.canceled,
+    conflicts: item.conflicts,
   };
 }
 
-function AgendaFilter({
-  label,
-  options,
-  value,
-  onChange,
-  optionLabel = (option) => option,
-}: {
-  label: string;
-  options: string[];
-  value: string;
-  onChange: (value: string) => void;
-  optionLabel?: (option: string) => string;
-}) {
-  return (
-    <label className="agenda-public-filter">
-      {label}
-      <select onChange={(event) => onChange(event.target.value)} value={value}>
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {optionLabel(option)}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
+function effectiveRoom(
+  requested: string | null,
+  rooms: WorkingAgenda["rooms"],
+): string {
+  return requested && rooms.some((room) => room.id === requested)
+    ? requested
+    : "";
+}
+
+function unique<T>(
+  values: T[],
+  key: (value: T) => string = (value) => String(value),
+): T[] {
+  return [...new Map(values.map((value) => [key(value), value])).values()];
+}
+
+function maxDate(left: string, right: string): string {
+  return left > right ? left : right;
+}
+
+function formatAgendaRange(
+  start: string,
+  end: string,
+  timezone: string,
+): string {
+  const formatter = new Intl.DateTimeFormat("en", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: timezone,
+  });
+  return `${formatter.format(new Date(start))} – ${formatter.format(new Date(end))}`;
 }
 
 function AgendaStatus({ label, detail }: { label: string; detail?: string }) {
@@ -800,54 +940,4 @@ function AgendaStatus({ label, detail }: { label: string; detail?: string }) {
       {detail && <p>{detail}</p>}
     </main>
   );
-}
-
-function unique(values: string[]): string[] {
-  return [...new Set(values)];
-}
-
-function effectiveFilter(
-  requested: string | null,
-  options: string[],
-): string | null {
-  return requested && options.includes(requested)
-    ? requested
-    : (options[0] ?? null);
-}
-
-function localDate(value: string, timezone: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(value));
-}
-
-function localWeekStart(value: string): string {
-  const [year, month, day] = value.split("-").map(Number);
-  const date = new Date(Date.UTC(year ?? 0, (month ?? 1) - 1, day ?? 1));
-  const daysSinceMonday = (date.getUTCDay() + 6) % 7;
-  date.setUTCDate(date.getUTCDate() - daysSinceMonday);
-  return date.toISOString().slice(0, 10);
-}
-
-function formatWeek(value: string): string {
-  return `Week of ${new Intl.DateTimeFormat("en", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(`${value}T00:00:00Z`))}`;
-}
-
-function formatAgendaTime(value: string, timezone: string): string {
-  return new Intl.DateTimeFormat("en", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: timezone,
-  }).format(new Date(value));
 }

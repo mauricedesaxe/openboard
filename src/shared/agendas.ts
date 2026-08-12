@@ -41,6 +41,16 @@ export const moveAgendaItemSchema = agendaTimeRangeSchema.extend({
   roomId: roomIdSchema.nullable(),
 });
 
+export const updateServiceBlockSchema = agendaTimeRangeSchema.extend({
+  slug: eventInputSchema.shape.slug,
+  agendaItemId: agendaItemIdSchema,
+  title: z.string().trim().min(1).max(160),
+  scope: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("event") }),
+    z.object({ type: z.literal("room"), roomId: roomIdSchema }),
+  ]),
+});
+
 export const agendaItemActionSchema = z.object({
   slug: eventInputSchema.shape.slug,
   agendaItemId: agendaItemIdSchema,
@@ -54,4 +64,5 @@ export const publishAgendaSchema = z.object({
 export type PlaceProgramItemInput = z.infer<typeof placeProgramItemSchema>;
 export type PlaceServiceBlockInput = z.infer<typeof placeServiceBlockSchema>;
 export type MoveAgendaItemInput = z.infer<typeof moveAgendaItemSchema>;
+export type UpdateServiceBlockInput = z.infer<typeof updateServiceBlockSchema>;
 export type PublishAgendaInput = z.infer<typeof publishAgendaSchema>;
