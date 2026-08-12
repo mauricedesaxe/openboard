@@ -5,6 +5,7 @@ import type {
   EventAccess,
   EventId,
   EventInput,
+  EventPermission,
   UserId,
 } from "../../shared/events";
 import { defaultCommunicationTemplateValues } from "../communications/repository";
@@ -62,7 +63,14 @@ export async function createEvent(
 
   return {
     ok: true,
-    value: { ...input, id, ownerUserId, agendaId, access: "owner" },
+    value: {
+      ...input,
+      id,
+      ownerUserId,
+      agendaId,
+      access: "owner",
+      permissions: ["organizer", "reviewer"],
+    },
   };
 }
 
@@ -87,7 +95,13 @@ export async function findOwnedEvent(
     .where(and(eq(events.ownerUserId, ownerUserId), eq(events.slug, slug)))
     .limit(1);
 
-  return row ? ({ ...row, access: "owner" } as Event) : undefined;
+  return row
+    ? ({
+        ...row,
+        access: "owner",
+        permissions: ["organizer", "reviewer"],
+      } as Event)
+    : undefined;
 }
 
 export async function findEventForUser(
@@ -135,7 +149,11 @@ export async function findEventForOrganizer(
   if (!result) return undefined;
   const eventAccess: EventAccess =
     result.ownerUserId === userId ? "owner" : "organizer";
-  return { ...result, access: eventAccess } as Event & {
+  return {
+    ...result,
+    access: eventAccess,
+    permissions: ["organizer"],
+  } as Event & {
     agendaRevision: number;
   };
 }
@@ -160,7 +178,11 @@ export async function listOwnedEvents(
     .where(eq(events.ownerUserId, ownerUserId))
     .orderBy(events.startsOn);
 
-  return rows.map((row) => ({ ...row, access: "owner" })) as Event[];
+  return rows.map((row) => ({
+    ...row,
+    access: "owner",
+    permissions: ["organizer", "reviewer"],
+  })) as Event[];
 }
 
 export async function listEventsForUser(
@@ -233,9 +255,26 @@ function combineAccessibleRows(
           ? "organizer"
           : "reviewer";
     const current = accessible.get(row.id as EventId);
-    if (!current || access === "owner" || access === "organizer") {
-      accessible.set(row.id as EventId, { ...row, access } as Event);
+    const permissions = new Set<EventPermission>(current?.permissions ?? []);
+    if (row.ownerUserId === userId) {
+      permissions.add("organizer");
+      permissions.add("reviewer");
+    } else if (role) {
+      permissions.add(role);
     }
+    accessible.set(
+      row.id as EventId,
+      {
+        ...row,
+        access:
+          current?.access === "owner" || access === "owner"
+            ? "owner"
+            : current?.access === "organizer" || access === "organizer"
+              ? "organizer"
+              : "reviewer",
+        permissions: [...permissions],
+      } as Event,
+    );
   }
   return [...accessible.values()];
 }

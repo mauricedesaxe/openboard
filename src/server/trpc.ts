@@ -93,6 +93,7 @@ import {
   listEventsForUser,
   renameOwnedEvent,
 } from "./events/repository";
+import { getEventWorkspace } from "./events/workspace";
 import type { Auth } from "./identity/auth";
 import {
   attachTaskFile,
@@ -353,6 +354,17 @@ export const appRouter = trpc.router({
     }),
   }),
   events: trpc.router({
+    workspace: authenticatedProcedure
+      .input(slugInput)
+      .query(async ({ ctx, input }) => {
+        const workspace = await getEventWorkspace(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+        );
+        if (!workspace) throwEventNotFound();
+        return workspace;
+      }),
     create: authenticatedProcedure
       .input(eventInputSchema)
       .mutation(async ({ ctx, input }) => {

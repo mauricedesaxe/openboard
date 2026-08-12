@@ -887,6 +887,8 @@ async function listEventAssignments(database: Database, eventId: string) {
       required: taskAssignments.required,
       dueAt: taskAssignments.dueAt,
       completionRevision: taskAssignments.completionRevision,
+      eventName: events.name,
+      eventSlug: events.slug,
       eventTimezone: events.timezone,
     })
     .from(taskAssignments)
@@ -944,6 +946,8 @@ async function listAccessibleAssignments(database: Database, userId: UserId) {
       required: taskAssignments.required,
       dueAt: taskAssignments.dueAt,
       completionRevision: taskAssignments.completionRevision,
+      eventName: events.name,
+      eventSlug: events.slug,
       eventTimezone: events.timezone,
     })
     .from(taskAssignments)
@@ -994,6 +998,8 @@ async function findAssignment(database: Database, assignmentId: string) {
       required: taskAssignments.required,
       dueAt: taskAssignments.dueAt,
       completionRevision: taskAssignments.completionRevision,
+      eventName: events.name,
+      eventSlug: events.slug,
       eventTimezone: events.timezone,
     })
     .from(taskAssignments)
@@ -1349,6 +1355,8 @@ function presentAssignment(assignment: NonNullable<AssignmentRow>) {
     required: assignment.required,
     dueAt: assignment.dueAt,
     completionRevision: assignment.completionRevision,
+    eventName: assignment.eventName,
+    eventSlug: assignment.eventSlug,
     eventTimezone: assignment.eventTimezone,
   };
 }
