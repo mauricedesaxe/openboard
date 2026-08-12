@@ -4,49 +4,29 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
+import {
+  invalidAgendaTimeRangeMessage,
+  isValidAgendaTimeRange,
+} from "../shared/agendas";
+
 import { AgendaCalendar, type AgendaCalendarItem } from "./AgendaCalendar";
 import { MutationStatus } from "./MutationStatus";
-import { addDays, clampVisibleStart } from "./agenda-calendar-model";
+import {
+  addDays,
+  clampVisibleStart,
+  derivePublicVisibleHours,
+  moveItemInAgenda,
+  placeProgramInAgenda,
+  placeServiceInAgenda,
+  removeItemFromAgenda,
+  replaceAgendaItemId,
+  setCanceledInAgenda,
+  unplaceProgramInAgenda,
+  updateServiceInAgenda,
+  type WorkingAgenda,
+  type WorkingItem,
+} from "./agenda-calendar-model";
 import { useTRPC } from "./trpc";
-
-type WorkingAgenda = {
-  revision: number;
-  timezone: string;
-  startsOn: string;
-  endsOn: string;
-  rooms: Array<{
-    id: string;
-    name: string;
-    position: number;
-    archived: boolean;
-  }>;
-  unplacedProgramItems: Array<{
-    id: string;
-    title: string;
-    format: string;
-    track: string;
-  }>;
-  items: WorkingItem[];
-};
-
-type WorkingItem = {
-  id: string;
-  kind: "program" | "service";
-  programItemId: string | null;
-  title: string | null;
-  serviceTitle: string | null;
-  serviceScope: "event" | "room" | null;
-  roomId: string | null;
-  roomName: string | null;
-  roomArchivedAt: Date | null;
-  startsAtLocal: string;
-  endsAtLocal: string;
-  revision: number;
-  canceled: boolean;
-  trackName: string | null;
-  conflicts: Array<"room" | "speaker">;
-  speakers: Array<{ displayName: string }>;
-};
 
 type UndoAction = { label: string; run: () => void };
 
@@ -62,7 +42,9 @@ export function AgendaPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const trpc = useTRPC();
   const queryClient = useQueryClient();
-  const agenda = useQuery(trpc.agendas.working.queryOptions({ slug }));
+  const workingQuery = trpc.agendas.working.queryOptions({ slug });
+  const workingFilter = trpc.agendas.working.queryFilter({ slug });
+  const agenda = useQuery(workingQuery);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [track, setTrack] = useState("");
@@ -73,18 +55,9 @@ export function AgendaPage() {
     revert?: () => void;
   }>();
   const [undo, setUndo] = useState<UndoAction>();
-  const refresh = () =>
-    queryClient.invalidateQueries(trpc.agendas.working.queryFilter({ slug }));
-  const placeProgram = useMutation(
-    trpc.agendas.placeProgram.mutationOptions({
-      onSuccess: () => void refresh(),
-    }),
-  );
-  const placeService = useMutation(
-    trpc.agendas.placeService.mutationOptions({
-      onSuccess: () => void refresh(),
-    }),
-  );
+  const refresh = () => queryClient.invalidateQueries(workingFilter);
+  const placeProgram = useMutation(trpc.agendas.placeProgram.mutationOptions());
+  const placeService = useMutation(trpc.agendas.placeService.mutationOptions());
   const move = useMutation(trpc.agendas.move.mutationOptions());
   const updateService = useMutation(
     trpc.agendas.updateService.mutationOptions(),
@@ -101,12 +74,33 @@ export function AgendaPage() {
     }),
   );
   const pending =
+    placeProgram.isPending ||
+    placeService.isPending ||
     move.isPending ||
     updateService.isPending ||
     cancel.isPending ||
     restore.isPending ||
     unplace.isPending ||
     removeService.isPending;
+
+  async function updateWorkingAgenda(
+    update: (current: WorkingAgenda) => WorkingAgenda,
+  ): Promise<WorkingAgenda | undefined> {
+    await queryClient.cancelQueries(workingFilter);
+    const previous = queryClient.getQueryData<WorkingAgenda>(
+      workingQuery.queryKey,
+    );
+    queryClient.setQueryData(workingQuery.queryKey, (current) =>
+      current ? (update(current) as typeof current) : current,
+    );
+    return previous;
+  }
+
+  function restoreWorkingAgenda(previous: WorkingAgenda | undefined) {
+    if (previous) {
+      queryClient.setQueryData(workingQuery.queryKey, previous as never);
+    }
+  }
 
   useEffect(() => {
     function warnBeforeLeave(event: BeforeUnloadEvent) {
@@ -155,12 +149,13 @@ export function AgendaPage() {
     setSearchParams(next, { replace: true });
   }
 
-  function saveMove(
+  async function saveMove(
     item: WorkingItem,
     startsAtLocal: string,
     endsAtLocal: string,
     room: string | null,
     revert?: () => void,
+    recordUndo = true,
   ) {
     if (saveError?.itemId === item.id) setSaveError(undefined);
     const previous = {
@@ -175,29 +170,36 @@ export function AgendaPage() {
       startsAtLocal,
       endsAtLocal,
     };
+    const previousAgenda = await updateWorkingAgenda((current) =>
+      moveItemInAgenda(current, input),
+    );
     move.mutate(input, {
       onSuccess: () => {
         setSaveError(undefined);
-        setUndo({
-          label: "Move saved",
-          run: () =>
-            saveMove(
-              item,
-              previous.startsAtLocal,
-              previous.endsAtLocal,
-              previous.roomId,
-            ),
-        });
-        void refresh();
+        if (recordUndo) {
+          setUndo({
+            label: "Move saved",
+            run: () =>
+              void saveMove(
+                item,
+                previous.startsAtLocal,
+                previous.endsAtLocal,
+                previous.roomId,
+                undefined,
+                false,
+              ),
+          });
+        }
       },
       onError: (error) => {
+        restoreWorkingAgenda(previousAgenda);
         revert?.();
         setSaveError({
           itemId: item.id,
           message: error.message,
           retry: () => {
             setSaveError(undefined);
-            saveMove(item, startsAtLocal, endsAtLocal, room, revert);
+            void saveMove(item, startsAtLocal, endsAtLocal, room, revert);
           },
           ...(revert
             ? {
@@ -209,100 +211,241 @@ export function AgendaPage() {
             : {}),
         });
       },
+      onSettled: () => void refresh(),
     });
   }
 
-  function createService(startsAtLocal: string, endsAtLocal: string) {
-    placeService.mutate(
-      {
-        slug,
-        title: "New service block",
-        scope: roomId ? { type: "room", roomId } : { type: "event" },
-        startsAtLocal,
-        endsAtLocal,
-      },
-      {
-        onSuccess: (created) => {
-          updateUrl({ item: created.id });
+  async function createService(
+    startsAtLocal: string,
+    endsAtLocal: string,
+    recordUndo = true,
+  ) {
+    const temporaryId = `optimistic:${crypto.randomUUID()}`;
+    const input = {
+      slug,
+      title: "New service block",
+      scope: roomId
+        ? ({ type: "room", roomId } as const)
+        : ({ type: "event" } as const),
+      startsAtLocal,
+      endsAtLocal,
+    };
+    const previousAgenda = await updateWorkingAgenda((current) =>
+      placeServiceInAgenda(current, { ...input, temporaryId }),
+    );
+    placeService.mutate(input, {
+      onSuccess: (created) => {
+        queryClient.setQueryData<WorkingAgenda>(
+          workingQuery.queryKey,
+          (current) =>
+            current
+              ? replaceAgendaItemId(current, temporaryId, created.id)
+              : current,
+        );
+        updateUrl({ item: created.id });
+        if (recordUndo) {
           setUndo({
             label: "Service block added",
-            run: () =>
-              removeService.mutate(
-                { slug, agendaItemId: created.id },
-                { onSuccess: () => void refresh() },
-              ),
+            run: () => void removeAgendaItem(created.id, "service", false),
           });
-        },
+        }
       },
-    );
+      onError: () => restoreWorkingAgenda(previousAgenda),
+      onSettled: () => void refresh(),
+    });
   }
 
-  function saveService(
+  async function saveService(
     item: WorkingItem,
     input: ServiceBlockDraft,
     expectedRevision: number,
     onSaved: (revision: number) => void,
   ) {
     if (saveError?.itemId === item.id) setSaveError(undefined);
-    updateService.mutate(
-      {
-        slug,
-        agendaItemId: item.id,
-        expectedRevision,
-        ...input,
+    const mutationInput = {
+      slug,
+      agendaItemId: item.id,
+      expectedRevision,
+      ...input,
+    };
+    const previousAgenda = await updateWorkingAgenda((current) =>
+      updateServiceInAgenda(current, mutationInput),
+    );
+    updateService.mutate(mutationInput, {
+      onSuccess: (saved) => {
+        setSaveError(undefined);
+        onSaved(saved.revision);
       },
+      onError: (error) => {
+        restoreWorkingAgenda(previousAgenda);
+        setSaveError({
+          itemId: item.id,
+          message: error.message,
+          retry: () => void saveService(item, input, expectedRevision, onSaved),
+        });
+      },
+      onSettled: () => void refresh(),
+    });
+  }
+
+  async function dropPaletteItem(
+    paletteId: string,
+    startsAtLocal: string,
+    endsAtLocal: string,
+    placementRoomId: string | null = roomId || null,
+    recordUndo = true,
+  ) {
+    if (paletteId === "new-service") {
+      await createService(startsAtLocal, endsAtLocal, recordUndo);
+      return;
+    }
+    const temporaryId = `optimistic:${crypto.randomUUID()}`;
+    const input = {
+      slug,
+      programItemId: paletteId,
+      roomId: placementRoomId,
+      startsAtLocal,
+      endsAtLocal,
+    };
+    const previousAgenda = await updateWorkingAgenda((current) =>
+      placeProgramInAgenda(current, { ...input, temporaryId }),
+    );
+    placeProgram.mutate(input, {
+      onSuccess: (created) => {
+        queryClient.setQueryData<WorkingAgenda>(
+          workingQuery.queryKey,
+          (current) =>
+            current
+              ? replaceAgendaItemId(current, temporaryId, created.id)
+              : current,
+        );
+        updateUrl({ item: created.id });
+        if (recordUndo) {
+          setUndo({
+            label: "Program item placed",
+            run: () => void removeAgendaItem(created.id, "program", false),
+          });
+        }
+      },
+      onError: () => restoreWorkingAgenda(previousAgenda),
+      onSettled: () => void refresh(),
+    });
+  }
+
+  async function setPlacementCanceled(item: WorkingItem, recordUndo = true) {
+    const mutation = item.canceled ? restore : cancel;
+    const previousAgenda = await updateWorkingAgenda((current) =>
+      setCanceledInAgenda(current, item.id, !item.canceled),
+    );
+    mutation.mutate(
+      { slug, agendaItemId: item.id },
       {
-        onSuccess: (saved) => {
-          setSaveError(undefined);
-          onSaved(saved.revision);
-          void refresh();
+        onSuccess: () => {
+          if (recordUndo) {
+            setUndo({
+              label: item.canceled
+                ? "Placement restored"
+                : "Placement canceled",
+              run: () =>
+                void setPlacementCanceled(
+                  { ...item, canceled: !item.canceled },
+                  false,
+                ),
+            });
+          }
         },
-        onError: (error) =>
-          setSaveError({
-            itemId: item.id,
-            message: error.message,
-            retry: () => saveService(item, input, expectedRevision, onSaved),
-          }),
+        onError: () => restoreWorkingAgenda(previousAgenda),
+        onSettled: () => void refresh(),
       },
     );
   }
 
-  function dropPaletteItem(
-    paletteId: string,
-    startsAtLocal: string,
-    endsAtLocal: string,
+  async function removeAgendaItem(
+    itemId: string,
+    kind: "program" | "service",
+    recordUndo = true,
   ) {
-    if (paletteId === "new-service") {
-      createService(startsAtLocal, endsAtLocal);
-      return;
-    }
-    placeProgram.mutate(
+    const current = queryClient
+      .getQueryData<WorkingAgenda>(workingQuery.queryKey)
+      ?.items.find((item) => item.id === itemId);
+    if (!current) return;
+    const previousAgenda = await updateWorkingAgenda((agendaData) =>
+      kind === "program"
+        ? unplaceProgramInAgenda(agendaData, itemId)
+        : removeItemFromAgenda(agendaData, itemId),
+    );
+    const mutation = kind === "program" ? unplace : removeService;
+    mutation.mutate(
+      { slug, agendaItemId: itemId },
       {
-        slug,
-        programItemId: paletteId,
-        roomId: roomId || null,
-        startsAtLocal,
-        endsAtLocal,
-      },
-      {
-        onSuccess: (created) => {
-          updateUrl({ item: created.id });
-          setUndo({
-            label: "Program item placed",
-            run: () =>
-              unplace.mutate(
-                { slug, agendaItemId: created.id },
-                { onSuccess: () => void refresh() },
-              ),
-          });
+        onSuccess: () => {
+          updateUrl({ item: null });
+          if (recordUndo) {
+            setUndo({
+              label:
+                kind === "program"
+                  ? "Program item returned to unplaced"
+                  : "Service block deleted",
+              run: () => void restoreRemovedItem(current),
+            });
+          }
         },
+        onError: () => restoreWorkingAgenda(previousAgenda),
+        onSettled: () => void refresh(),
       },
     );
+  }
+
+  async function restoreRemovedItem(item: WorkingItem) {
+    if (item.kind === "program" && item.programItemId) {
+      await dropPaletteItem(
+        item.programItemId,
+        item.startsAtLocal,
+        item.endsAtLocal,
+        item.roomId,
+        false,
+      );
+      return;
+    }
+    const scope =
+      item.serviceScope === "room" && item.roomId
+        ? ({ type: "room", roomId: item.roomId } as const)
+        : ({ type: "event" } as const);
+    const temporaryId = `optimistic:${crypto.randomUUID()}`;
+    const input = {
+      slug,
+      title: item.serviceTitle ?? "New service block",
+      scope,
+      startsAtLocal: item.startsAtLocal,
+      endsAtLocal: item.endsAtLocal,
+    };
+    const previousAgenda = await updateWorkingAgenda((current) =>
+      placeServiceInAgenda(current, { ...input, temporaryId }),
+    );
+    placeService.mutate(input, {
+      onSuccess: (created) =>
+        queryClient.setQueryData<WorkingAgenda>(
+          workingQuery.queryKey,
+          (current) =>
+            current
+              ? replaceAgendaItemId(current, temporaryId, created.id)
+              : current,
+        ),
+      onError: () => restoreWorkingAgenda(previousAgenda),
+      onSettled: () => void refresh(),
+    });
+  }
+
+  function runUndo() {
+    const action = undo;
+    if (!action) return;
+    setUndo(undefined);
+    action.run();
   }
 
   function placePaletteItem(paletteId: string) {
     const start = `${visibleStart}T09:00`;
-    dropPaletteItem(paletteId, start, addLocalMinutes(start, 60));
+    void dropPaletteItem(paletteId, start, addLocalMinutes(start, 60));
     setPaletteOpen(false);
   }
 
@@ -391,7 +534,7 @@ export function AgendaPage() {
       {undo && (
         <div className="agenda-undo" role="status">
           <span>{undo.label}</span>
-          <button className="text-button" onClick={undo.run} type="button">
+          <button className="text-button" onClick={runUndo} type="button">
             Undo
           </button>
           <button
@@ -405,7 +548,10 @@ export function AgendaPage() {
       )}
       <button
         className="agenda-mobile-palette primary-button"
-        onClick={() => setPaletteOpen(true)}
+        onClick={() => {
+          updateUrl({ item: null });
+          setPaletteOpen(true);
+        }}
         type="button"
       >
         Add to agenda
@@ -430,10 +576,13 @@ export function AgendaPage() {
           onExternalDrop={dropPaletteItem}
           onMove={(id, start, end, revert) => {
             const item = data.items.find((candidate) => candidate.id === id);
-            if (item) saveMove(item, start, end, item.roomId, revert);
+            if (item) void saveMove(item, start, end, item.roomId, revert);
           }}
           onSelect={(id) => {
-            if (!pending) updateUrl({ item: id });
+            if (!pending) {
+              setPaletteOpen(false);
+              updateUrl({ item: id });
+            }
           }}
           onVisibleStartChange={(start) => updateUrl({ start })}
           roomId={roomId}
@@ -449,90 +598,16 @@ export function AgendaPage() {
             busy={pending}
             {...(saveError?.itemId === selected.id ? { error: saveError } : {})}
             item={selected}
-            onCancel={() => {
-              const mutation = selected.canceled ? restore : cancel;
-              mutation.mutate(
-                { slug, agendaItemId: selected.id },
-                {
-                  onSuccess: () => {
-                    setUndo({
-                      label: selected.canceled
-                        ? "Placement restored"
-                        : "Placement canceled",
-                      run: () =>
-                        (selected.canceled ? cancel : restore).mutate(
-                          { slug, agendaItemId: selected.id },
-                          { onSuccess: () => void refresh() },
-                        ),
-                    });
-                    void refresh();
-                  },
-                },
-              );
-            }}
+            onCancel={() => void setPlacementCanceled(selected)}
             onClose={() => {
               if (!pending) updateUrl({ item: null });
             }}
-            onMove={(start, end, room) => saveMove(selected, start, end, room)}
-            onRemove={() => {
-              const mutation =
-                selected.kind === "program" ? unplace : removeService;
-              mutation.mutate(
-                { slug, agendaItemId: selected.id },
-                {
-                  onSuccess: () => {
-                    updateUrl({ item: null });
-                    setUndo({
-                      label:
-                        selected.kind === "program"
-                          ? "Program item returned to unplaced"
-                          : "Service block deleted",
-                      run: () => {
-                        if (
-                          selected.kind === "program" &&
-                          selected.programItemId
-                        ) {
-                          placeProgram.mutate(
-                            {
-                              slug,
-                              programItemId: selected.programItemId,
-                              roomId: selected.roomId,
-                              startsAtLocal: selected.startsAtLocal,
-                              endsAtLocal: selected.endsAtLocal,
-                            },
-                            { onSuccess: () => void refresh() },
-                          );
-                          return;
-                        }
-                        if (selected.kind === "service") {
-                          placeService.mutate(
-                            {
-                              slug,
-                              title:
-                                selected.serviceTitle ?? "New service block",
-                              scope:
-                                selected.serviceScope === "room" &&
-                                selected.roomId
-                                  ? {
-                                      type: "room",
-                                      roomId: selected.roomId,
-                                    }
-                                  : { type: "event" },
-                              startsAtLocal: selected.startsAtLocal,
-                              endsAtLocal: selected.endsAtLocal,
-                            },
-                            { onSuccess: () => void refresh() },
-                          );
-                        }
-                      },
-                    });
-                    void refresh();
-                  },
-                },
-              );
-            }}
+            onMove={(start, end, room) =>
+              void saveMove(selected, start, end, room)
+            }
+            onRemove={() => void removeAgendaItem(selected.id, selected.kind)}
             onUpdateService={(input, expectedRevision, onSaved) =>
-              saveService(selected, input, expectedRevision, onSaved)
+              void saveService(selected, input, expectedRevision, onSaved)
             }
             rooms={data.rooms}
           />
@@ -670,6 +745,10 @@ function WorkingInspector({
   const [start, setStart] = useState(item.startsAtLocal);
   const [end, setEnd] = useState(item.endsAtLocal);
   const [revision, setRevision] = useState(item.revision);
+  const timeRangeValid = isValidAgendaTimeRange({
+    startsAtLocal: start,
+    endsAtLocal: end,
+  });
   function saveService(overrides: Partial<ServiceBlockDraft> = {}) {
     if (item.kind !== "service" || !title.trim()) return;
     const draftScope =
@@ -678,18 +757,17 @@ function WorkingInspector({
         ? { type: "event" as const }
         : { type: "room" as const, roomId });
     if (draftScope.type === "room" && !draftScope.roomId) return;
-    onUpdateService(
-      {
-        title: overrides.title ?? title,
-        scope: draftScope,
-        startsAtLocal: overrides.startsAtLocal ?? start,
-        endsAtLocal: overrides.endsAtLocal ?? end,
-      },
-      revision,
-      setRevision,
-    );
+    const draft = {
+      title: overrides.title ?? title,
+      scope: draftScope,
+      startsAtLocal: overrides.startsAtLocal ?? start,
+      endsAtLocal: overrides.endsAtLocal ?? end,
+    };
+    if (!isValidAgendaTimeRange(draft)) return;
+    onUpdateService(draft, revision, setRevision);
   }
   function saveDraft() {
+    if (!timeRangeValid) return;
     if (item.kind === "service") saveService();
     else onMove(start, end, roomId || null);
   }
@@ -707,6 +785,7 @@ function WorkingInspector({
 
   function submit(event: FormEvent) {
     event.preventDefault();
+    if (!timeRangeValid) return;
     if (item.kind === "service") saveService();
     else onMove(start, end, roomId || null);
   }
@@ -785,6 +864,11 @@ function WorkingInspector({
             value={start}
           />
         </label>
+        {!timeRangeValid && (
+          <p className="form-error" role="alert">
+            {invalidAgendaTimeRangeMessage}
+          </p>
+        )}
         <label>
           Ends
           <input
@@ -822,7 +906,7 @@ function WorkingInspector({
         )}
         <button
           className="secondary-button"
-          disabled={busy || Boolean(error)}
+          disabled={busy || Boolean(error) || !timeRangeValid}
           type="submit"
         >
           {busy ? "Saving…" : "Save changes"}
@@ -830,17 +914,27 @@ function WorkingInspector({
       </form>
       <div className="agenda-inspector-actions">
         {item.kind === "program" && (
-          <button
-            className="text-button"
-            disabled={busy}
-            onClick={onCancel}
-            type="button"
-          >
-            {item.canceled ? "Restore placement" : "Cancel placement"}
-          </button>
+          <div>
+            <p>
+              {item.canceled
+                ? "Restore this placement to the next published agenda."
+                : "Cancellation keeps this placement and its calendar history."}
+            </p>
+            <button
+              className={`text-button${item.canceled ? "" : " destructive-button"}`}
+              disabled={busy}
+              onClick={onCancel}
+              type="button"
+            >
+              {item.canceled ? "Restore placement" : "Cancel placement"}
+            </button>
+          </div>
+        )}
+        {item.kind === "program" && (
+          <p>Return this program item to the unplaced palette.</p>
         )}
         <button
-          className="text-button destructive-button"
+          className={`text-button${item.kind === "service" ? " destructive-button" : ""}`}
           disabled={busy}
           onClick={onRemove}
           type="button"
@@ -892,13 +986,17 @@ export function PublicAgendaPage() {
     data.event.startsOn,
     data.event.endsOn,
   );
+  const visibleHours = derivePublicVisibleHours(
+    data.items,
+    data.event.timezone,
+  );
   function updateUrl(values: Record<string, string | null>) {
     const next = new URLSearchParams(searchParams);
     for (const [key, value] of Object.entries(values)) {
       if (value) next.set(key, value);
       else next.delete(key);
     }
-    setSearchParams(next, { replace: true });
+    setSearchParams(next);
   }
   return (
     <main className="public-agenda">
@@ -966,7 +1064,10 @@ export function PublicAgendaPage() {
           onVisibleStartChange={(start) => updateUrl({ start })}
           roomId={roomId}
           selectedId={selectedId}
+          slotMaxTime={visibleHours.slotMaxTime}
+          slotMinTime={visibleHours.slotMinTime}
           startsOn={data.event.startsOn}
+          scrollTime={visibleHours.scrollTime}
           timezone={data.event.timezone}
           view={view}
           visibleStart={visibleStart}

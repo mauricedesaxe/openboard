@@ -10,7 +10,6 @@ import listPlugin from "@fullcalendar/list";
 import momentTimezonePlugin from "@fullcalendar/moment-timezone";
 import FullCalendar from "@fullcalendar/react";
 import timeGridPlugin from "@fullcalendar/timegrid";
-import { useEffect, useRef } from "react";
 
 import { addDays, toCalendarEvent, trackColor } from "./agenda-calendar-model";
 
@@ -50,7 +49,10 @@ type AgendaCalendarProps = {
   onVisibleStartChange: (start: string) => void;
   roomId: string;
   selectedId: string | null;
+  slotMaxTime?: string;
+  slotMinTime?: string;
   startsOn: string;
+  scrollTime?: string;
   timezone: string;
   view: "calendar" | "list";
   visibleStart: string;
@@ -67,12 +69,14 @@ export function AgendaCalendar({
   onVisibleStartChange,
   roomId,
   selectedId,
+  slotMaxTime = "24:00:00",
+  slotMinTime = "00:00:00",
   startsOn,
+  scrollTime = "08:00:00",
   timezone,
   view,
   visibleStart,
 }: AgendaCalendarProps) {
-  const calendarRef = useRef<FullCalendar>(null);
   const visibleEnd = addDays(
     visibleStart,
     Math.min(7, daysBetween(visibleStart, endsOn) + 1),
@@ -80,15 +84,6 @@ export function AgendaCalendar({
   const visibleItems = items.filter(
     (item) => !roomId || item.roomId === roomId || item.roomId === null,
   );
-
-  useEffect(() => {
-    const calendar = calendarRef.current?.getApi();
-    if (!calendar) return;
-    calendar.changeView(view === "list" ? "listAgenda" : "agendaRange", {
-      start: visibleStart,
-      end: visibleEnd,
-    });
-  }, [view, visibleEnd, visibleStart]);
 
   function datesChanged(info: DatesSetArg) {
     const start = info.startStr.slice(0, 10);
@@ -113,7 +108,10 @@ export function AgendaCalendar({
   }
 
   return (
-    <div className="agenda-calendar" data-testid="agenda-calendar">
+    <div
+      className={`agenda-calendar${editable ? " is-working" : " is-public"}${roomId ? " is-room" : " is-all-rooms"}`}
+      data-testid="agenda-calendar"
+    >
       <FullCalendar
         allDaySlot={false}
         {...(editable ? { dateClick: createService } : {})}
@@ -122,12 +120,16 @@ export function AgendaCalendar({
         droppable={editable}
         eventClick={selectEvent}
         eventContent={(info) => (
-          <AgendaEventCard info={info} selectedId={selectedId} />
+          <AgendaEventCard
+            compact={!roomId}
+            info={info}
+            selectedId={selectedId}
+          />
         )}
         eventDrop={moveEvent}
         eventDurationEditable={editable}
         eventInteractive
-        eventMaxStack={3}
+        eventMaxStack={roomId ? 4 : 2}
         eventReceive={(info) => {
           const paletteId = info.event.extendedProps.paletteId as string;
           const startsAt = info.event.startStr.slice(0, 16);
@@ -140,9 +142,10 @@ export function AgendaCalendar({
         eventResize={moveEvent}
         events={visibleItems.map(toCalendarEvent)}
         headerToolbar={false}
-        height="auto"
+        height={editable ? 720 : "auto"}
         initialDate={visibleStart}
         initialView={view === "list" ? "listAgenda" : "agendaRange"}
+        key={`${view}:${visibleStart}:${visibleEnd}`}
         nowIndicator
         plugins={[
           timeGridPlugin,
@@ -150,11 +153,12 @@ export function AgendaCalendar({
           listPlugin,
           momentTimezonePlugin,
         ]}
-        ref={calendarRef}
         selectable={editable}
-        scrollTime="08:00:00"
+        scrollTime={scrollTime}
         slotDuration="00:15:00"
         slotEventOverlap
+        slotMaxTime={slotMaxTime}
+        slotMinTime={slotMinTime}
         snapDuration="00:15:00"
         timeZone={timezone}
         validRange={{ start: startsOn, end: addDays(endsOn, 1) }}
@@ -174,26 +178,30 @@ export function AgendaCalendar({
 }
 
 function AgendaEventCard({
+  compact,
   info,
   selectedId,
 }: {
+  compact: boolean;
   info: EventContentArg;
   selectedId: string | null;
 }) {
   const item = info.event.extendedProps as Omit<AgendaCalendarItem, "id">;
   return (
     <div
-      className={`agenda-calendar-card${info.event.id === selectedId ? " is-selected" : ""}${item.canceled ? " is-canceled" : ""}`}
+      className={`agenda-calendar-card${compact ? " is-compact" : ""}${info.event.id === selectedId ? " is-selected" : ""}${item.canceled ? " is-canceled" : ""}`}
       style={
         { "--track-color": trackColor(item.trackName) } as React.CSSProperties
       }
     >
       <strong>{info.event.title}</strong>
-      <span>
-        {item.roomName ??
-          (item.kind === "service" ? "All rooms" : "Unassigned")}
-      </span>
-      {(item.speakers?.length ?? 0) > 0 && (
+      {!compact && (
+        <span>
+          {item.roomName ??
+            (item.kind === "service" ? "All rooms" : "Unassigned")}
+        </span>
+      )}
+      {!compact && (item.speakers?.length ?? 0) > 0 && (
         <small>
           {item.speakers?.map((speaker) => speaker.displayName).join(", ")}
         </small>
