@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { requestSignInCode } from "./support";
 
-test("accepts comma-separated multi-word CFP formats and options", async ({
+test("refreshes the public CFP after its definition changes", async ({
   page,
 }) => {
   const suffix = `${Date.now()}`;
@@ -49,11 +49,6 @@ test("accepts comma-separated multi-word CFP formats and options", async ({
   const openCfp = page.locator(".cfp-builder").filter({
     has: page.locator(".status-open"),
   });
-  await page
-    .getByRole("textbox", { name: "New track name" })
-    .fill("AI systems");
-  await page.getByRole("button", { name: "Add" }).first().click();
-  await expect(page.getByText("Track created", { exact: true })).toBeVisible();
   await openCfp
     .getByRole("textbox", { name: "CFP name" })
     .fill("Updated Browser CFP");
@@ -63,6 +58,33 @@ test("accepts comma-separated multi-word CFP formats and options", async ({
   await expect(
     page.getByRole("heading", { name: "Updated Browser CFP" }),
   ).toBeVisible();
+});
+
+test("refreshes the public CFP after its tracks change", async ({ page }) => {
+  const suffix = `${Date.now()}`;
+  const slug = `browser-cfp-tracks-${suffix}`;
+  await page.goto("/");
+  await signIn(page, `browser-cfp-track-owner-${suffix}@example.com`);
+  await createEvent(page, slug);
+  await page.goto(`/events/${slug}/cfp/setup`);
+  await page
+    .getByRole("textbox", { name: "New track name" })
+    .fill("Web systems");
+  await page.getByRole("button", { name: "Add" }).first().click();
+  await page.getByRole("textbox", { name: "CFP name" }).fill("Browser CFP");
+  await page.getByRole("button", { name: "Create draft" }).click();
+  await page.getByRole("button", { name: "Open CFP" }).click();
+  await page.getByRole("link", { name: "View public form →" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByLabel("Track")).toContainText("Web systems");
+
+  await page.goBack();
+  await page
+    .getByRole("textbox", { name: "New track name" })
+    .fill("AI systems");
+  await page.getByRole("button", { name: "Add" }).first().click();
+  await expect(page.getByText("Track created", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "View public form →" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByLabel("Track")).toContainText("AI systems");
 });

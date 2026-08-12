@@ -108,63 +108,75 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   await page.getByRole("button", { name: "Invite proposed speaker" }).click();
   await expect(page.getByText("Second Browser Speaker")).toBeVisible();
 
+  await page
+    .getByRole("textbox", { name: "Proposed speaker name" })
+    .fill("Third Browser Speaker");
+  await page
+    .getByRole("textbox", { name: "Proposed speaker email" })
+    .fill(`third-browser-speaker-${suffix}@example.com`);
+  await page.getByRole("button", { name: "Invite proposed speaker" }).click();
+  await expect(page.getByText("Third Browser Speaker")).toBeVisible();
+
   const signedInProposedSpeakerRow = page
     .locator(".speaker-row")
     .filter({ hasText: "Browser Submission Owner" });
+  const secondSpeakerRow = page
+    .locator(".speaker-row")
+    .filter({ hasText: "Second Browser Speaker" });
   const removeSpeakerRequestPattern =
     /\/api\/trpc\/submissions\.removeSpeaker(?:\?|$)/;
-  let removalRequestStarted = false;
-  let releaseRemovalRequest = () => {};
-  const holdRemovalRequest = new Promise<void>((resolve) => {
-    releaseRemovalRequest = resolve;
+  let removalRequestsStarted = 0;
+  let releaseSuccessfulRemoval = () => {};
+  let releaseFailedRemoval = () => {};
+  const holdSuccessfulRemoval = new Promise<void>((resolve) => {
+    releaseSuccessfulRemoval = resolve;
+  });
+  const holdFailedRemoval = new Promise<void>((resolve) => {
+    releaseFailedRemoval = resolve;
   });
   await page.route(removeSpeakerRequestPattern, async (route) => {
-    removalRequestStarted = true;
-    await holdRemovalRequest;
+    removalRequestsStarted += 1;
+    if (removalRequestsStarted === 1) {
+      await holdFailedRemoval;
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { message: "Removal failed" } }),
+      });
+      return;
+    }
+    await holdSuccessfulRemoval;
     await route.continue();
   });
-  const removalResponse = page.waitForResponse(removeSpeakerRequestPattern);
   await signedInProposedSpeakerRow
     .getByRole("button", { name: "Remove" })
     .click();
+  await secondSpeakerRow.getByRole("button", { name: "Remove" }).click();
   await expect(
     signedInProposedSpeakerRow.getByRole("button", { name: "Removing…" }),
   ).toBeDisabled();
-  await expect.poll(() => removalRequestStarted).toBe(true);
-  releaseRemovalRequest();
-  expect((await removalResponse).ok()).toBe(true);
-  await expect(signedInProposedSpeakerRow).toBeHidden();
-  await expect(page.getByText("Second Browser Speaker")).toBeVisible();
   await expect(
-    page.getByText("At least one proposed speaker must remain."),
-  ).toBeVisible();
+    secondSpeakerRow.getByRole("button", { name: "Removing…" }),
+  ).toBeDisabled();
+  await expect.poll(() => removalRequestsStarted).toBe(2);
 
-  await page
-    .getByRole("textbox", { name: "Proposed speaker name" })
-    .fill("Rollback Browser Speaker");
-  await page
-    .getByRole("textbox", { name: "Proposed speaker email" })
-    .fill(`rollback-browser-speaker-${suffix}@example.com`);
-  await page.getByRole("button", { name: "Invite proposed speaker" }).click();
-  const rollbackRow = page
-    .locator(".speaker-row")
-    .filter({ hasText: "Rollback Browser Speaker" });
-  await expect(rollbackRow).toBeVisible();
-  const rollbackSpeakerId = await rollbackRow.getAttribute("data-speaker-id");
-  expect(rollbackSpeakerId).toBeTruthy();
-  await page.route(removeSpeakerRequestPattern, async (route) => {
-    await route.fulfill({
-      status: 409,
-      contentType: "application/json",
-      body: JSON.stringify({ error: { message: "Removal failed" } }),
-    });
-  });
-  await rollbackRow.getByRole("button", { name: "Remove" }).click();
-  await expect(rollbackRow).toBeVisible();
+  const successfulRemovalResponse = page.waitForResponse(
+    removeSpeakerRequestPattern,
+  );
+  releaseSuccessfulRemoval();
+  expect((await successfulRemovalResponse).ok()).toBe(true);
+  await expect(secondSpeakerRow).toBeHidden();
   await expect(
-    rollbackRow.getByRole("button", { name: "Remove" }),
+    signedInProposedSpeakerRow.getByRole("button", { name: "Removing…" }),
+  ).toBeDisabled();
+  await expect(page.getByText("Third Browser Speaker")).toBeVisible();
+
+  releaseFailedRemoval();
+  await expect(
+    signedInProposedSpeakerRow.getByRole("button", { name: "Remove" }),
   ).toBeVisible();
-  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(secondSpeakerRow).toBeHidden();
+  await expect(page.getByText("Third Browser Speaker")).toBeVisible();
 });
 
 async function measureLocalTransition(

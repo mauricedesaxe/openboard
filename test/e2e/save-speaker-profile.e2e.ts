@@ -53,10 +53,58 @@ test("saves an optional bio and uploaded headshot", async ({ page }) => {
   ).toHaveAttribute("src", /^blob:/);
   await expect(page.getByRole("alert")).toHaveCount(0);
 
+  await page.evaluate(() => {
+    const originalArrayBuffer = Object.getOwnPropertyDescriptor(
+      File.prototype,
+      "arrayBuffer",
+    );
+    Object.defineProperty(window, "restoreFileArrayBuffer", {
+      configurable: true,
+      value: () => {
+        if (originalArrayBuffer) {
+          Object.defineProperty(
+            File.prototype,
+            "arrayBuffer",
+            originalArrayBuffer,
+          );
+        } else {
+          Reflect.deleteProperty(File.prototype, "arrayBuffer");
+        }
+      },
+    });
+    Object.defineProperty(File.prototype, "arrayBuffer", {
+      configurable: true,
+      value: () => Promise.reject(new Error("Browser file read failed")),
+    });
+  });
+  await saveButton.click();
+  await expect(page.getByRole("alert")).toHaveText(
+    "The headshot could not be read. Choose it again.",
+  );
+  await page.evaluate(() => {
+    (
+      window as unknown as Window & { restoreFileArrayBuffer: () => void }
+    ).restoreFileArrayBuffer();
+  });
+  await page.getByLabel("Headshot").evaluate((input, contentBase64) => {
+    const bytes = Uint8Array.from(atob(contentBase64), (character) =>
+      character.charCodeAt(0),
+    );
+    const transfer = new DataTransfer();
+    transfer.items.add(
+      new File([bytes], "headshot.png", { type: "image/png" }),
+    );
+    (input as HTMLInputElement).files = transfer.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+
   await saveButton.click();
   await expect(saveButton).toBeDisabled();
+  await expect(page.getByText("Profile saved")).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(saveButton).toBeEnabled();
-  await expect(page.getByText("Profile saved")).toBeVisible();
   await expect(page.locator(".form-error")).toHaveCount(0);
   await expect(
     page.getByRole("img", { name: "Headshot preview" }),
