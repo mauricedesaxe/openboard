@@ -200,6 +200,53 @@ describe("event workspace", () => {
     });
   });
 
+  test("links queued decisions to their review page", async () => {
+    const owner = await signIn("workspace-decision-owner@example.com");
+    await createEvent(owner.cookie, "workspace-decision-event");
+    const event = await eventId("workspace-decision-event");
+    const now = Date.now();
+    await testEnvironment.DB.prepare(
+      `INSERT INTO event_roles
+       (id, event_id, user_id, role, granted_by_user_id, created_at)
+       VALUES (?, ?, ?, 'reviewer', ?, ?)`,
+    )
+      .bind(crypto.randomUUID(), event, owner.userId, owner.userId, now)
+      .run();
+    await insertReviewRound({
+      eventId: event,
+      ownerUserId: owner.userId,
+      reviewerUserId: owner.userId,
+      trackId: await insertTrack(event, now),
+      status: "open",
+      deadline: "2027-09-01T00:00:00Z",
+      createdAt: now,
+    });
+    await testEnvironment.DB.prepare(
+      `UPDATE decisions SET status = 'accept_queued'
+       WHERE submission_id IN (SELECT id FROM submissions WHERE event_id = ?)`,
+    )
+      .bind(event)
+      .run();
+
+    const workspace = getResult(
+      (
+        await callTrpc(
+          "events.workspace",
+          { slug: "workspace-decision-event" },
+          owner.cookie,
+          "query",
+        )
+      ).body,
+      workspaceSchema,
+    );
+    expect(workspace.attention).toContainEqual(
+      expect.objectContaining({
+        key: "decisions",
+        href: "/events/workspace-decision-event/review/decisions",
+      }),
+    );
+  });
+
   test("separates active and expired team invitations", async () => {
     const owner = await signIn("workspace-invite-owner@example.com");
     await createEvent(owner.cookie, "workspace-invite-event");
@@ -268,6 +315,18 @@ async function eventId(slug: string) {
   return event?.id as string;
 }
 
+async function insertTrack(eventId: string, now: number): Promise<string> {
+  const trackId = crypto.randomUUID();
+  await testEnvironment.DB.prepare(
+    `INSERT INTO tracks
+     (id, event_id, name, position, created_at, updated_at)
+     VALUES (?, ?, 'Workspace track', 0, ?, ?)`,
+  )
+    .bind(trackId, eventId, now, now)
+    .run();
+  return trackId;
+}
+
 async function insertReviewRound(input: {
   eventId: string;
   ownerUserId: string;
@@ -330,6 +389,13 @@ async function insertReviewRound(input: {
       input.createdAt,
       input.createdAt,
     )
+    .run();
+  await testEnvironment.DB.prepare(
+    `INSERT INTO decisions
+     (id, submission_id, status, revision, created_at, updated_at)
+     VALUES (?, ?, 'pending', 0, ?, ?)`,
+  )
+    .bind(crypto.randomUUID(), submissionId, input.createdAt, input.createdAt)
     .run();
   await testEnvironment.DB.prepare(
     `INSERT INTO reviewer_assignments

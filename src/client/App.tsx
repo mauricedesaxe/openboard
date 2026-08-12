@@ -1,4 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  hashKey,
+  useMutation,
+  useMutationState,
+  useQuery,
+  useQueryClient,
+  type MutationKey,
+} from "@tanstack/react-query";
 import {
   lazy,
   Suspense,
@@ -69,7 +76,9 @@ import { authClient } from "./auth";
 import {
   eventSlugFromPath,
   eventSwitchPath,
+  reviewLandingPath,
   type NavigationEvent,
+  type ReviewPath,
 } from "./event-navigation";
 import { useMutationStatuses } from "./mutation-feedback";
 import { useTRPC } from "./trpc";
@@ -257,22 +266,7 @@ function AuthenticatedApp({ email }: { email: string }) {
             path={`events/:slug/${ORGANIZER_CFP_AREA}`}
             element={<CfpManagePage />}
           />
-          <Route
-            path="events/:slug/review"
-            element={<ReviewPage mode="overview" />}
-          />
-          <Route
-            path="events/:slug/review/assignments"
-            element={<ReviewPage mode="assignments" />}
-          />
-          <Route
-            path="events/:slug/review/decisions"
-            element={<ReviewPage mode="decisions" />}
-          />
-          <Route
-            path="events/:slug/review/my-reviews"
-            element={<ReviewPage mode="my-reviews" />}
-          />
+          <Route path="events/:slug/review/*" element={<ReviewPage />} />
           <Route path="events/:slug/agenda" element={<AgendaPage />} />
           <Route
             path="events/:slug/communications/*"
@@ -2546,10 +2540,46 @@ async function browserFileToBase64(file: File): Promise<string> {
 
 type ReviewPageMode = "overview" | "assignments" | "decisions" | "my-reviews";
 
-function ReviewPage({ mode }: { mode: ReviewPageMode }) {
+function ReviewPage() {
   const { slug = "" } = useParams();
+  const location = useLocation();
   const trpc = useTRPC();
   const event = useQuery(trpc.events.get.queryOptions({ slug }));
+  const requestedPath = reviewPathFromLocation(location.pathname);
+  const mutationStatus = useReviewMutationStatus([
+    {
+      mutationKey: trpc.reviews.openRound.mutationKey(),
+      success: "Reviewing opened",
+    },
+    {
+      mutationKey: trpc.reviews.closeRound.mutationKey(),
+      success: "Reviewing closed",
+    },
+    {
+      mutationKey: trpc.reviews.reopenRound.mutationKey(),
+      success: "Round reopened",
+    },
+    {
+      mutationKey: trpc.reviews.assign.mutationKey(),
+      success: "Reviewer assigned",
+    },
+    {
+      mutationKey: trpc.reviews.revokeAssignment.mutationKey(),
+      success: "Assignment revoked",
+    },
+    {
+      mutationKey: trpc.decisions.queue.mutationKey(),
+      success: "Outcome queued",
+    },
+    {
+      mutationKey: trpc.decisions.publish.mutationKey(),
+      success: "Decisions published",
+    },
+    {
+      mutationKey: trpc.reviews.save.mutationKey(),
+      success: "Review saved",
+    },
+  ]);
 
   if (event.isPending) return <FullPageStatus label="Opening review board" />;
   if (event.isError) {
@@ -2563,28 +2593,98 @@ function ReviewPage({ mode }: { mode: ReviewPageMode }) {
     );
   }
 
-  const organizer = event.data.permissions.includes("organizer");
-  const reviewer = event.data.permissions.includes("reviewer");
-  if (mode === "my-reviews" && !reviewer) {
-    return <Navigate to={`/events/${slug}/review`} replace />;
-  }
-  if (mode !== "my-reviews" && !organizer) {
-    return reviewer ? (
-      <Navigate to={`/events/${slug}/review/my-reviews`} replace />
-    ) : (
-      <Navigate to={`/events/${slug}`} replace />
-    );
-  }
+  const target = reviewLandingPath(slug, requestedPath, event.data.permissions);
+  if (target !== location.pathname) return <Navigate to={target} replace />;
 
-  return mode === "my-reviews" ? (
-    <ReviewerAssignments permissions={event.data.permissions} slug={slug} />
-  ) : (
-    <OrganizerReviewBoard
-      mode={mode}
-      permissions={event.data.permissions}
-      slug={slug}
-    />
+  const mode = reviewMode(requestedPath);
+
+  return (
+    <>
+      <MutationStatus
+        error={mutationStatus.error}
+        success={mutationStatus.success}
+      />
+      {mode === "my-reviews" ? (
+        <ReviewerAssignments permissions={event.data.permissions} slug={slug} />
+      ) : (
+        <OrganizerReviewBoard
+          mode={mode}
+          permissions={event.data.permissions}
+          slug={slug}
+        />
+      )}
+    </>
   );
+}
+
+function useReviewMutationStatus(
+  entries: Array<{ mutationKey: MutationKey; success: string }>,
+): { error?: string; success?: string } {
+  const [mountedAt] = useState(Date.now);
+  const [expiredAttempt, setExpiredAttempt] = useState<number>();
+  const attempts = useMutationState<{
+    mutationKey: MutationKey;
+    status: "idle" | "pending" | "success" | "error";
+    submittedAt: number;
+    error: string | null;
+  }>({
+    filters: {
+      predicate: (mutation) =>
+        entries.some(
+          (entry) =>
+            hashKey(entry.mutationKey) ===
+            hashKey(mutation.options.mutationKey ?? []),
+        ),
+    },
+    select: (mutation) => ({
+      mutationKey: mutation.options.mutationKey ?? [],
+      status: mutation.state.status,
+      submittedAt: mutation.state.submittedAt,
+      error:
+        mutation.state.error instanceof Error
+          ? mutation.state.error.message
+          : null,
+    }),
+  });
+  const latest = attempts
+    .filter((attempt) => attempt.submittedAt >= mountedAt)
+    .toSorted((left, right) => right.submittedAt - left.submittedAt)[0];
+  const entry = latest
+    ? entries.find(
+        (candidate) =>
+          hashKey(candidate.mutationKey) === hashKey(latest.mutationKey),
+      )
+    : undefined;
+  useEffect(() => {
+    if (latest?.status !== "success") return;
+    const timer = window.setTimeout(
+      () => setExpiredAttempt(latest.submittedAt),
+      4_000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [latest]);
+  if (latest?.status === "error") {
+    return { error: latest.error ?? "The action could not be completed." };
+  }
+  return latest?.status === "success" &&
+    latest.submittedAt !== expiredAttempt &&
+    entry
+    ? { success: entry.success }
+    : {};
+}
+
+function reviewPathFromLocation(pathname: string): ReviewPath {
+  const path = pathname.match(
+    /\/review(?:\/(?:assignments|decisions|my-reviews))?$/,
+  )?.[0];
+  return (path?.slice(1) as ReviewPath | undefined) ?? "review";
+}
+
+function reviewMode(path: ReviewPath): ReviewPageMode {
+  if (path === "review/assignments") return "assignments";
+  if (path === "review/decisions") return "decisions";
+  if (path === "review/my-reviews") return "my-reviews";
+  return "overview";
 }
 
 function ReviewLocalNavigation({
@@ -2783,9 +2883,12 @@ function OrganizerReviewBoard({
                 : "Queue first. Publish together."}
           </h1>
           <p>
-            {board.data.submissions.length}{" "}
-            {pluralize(board.data.submissions.length, "proposal")} ·{" "}
-            {queued.length} queued {pluralize(queued.length, "outcome")}
+            {reviewSummary(
+              mode,
+              board.data.submissions.length,
+              board.data.reviewers.length,
+              queued.length,
+            )}
           </p>
         </div>
         {mode === "overview" && (
@@ -2827,12 +2930,6 @@ function OrganizerReviewBoard({
         )}
       </section>
       <ReviewLocalNavigation permissions={permissions} slug={slug} />
-      {reviewBoardStatus.error && (
-        <MutationStatus error={reviewBoardStatus.error} />
-      )}
-      {reviewBoardStatus.success && (
-        <MutationStatus success={reviewBoardStatus.success} />
-      )}
       {mode === "decisions" &&
         communicationFailures.data?.some((failure) =>
           failure.purpose.startsWith("decision_"),
@@ -3077,6 +3174,21 @@ function OrganizerReviewBoard({
   );
 }
 
+function reviewSummary(
+  mode: Exclude<ReviewPageMode, "my-reviews">,
+  proposals: number,
+  reviewers: number,
+  queued: number,
+): string {
+  if (mode === "assignments") {
+    return `${proposals} ${pluralize(proposals, "proposal")} · ${reviewers} active ${pluralize(reviewers, "reviewer")}`;
+  }
+  if (mode === "decisions") {
+    return `${queued} of ${proposals} ${pluralize(proposals, "outcome")} queued`;
+  }
+  return `${proposals} ${pluralize(proposals, "proposal")} · ${queued} queued ${pluralize(queued, "outcome")}`;
+}
+
 function ReviewerAssignments({
   permissions,
   slug,
@@ -3167,13 +3279,6 @@ function ReviewAssignmentCard({
       },
     }),
   );
-  const saveStatus = useMutationStatuses([
-    {
-      mutation: save,
-      mutationKey: trpc.reviews.save.mutationKey(),
-      success: "Review saved",
-    },
-  ]);
   const editable = assignment.roundStatus === "open";
 
   return (
@@ -3222,8 +3327,6 @@ function ReviewAssignmentCard({
             value={comment}
           />
         </Field>
-        {saveStatus.error && <MutationStatus error={saveStatus.error} />}
-        {saveStatus.success && <MutationStatus success={saveStatus.success} />}
         <button
           className="primary-button"
           disabled={!editable || save.isPending}

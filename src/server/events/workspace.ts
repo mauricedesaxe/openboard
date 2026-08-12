@@ -206,7 +206,7 @@ function organizerAttention(
           `${queued} queued ${queued === 1 ? "decision is" : "decisions are"} unpublished`,
           "Publish queued outcomes to notify submitters.",
           queued,
-          route("review"),
+          route("review/decisions"),
           null,
         ),
       );

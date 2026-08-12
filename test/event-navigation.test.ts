@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   eventSlugFromPath,
   eventSwitchPath,
+  reviewLandingPath,
   type NavigationEvent,
 } from "../src/client/event-navigation";
 
@@ -29,7 +30,7 @@ describe("event navigation", () => {
 
   test("preserves an accessible area when switching events", () => {
     expect(eventSwitchPath("/events/current/review", reviewer)).toBe(
-      "/events/reviewer-event/review",
+      "/events/reviewer-event/review/my-reviews",
     );
     expect(eventSwitchPath("/events/current/cfp/manage", owner)).toBe(
       "/events/owner-event/cfp/manage",
@@ -50,8 +51,18 @@ describe("event navigation", () => {
 
   test("falls back to review when a review subpage is inaccessible", () => {
     expect(eventSwitchPath("/events/current/review/decisions", reviewer)).toBe(
-      "/events/reviewer-event/review",
+      "/events/reviewer-event/review/my-reviews",
     );
+  });
+
+  test("returns one allowed landing for direct review routes", () => {
+    expect(reviewLandingPath("event", "review/my-reviews", ["organizer"])).toBe(
+      "/events/event/review",
+    );
+    expect(reviewLandingPath("event", "review/decisions", ["reviewer"])).toBe(
+      "/events/event/review/my-reviews",
+    );
+    expect(reviewLandingPath("event", "review", [])).toBe("/events/event");
   });
 
   test("opens Home when the target event cannot access the area", () => {

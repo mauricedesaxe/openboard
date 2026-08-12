@@ -7,6 +7,9 @@ export type NavigationEvent = {
   permissions: Array<"organizer" | "reviewer">;
 };
 
+export type ReviewPath =
+  "review" | "review/assignments" | "review/decisions" | "review/my-reviews";
+
 export function eventSlugFromPath(pathname: string): string | undefined {
   return pathname.match(/^\/events\/([^/]+)(?:\/|$)/)?.[1];
 }
@@ -35,17 +38,30 @@ export function eventSwitchPath(
     return `/events/${event.slug}`;
   }
   const reviewPath = route.match(
-    /^review\/(assignments|decisions|my-reviews)$/,
-  )?.[0];
-  const canOpenReviewPath =
-    reviewPath === "review/my-reviews"
-      ? event.permissions.includes("reviewer")
-      : event.permissions.includes("organizer");
-  const targetArea =
-    area === "cfp"
-      ? ORGANIZER_CFP_AREA
-      : reviewPath && canOpenReviewPath
-        ? reviewPath
-        : route;
+    /^review(?:\/(?:assignments|decisions|my-reviews))?$/,
+  )?.[0] as ReviewPath | undefined;
+  if (reviewPath) {
+    return reviewLandingPath(event.slug, reviewPath, event.permissions);
+  }
+  const targetArea = area === "cfp" ? ORGANIZER_CFP_AREA : route;
   return `/events/${event.slug}${targetArea ? `/${targetArea}` : ""}`;
+}
+
+export function reviewLandingPath(
+  slug: string,
+  requestedPath: ReviewPath,
+  permissions: NavigationEvent["permissions"],
+): string {
+  const organizer = permissions.includes("organizer");
+  const reviewer = permissions.includes("reviewer");
+  const requestedForReviewer = requestedPath === "review/my-reviews";
+  if (
+    (requestedForReviewer && reviewer) ||
+    (!requestedForReviewer && organizer)
+  ) {
+    return `/events/${slug}/${requestedPath}`;
+  }
+  if (organizer) return `/events/${slug}/review`;
+  if (reviewer) return `/events/${slug}/review/my-reviews`;
+  return `/events/${slug}`;
 }

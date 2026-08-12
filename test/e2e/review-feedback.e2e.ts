@@ -1,4 +1,9 @@
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+} from "@playwright/test";
 
 import { signIn } from "./support";
 
@@ -123,11 +128,66 @@ test("refreshes the organizer average after saving a review", async ({
     .filter({ hasText: "A proposal to review" });
   await reviewCard.getByLabel("Score").selectOption("5");
   await reviewCard.getByRole("button", { name: "Save review" }).click();
-  await expect(reviewCard.getByRole("status")).toHaveText("Review saved");
+  await expect(page.getByRole("status")).toHaveText("Review saved");
   await reviewNavigation.getByRole("link", { name: "Overview" }).click();
   await expect(page.getByText("1/1 reviewed")).toBeVisible();
   await expect(page.getByText("Average 5.0")).toBeVisible();
+
+  await reviewNavigation.getByRole("link", { name: "My reviews" }).click();
+  await page.route(/\/api\/trpc\/reviews\.save(?:\?|$)/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    await route.continue();
+  });
+  await reviewCard.getByLabel("Score").selectOption("4");
+  await reviewCard.getByRole("button", { name: "Update review" }).click();
+  await reviewNavigation.getByRole("link", { name: "Overview" }).click();
+  await expect(page).toHaveURL(`/events/${slug}/review`);
+  await expect(page.getByRole("status")).toHaveText("Review saved");
+  await expect(page.getByText("Average 4.0")).toBeVisible();
+
+  const pureReviewerEmail = `browser-pure-reviewer-${suffix}@example.com`;
+  const pureOrganizerEmail = `browser-pure-organizer-${suffix}@example.com`;
+  await invite(page.request, slug, pureReviewerEmail, "reviewer");
+  await invite(page.request, slug, pureOrganizerEmail, "organizer");
+
+  await acceptRole(page, pureReviewerEmail);
+  await page.goto(`/events/${slug}/review/decisions`);
+  await expect(page).toHaveURL(`/events/${slug}/review/my-reviews`);
+  await expect(
+    page
+      .getByRole("navigation", { name: "Review navigation" })
+      .getByRole("link"),
+  ).toHaveText(["My reviews"]);
+
+  await acceptRole(page, pureOrganizerEmail);
+  await page.goto(`/events/${slug}/review/my-reviews`);
+  await expect(page).toHaveURL(`/events/${slug}/review`);
+  await expect(
+    page
+      .getByRole("navigation", { name: "Review navigation" })
+      .getByRole("link"),
+  ).toHaveText(["Overview", "Assignments", "Decisions"]);
 });
+
+async function invite(
+  request: APIRequestContext,
+  slug: string,
+  email: string,
+  role: "organizer" | "reviewer",
+) {
+  await mutate(request, "eventTeam.invite", { slug, email, role });
+}
+
+async function acceptRole(page: Page, email: string) {
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.goto("/sign-in");
+  await signIn(page, email, "Open my board");
+  const secretResponse = await page.request.get(
+    `/api/dev/invitation-secret?email=${encodeURIComponent(email)}`,
+  );
+  const { secret } = (await secretResponse.json()) as { secret: string };
+  await mutate(page.request, "invitations.accept", { secret });
+}
 
 async function mutate<T = Record<string, unknown>>(
   request: APIRequestContext,
