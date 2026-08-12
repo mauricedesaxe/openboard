@@ -37,10 +37,10 @@ describe("sign in and create an event", () => {
       name: "Not signed in",
     });
     expect(unauthenticatedMutation.status).toBe(401);
-    const unauthenticatedSettings = await callTrpc(
-      "events.updateSettings",
-      eventInput,
-    );
+    const unauthenticatedSettings = await callTrpc("events.updateSettings", {
+      ...eventInput,
+      expectedRevision: 1,
+    });
     expect(unauthenticatedSettings.status).toBe(401);
 
     const owner = await signIn("owner@example.com");
@@ -112,7 +112,7 @@ describe("sign in and create an event", () => {
     expect(privateMutation.status).toBe(404);
     const privateSettings = await callTrpc(
       "events.updateSettings",
-      { ...eventInput, name: "Not theirs" },
+      { ...eventInput, name: "Not theirs", expectedRevision: 1 },
       unrelated.cookie,
     );
     expect(privateSettings.status).toBe(404);
@@ -142,6 +142,7 @@ describe("sign in and create an event", () => {
         startsOn: "2028-06-20",
         endsOn: "2028-06-22",
         timezone: "America/Toronto",
+        expectedRevision: created.revision,
       },
       owner.cookie,
     );
@@ -153,6 +154,7 @@ describe("sign in and create an event", () => {
       timezone: "America/Toronto",
     });
 
+    const updated = getResult(updatedSettings.body, eventSchema);
     const organizer = await signIn("settings-organizer@example.com");
     await testEnvironment.DB.prepare(
       `INSERT INTO event_roles
@@ -174,10 +176,47 @@ describe("sign in and create an event", () => {
         name: "Organizer-updated Summit",
         startsOn: "2028-07-01",
         endsOn: "2028-07-03",
+        expectedRevision: updated.revision,
       },
       organizer.cookie,
     );
     expect(organizerSettings.status).toBe(200);
+
+    const staleSettings = await callTrpc(
+      "events.updateSettings",
+      {
+        ...eventInput,
+        name: "Stale owner edit",
+        expectedRevision: updated.revision,
+      },
+      owner.cookie,
+    );
+    expect(staleSettings.status).toBe(409);
+
+    const reviewer = await signIn("settings-reviewer@example.com");
+    await testEnvironment.DB.prepare(
+      `INSERT INTO event_roles
+       (id, event_id, user_id, role, granted_by_user_id, created_at)
+       VALUES (?, ?, ?, 'reviewer', ?, ?)`,
+    )
+      .bind(
+        crypto.randomUUID(),
+        created.id,
+        reviewer.userId,
+        owner.userId,
+        Date.now(),
+      )
+      .run();
+    const reviewerSettings = await callTrpc(
+      "events.updateSettings",
+      {
+        ...eventInput,
+        name: "Reviewer edit",
+        expectedRevision: updated.revision + 1,
+      },
+      reviewer.cookie,
+    );
+    expect(reviewerSettings.status).toBe(404);
 
     const invalidSettings = await callTrpc(
       "events.updateSettings",
@@ -185,10 +224,50 @@ describe("sign in and create an event", () => {
         ...eventInput,
         startsOn: "2028-06-23",
         endsOn: "2028-06-22",
+        expectedRevision: updated.revision + 1,
       },
       owner.cookie,
     );
     expect(invalidSettings.status).toBe(400);
+
+    await testEnvironment.DB.prepare(
+      `INSERT INTO agenda_items
+       (id, agenda_id, event_id, kind, service_scope, service_title, starts_at_local, ends_at_local, created_at, updated_at)
+       VALUES (?, ?, ?, 'service', 'event', 'Lunch', ?, ?, ?, ?)`,
+    )
+      .bind(
+        crypto.randomUUID(),
+        created.agendaId,
+        created.id,
+        "2028-07-02T12:00",
+        "2028-07-02T13:00",
+        Date.now(),
+        Date.now(),
+      )
+      .run();
+    const agendaDateConflict = await callTrpc(
+      "events.updateSettings",
+      {
+        ...eventInput,
+        startsOn: "2028-07-03",
+        endsOn: "2028-07-04",
+        expectedRevision: updated.revision + 1,
+      },
+      owner.cookie,
+    );
+    expect(agendaDateConflict.status).toBe(409);
+    const agendaTimezoneConflict = await callTrpc(
+      "events.updateSettings",
+      {
+        ...eventInput,
+        startsOn: "2028-07-01",
+        endsOn: "2028-07-03",
+        timezone: "UTC",
+        expectedRevision: updated.revision + 1,
+      },
+      owner.cookie,
+    );
+    expect(agendaTimezoneConflict.status).toBe(409);
   });
 
   test("keeps authenticated session reads outside the anonymous limit", async () => {

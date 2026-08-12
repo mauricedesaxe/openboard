@@ -66,6 +66,7 @@ export const eventInputSchema = eventDetailsSchema
 
 export const eventSettingsInputSchema = eventDetailsSchema.safeExtend({
   slug: eventSlugSchema,
+  expectedRevision: z.number().int().positive(),
 });
 
 export function slugifyEventName(name: string) {
@@ -82,10 +83,12 @@ export function slugifyEventName(name: string) {
 export type EventInput = z.infer<typeof eventInputSchema>;
 export type EventSettingsInput = z.infer<typeof eventSettingsInputSchema>;
 
-export const eventSchema = eventSettingsInputSchema.extend({
+export const eventSchema = eventDetailsSchema.extend({
   id: z.string().transform((value) => value as EventId),
   ownerUserId: z.string().transform((value) => value as UserId),
   agendaId: z.string(),
+  slug: eventSlugSchema,
+  revision: z.number().int().positive(),
   access: z.enum(["owner", "organizer", "reviewer"]),
   permissions: z.array(z.enum(["organizer", "reviewer"])),
 });

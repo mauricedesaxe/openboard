@@ -1,4 +1,4 @@
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 
 import type {
   Event,
@@ -13,6 +13,7 @@ import { defaultCommunicationTemplateValues } from "../communications/repository
 import type { Database } from "../database/client";
 import {
   agendas,
+  agendaItems,
   communicationTemplates,
   eventRoles,
   events,
@@ -21,6 +22,13 @@ import {
 export type EventWriteResult =
   | { ok: true; value: Event }
   | { ok: false; error: "duplicate_slug" | "persistence_failed" };
+
+export type EventSettingsWriteResult =
+  | { ok: true; value: Event }
+  | {
+      ok: false;
+      error: "not_found" | "revision_conflict" | "agenda_conflict";
+    };
 
 export async function createEvent(
   database: Database,
@@ -69,6 +77,7 @@ export async function createEvent(
       id,
       ownerUserId,
       agendaId,
+      revision: 1,
       access: "owner",
       permissions: ["organizer", "reviewer"],
     },
@@ -89,6 +98,7 @@ export async function findOwnedEvent(
       startsOn: events.startsOn,
       endsOn: events.endsOn,
       timezone: events.timezone,
+      revision: events.revision,
       agendaId: agendas.id,
     })
     .from(events)
@@ -136,6 +146,7 @@ export async function findEventForOrganizer(
       startsOn: events.startsOn,
       endsOn: events.endsOn,
       timezone: events.timezone,
+      revision: events.revision,
       agendaId: agendas.id,
       agendaRevision: agendas.revision,
     })
@@ -173,6 +184,7 @@ export async function listOwnedEvents(
       startsOn: events.startsOn,
       endsOn: events.endsOn,
       timezone: events.timezone,
+      revision: events.revision,
       agendaId: agendas.id,
     })
     .from(events)
@@ -217,22 +229,49 @@ export async function updateEventSettings(
   database: Database,
   userId: UserId,
   input: EventSettingsInput,
-): Promise<Event | undefined> {
+): Promise<EventSettingsWriteResult> {
   const event = await findEventForOrganizer(database, userId, input.slug);
-  if (!event) return undefined;
+  if (!event) return { ok: false, error: "not_found" };
+  if (event.revision !== input.expectedRevision) {
+    return { ok: false, error: "revision_conflict" };
+  }
 
-  await database
+  const [agendaConflict] = await database
+    .select({ id: agendaItems.id })
+    .from(agendaItems)
+    .where(
+      and(
+        eq(agendaItems.eventId, event.id),
+        eq(agendaItems.placed, true),
+        or(
+          sql`substr(${agendaItems.startsAtLocal}, 1, 10) < ${input.startsOn}`,
+          sql`substr(${agendaItems.endsAtLocal}, 1, 10) > ${input.endsOn}`,
+          input.timezone === event.timezone ? undefined : sql`1 = 1`,
+        ),
+      ),
+    )
+    .limit(1);
+  if (agendaConflict) return { ok: false, error: "agenda_conflict" };
+
+  const updated = await database
     .update(events)
     .set({
       name: input.name,
       startsOn: input.startsOn,
       endsOn: input.endsOn,
       timezone: input.timezone,
+      revision: sql`${events.revision} + 1`,
       updatedAt: new Date(),
     })
-    .where(eq(events.id, event.id));
+    .where(
+      and(eq(events.id, event.id), eq(events.revision, input.expectedRevision)),
+    );
+  if (updated.meta.changes === 0) {
+    return { ok: false, error: "revision_conflict" };
+  }
 
-  return findEventForUser(database, userId, input.slug);
+  const value = await findEventForUser(database, userId, input.slug);
+  return value ? { ok: true, value } : { ok: false, error: "not_found" };
 }
 
 function selectAccessibleEvents(
@@ -253,6 +292,7 @@ function selectAccessibleEvents(
       startsOn: events.startsOn,
       endsOn: events.endsOn,
       timezone: events.timezone,
+      revision: events.revision,
       agendaId: agendas.id,
       role: eventRoles.role,
     })

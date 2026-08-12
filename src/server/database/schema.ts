@@ -99,6 +99,7 @@ export const events = sqliteTable(
     startsOn: text("starts_on").notNull(),
     endsOn: text("ends_on").notNull(),
     timezone: text("timezone").notNull(),
+    revision: integer("revision").notNull().default(1),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
