@@ -158,6 +158,7 @@ export function AgendaCalendar({
         ]}
         selectable={editable}
         scrollTime={scrollTime}
+        scrollTimeReset={false}
         slotDuration="00:15:00"
         slotEventOverlap
         slotMaxTime={slotMaxTime}

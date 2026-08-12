@@ -272,6 +272,51 @@ test("publishes a working placement to every public agenda view", async ({
   await expect(page).toHaveURL(
     new RegExp(`item=${String(secondPlacement.id)}`),
   );
+
+  const lunchCard = page.locator(".agenda-calendar-card", {
+    hasText: "Lunch",
+  });
+  await lunchCard.click();
+  await expect(inspector.getByLabel("Starts")).toHaveValue("2028-08-13T12:00");
+  const serviceSaveStatuses: number[] = [];
+  const recordServiceSave = (response: {
+    url: () => string;
+    status: () => number;
+  }) => {
+    if (response.url().includes("agendas.updateService")) {
+      serviceSaveStatuses.push(response.status());
+    }
+  };
+  page.on("response", recordServiceSave);
+  const lunchBox = await lunchCard.boundingBox();
+  if (!lunchBox) throw new Error("Lunch card not rendered");
+  await page.mouse.move(lunchBox.x + lunchBox.width / 2, lunchBox.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(lunchBox.x + lunchBox.width / 2, lunchBox.y + 100, {
+    steps: 10,
+  });
+  await page.mouse.up();
+  await calendarScroller.evaluate((element) => {
+    element.scrollTop = 1400;
+  });
+  await expect(inspector.getByLabel("Starts")).not.toHaveValue(
+    "2028-08-13T12:00",
+  );
+  const draggedStart = await inspector.getByLabel("Starts").inputValue();
+  await expect
+    .poll(async () => {
+      const current = await query(page.request, "agendas.working", { slug });
+      const items = current.items as Array<Record<string, unknown>>;
+      return items.find((item) => item.serviceTitle === "Lunch")?.startsAtLocal;
+    })
+    .toBe(draggedStart);
+  await expect(page.locator(".agenda-save-error")).toHaveCount(0);
+  expect(serviceSaveStatuses).toEqual([]);
+  await expect
+    .poll(() => calendarScroller.evaluate((element) => element.scrollTop))
+    .toBe(1400);
+  page.off("response", recordServiceSave);
+
   await publishAgenda(page);
   await expect(
     page.getByText("Working agenda · revision", { exact: false }),
