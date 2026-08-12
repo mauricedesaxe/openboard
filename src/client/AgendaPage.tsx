@@ -293,7 +293,14 @@ export function AgendaPage() {
         setSaveError({
           itemId: item.id,
           message: error.message,
-          retry: () => void saveService(item, input, expectedRevision, onSaved),
+          retry: () => {
+            const freshRevision =
+              queryClient
+                .getQueryData<WorkingAgenda>(workingQuery.queryKey)
+                ?.items.find((candidate) => candidate.id === item.id)
+                ?.revision ?? expectedRevision;
+            void saveService(item, input, freshRevision, onSaved);
+          },
         });
       },
       onSettled: () => void refresh(),
@@ -773,6 +780,29 @@ function WorkingInspector({
   const [start, setStart] = useState(item.startsAtLocal);
   const [end, setEnd] = useState(item.endsAtLocal);
   const [revision, setRevision] = useState(item.revision);
+  const dirty = useRef({
+    title: false,
+    scope: false,
+    room: false,
+    time: false,
+  });
+  const syncedItem = useRef(item);
+  useEffect(() => {
+    if (item === syncedItem.current) return;
+    syncedItem.current = item;
+    if (!dirty.current.title) setTitle(item.serviceTitle ?? "");
+    if (!dirty.current.scope) setScope(item.serviceScope ?? "room");
+    if (!dirty.current.room) setRoomId(item.roomId ?? "");
+    if (!dirty.current.time) {
+      setStart(item.startsAtLocal);
+      setEnd(item.endsAtLocal);
+    }
+    setRevision(item.revision);
+  }, [item]);
+  function savedRevision(value: number) {
+    dirty.current = { title: false, scope: false, room: false, time: false };
+    setRevision(value);
+  }
   const timeRangeValid = isValidAgendaTimeRange({
     startsAtLocal: start,
     endsAtLocal: end,
@@ -792,12 +822,12 @@ function WorkingInspector({
       endsAtLocal: overrides.endsAtLocal ?? end,
     };
     if (!isValidAgendaTimeRange(draft)) return;
-    onUpdateService(draft, revision, setRevision);
+    onUpdateService(draft, revision, savedRevision);
   }
   function saveDraft() {
     if (!timeRangeValid) return;
     if (item.kind === "service") saveService();
-    else onMove(start, end, roomId || null, setRevision);
+    else onMove(start, end, roomId || null, savedRevision);
   }
   const saveDraftAfterDelay = useEffectEvent(saveDraft);
   useEffect(() => {
@@ -820,7 +850,7 @@ function WorkingInspector({
     event.preventDefault();
     if (!timeRangeValid) return;
     if (item.kind === "service") saveService();
-    else onMove(start, end, roomId || null, setRevision);
+    else onMove(start, end, roomId || null, savedRevision);
   }
 
   return (
@@ -847,7 +877,10 @@ function WorkingInspector({
               <input
                 disabled={busy}
                 maxLength={160}
-                onChange={(event) => setTitle(event.target.value)}
+                onChange={(event) => {
+                  dirty.current.title = true;
+                  setTitle(event.target.value);
+                }}
                 value={title}
               />
             </label>
@@ -857,6 +890,7 @@ function WorkingInspector({
                 disabled={busy}
                 onChange={(event) => {
                   const nextScope = event.target.value as "event" | "room";
+                  dirty.current.scope = true;
                   setScope(nextScope);
                 }}
                 value={scope}
@@ -873,6 +907,7 @@ function WorkingInspector({
             <select
               disabled={busy}
               onChange={(event) => {
+                dirty.current.room = true;
                 setRoomId(event.target.value);
               }}
               value={roomId}
@@ -891,7 +926,10 @@ function WorkingInspector({
           Starts
           <input
             disabled={busy}
-            onChange={(event) => setStart(event.target.value)}
+            onChange={(event) => {
+              dirty.current.time = true;
+              setStart(event.target.value);
+            }}
             step={900}
             type="datetime-local"
             value={start}
@@ -906,7 +944,10 @@ function WorkingInspector({
           Ends
           <input
             disabled={busy}
-            onChange={(event) => setEnd(event.target.value)}
+            onChange={(event) => {
+              dirty.current.time = true;
+              setEnd(event.target.value);
+            }}
             step={900}
             type="datetime-local"
             value={end}
