@@ -1,6 +1,43 @@
 # OpenBoard
 
-OpenBoard manages an event program from submissions through the published agenda.
+OpenBoard is an open-source workspace for running an event program from the call for proposals
+through the published agenda. It keeps proposals, reviews, decisions, speakers, onboarding work,
+communications, and scheduling connected instead of splitting them across separate tools.
+
+[Open the deployed application](https://openboard.alexlazar.dev/)
+
+## What it does
+
+- Builds conditional call-for-proposals forms with tracks, deadlines, and a fast browser-saved
+  proposal draft.
+- Gives organizers, reviewers, submitters, and speakers scoped access through passwordless sign-in
+  and invitations.
+- Assigns submissions for review, records scores and comments, and publishes acceptance or decline
+  decisions.
+- Turns accepted submissions into program items, then builds and publishes an agenda with room and
+  speaker conflict checks.
+- Tracks speaker profiles, files, onboarding tasks, and the evidence that makes each speaker ready.
+- Sends editable email and calendar communications, with retryable delivery records.
+- Publishes the public agenda as a web view, JSON API, and iCalendar feed from one revision.
+
+## Why it exists
+
+OpenBoard began as a remote hackathon response to the cost and breadth of Sessionboard. The brief
+asked for an open-source alternative that covered the useful program workflow without copying the
+surrounding CRM, billing, CMS, and marketing platform.
+
+The project focuses on one connected journey: an organizer opens a CFP, a submitter proposes a
+session, a reviewer evaluates it, the organizer publishes a decision and agenda, and an accepted
+speaker completes onboarding. The original planning map is in
+[issue #1](https://github.com/mauricedesaxe/openboard/issues/1), and the implementation specification
+is in [issue #18](https://github.com/mauricedesaxe/openboard/issues/18).
+
+## Architecture
+
+OpenBoard is a React and TypeScript application deployed as one Cloudflare Worker. tRPC and Zod
+provide the typed application boundary. Cloudflare D1 stores authoritative application data, while
+R2 stores uploaded files. Better Auth owns passwordless identity and session state inside the same
+application.
 
 ## Local development
 
