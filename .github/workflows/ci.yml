@@ -202,7 +202,7 @@ jobs:
         if: steps.current-pr-deploy.outputs.current == 'true'
         run: |
           URL=$(cat preview-url.txt)
-          for attempt in 1 2 3 4 5; do
+          for attempt in {1..12}; do
             STATUS=$(curl -sS --max-time 60 -o /tmp/preview-body.html -w "%{http_code}" "$URL") || STATUS=000
             AUTH_STATUS=$(curl -sS --max-time 60 -o /tmp/auth-session.json -w "%{http_code}" "$URL/api/auth/get-session") || AUTH_STATUS=000
             if [ "$STATUS" = "200" ] && grep -q 'id="root"' /tmp/preview-body.html \
@@ -210,7 +210,7 @@ jobs:
               echo "Preview OK: $URL"
               exit 0
             fi
-            echo "attempt $attempt of 5: HTTP $STATUS, auth $AUTH_STATUS"
+            echo "attempt $attempt of 12: HTTP $STATUS, auth $AUTH_STATUS"
             sleep 10
           done
           echo "preview did not serve the SPA or boot auth"
