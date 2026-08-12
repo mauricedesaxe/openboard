@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import type { FormEvent } from "react";
+import type { CSSProperties, FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
 import { useTRPC } from "./trpc";
@@ -354,16 +354,18 @@ export function PublicAgendaPage() {
         </div>
       </header>
       <nav className="agenda-view-tabs" aria-label="Agenda views">
-        {["list", "day", "week", "track", "room"].map((candidate) => (
-          <button
-            aria-pressed={view === candidate}
-            key={candidate}
-            onClick={() => chooseView(candidate)}
-            type="button"
-          >
-            {candidate}
-          </button>
-        ))}
+        {["list", "calendar", "day", "week", "track", "room"].map(
+          (candidate) => (
+            <button
+              aria-pressed={view === candidate}
+              key={candidate}
+              onClick={() => chooseView(candidate)}
+              type="button"
+            >
+              {candidate}
+            </button>
+          ),
+        )}
       </nav>
       {view === "day" && (
         <AgendaFilter
@@ -398,41 +400,383 @@ export function PublicAgendaPage() {
           value={selectedRoom ?? ""}
         />
       )}
-      <div className={`public-agenda-items public-agenda-${view}`}>
-        {visible.length === 0 ? (
-          <p className="empty-copy">No published items match this view.</p>
-        ) : (
-          visible.map((item) => (
-            <article className="public-agenda-item" key={item.id}>
-              <time>
-                {formatAgendaTime(item.startsAt, agenda.data.event.timezone)}
-                <span>
-                  – {formatAgendaTime(item.endsAt, agenda.data.event.timezone)}
-                </span>
-              </time>
-              <div>
-                <div className="agenda-item-tags">
-                  <span>{item.roomName ?? "All rooms"}</span>
-                  {item.trackName && <span>{item.trackName}</span>}
+      {view === "calendar" ? (
+        <PublicAgendaCalendar
+          items={agenda.data.items}
+          startsOn={agenda.data.event.startsOn}
+          endsOn={agenda.data.event.endsOn}
+          timezone={agenda.data.event.timezone}
+        />
+      ) : (
+        <div className={`public-agenda-items public-agenda-${view}`}>
+          {visible.length === 0 ? (
+            <p className="empty-copy">No published items match this view.</p>
+          ) : (
+            visible.map((item) => (
+              <article className="public-agenda-item" key={item.id}>
+                <time>
+                  {formatAgendaTime(item.startsAt, agenda.data.event.timezone)}
+                  <span>
+                    –{" "}
+                    {formatAgendaTime(item.endsAt, agenda.data.event.timezone)}
+                  </span>
+                </time>
+                <div>
+                  <div className="agenda-item-tags">
+                    <span>{item.roomName ?? "All rooms"}</span>
+                    {item.trackName && <span>{item.trackName}</span>}
+                  </div>
+                  <h2>{item.title}</h2>
+                  {item.speakers.length > 0 && (
+                    <p>
+                      {item.speakers
+                        .map((speaker) => speaker.displayName)
+                        .join(", ")}
+                    </p>
+                  )}
+                  {item.abstract && (
+                    <p className="agenda-abstract">{item.abstract}</p>
+                  )}
                 </div>
-                <h2>{item.title}</h2>
-                {item.speakers.length > 0 && (
-                  <p>
-                    {item.speakers
-                      .map((speaker) => speaker.displayName)
-                      .join(", ")}
-                  </p>
-                )}
-                {item.abstract && (
-                  <p className="agenda-abstract">{item.abstract}</p>
-                )}
-              </div>
-            </article>
-          ))
-        )}
-      </div>
+              </article>
+            ))
+          )}
+        </div>
+      )}
     </main>
   );
+}
+
+type PublicCalendarItem = {
+  id: string;
+  kind: "program" | "service";
+  title: string;
+  abstract: string | null;
+  trackName: string | null;
+  roomName: string | null;
+  startsAt: string;
+  endsAt: string;
+  speakers: Array<{ displayName: string }>;
+};
+
+const CALENDAR_MIN_HOUR = 8;
+const CALENDAR_MAX_HOUR = 20;
+const CALENDAR_PIXELS_PER_MINUTE = 1.3;
+const TRACK_PALETTE = [
+  "#1b2724",
+  "#ed6a3a",
+  "#185f43",
+  "#3a5dbb",
+  "#8a4ba2",
+  "#a8842b",
+  "#0f7a8a",
+  "#b2367a",
+];
+
+function instantLocalParts(
+  value: string,
+  timezone: string,
+): { date: string; minutes: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+    minute: "2-digit",
+    month: "2-digit",
+    timeZone: timezone,
+    year: "numeric",
+  }).formatToParts(new Date(value));
+  const read = (type: string) =>
+    parts.find((part) => part.type === type)?.value ?? "0";
+  const hour = Number(read("hour"));
+  const minute = Number(read("minute"));
+  return {
+    date: `${read("year")}-${read("month")}-${read("day")}`,
+    minutes: hour * 60 + minute,
+  };
+}
+
+function instantLocalDate(value: string, timezone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: timezone,
+  }).format(new Date(value));
+}
+
+function dayBucketList(startsOn: string, endsOn: string): string[] {
+  const days: string[] = [];
+  const [startYear, startMonth, startDay] = startsOn.split("-").map(Number);
+  const [endYear, endMonth, endDay] = endsOn.split("-").map(Number);
+  if (!startYear || !endYear) return days;
+  const cursor = new Date(
+    Date.UTC(startYear, (startMonth ?? 1) - 1, startDay ?? 1),
+  );
+  const limit = new Date(Date.UTC(endYear, (endMonth ?? 1) - 1, endDay ?? 1));
+  while (cursor.getTime() <= limit.getTime()) {
+    days.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return days;
+}
+
+function publicHourRange(
+  items: PublicCalendarItem[],
+  timezone: string,
+): { startHour: number; endHour: number } {
+  let earliest = CALENDAR_MIN_HOUR * 60;
+  let latest = CALENDAR_MAX_HOUR * 60;
+  for (const item of items) {
+    const start = instantLocalParts(item.startsAt, timezone).minutes;
+    const end = instantLocalParts(item.endsAt, timezone).minutes;
+    if (start < earliest) earliest = Math.floor(start / 60) * 60;
+    if (end > latest) latest = Math.ceil(end / 60) * 60;
+  }
+  return {
+    startHour: Math.min(CALENDAR_MIN_HOUR, Math.floor(earliest / 60)),
+    endHour: Math.max(CALENDAR_MAX_HOUR, Math.ceil(latest / 60)),
+  };
+}
+
+type PositionedItem = PublicCalendarItem & {
+  topMinutes: number;
+  endMinutes: number;
+  lane: number;
+  laneCount: number;
+};
+
+function layoutDayItems(
+  items: Array<PublicCalendarItem & { topMinutes: number; endMinutes: number }>,
+): PositionedItem[] {
+  const sorted = [...items].sort((left, right) => {
+    if (left.topMinutes !== right.topMinutes) {
+      return left.topMinutes - right.topMinutes;
+    }
+    return right.endMinutes - left.endMinutes;
+  });
+  const placements: PositionedItem[] = [];
+  for (const item of sorted) {
+    let lane = 0;
+    while (
+      placements.some(
+        (existing) =>
+          existing.lane === lane &&
+          existing.endMinutes > item.topMinutes &&
+          existing.topMinutes < item.endMinutes,
+      )
+    ) {
+      lane += 1;
+    }
+    placements.push({ ...item, lane, laneCount: 1 });
+  }
+  for (const placement of placements) {
+    let count = 1;
+    for (const other of placements) {
+      if (other === placement) continue;
+      if (
+        other.endMinutes > placement.topMinutes &&
+        other.topMinutes < placement.endMinutes
+      ) {
+        count = Math.max(count, other.lane + 1, placement.lane + 1);
+      }
+    }
+    placement.laneCount = Math.max(
+      count,
+      ...placements
+        .filter(
+          (peer) =>
+            peer !== placement &&
+            peer.endMinutes > placement.topMinutes &&
+            peer.topMinutes < placement.endMinutes,
+        )
+        .map((peer) => peer.lane + 1),
+    );
+  }
+  return placements;
+}
+
+function trackColor(trackName: string | null, all: string[]): string {
+  if (!trackName) return TRACK_PALETTE[0] ?? "#1b2724";
+  const index = all.indexOf(trackName) % TRACK_PALETTE.length;
+  return TRACK_PALETTE[index] ?? TRACK_PALETTE[0] ?? "#1b2724";
+}
+
+function formatCalendarHour(hour: number): string {
+  const suffix = hour < 12 ? "AM" : "PM";
+  const display = hour % 12 === 0 ? 12 : hour % 12;
+  return `${display}${suffix}`;
+}
+
+function formatCalendarDay(date: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+  if (!year) return date;
+  return new Intl.DateTimeFormat("en", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year, (month ?? 1) - 1, day ?? 1)));
+}
+
+function PublicAgendaCalendar({
+  items,
+  startsOn,
+  endsOn,
+  timezone,
+}: {
+  items: PublicCalendarItem[];
+  startsOn: string;
+  endsOn: string;
+  timezone: string;
+}) {
+  const days = dayBucketList(startsOn, endsOn);
+  const tracks = unique(items.map((item) => item.trackName ?? "—"));
+  const { startHour, endHour } = publicHourRange(items, timezone);
+  const totalMinutes = (endHour - startHour) * 60;
+  const bodyHeight = totalMinutes * CALENDAR_PIXELS_PER_MINUTE;
+
+  if (items.length === 0) {
+    return <p className="empty-copy">No published items to calendar yet.</p>;
+  }
+
+  return (
+    <section className="public-calendar">
+      <div className="public-calendar-legend">
+        <span className="eyebrow">All days · {timezone}</span>
+        <ul className="public-calendar-tracks">
+          {tracks.map((track) => (
+            <li key={track}>
+              <i
+                style={{
+                  background: trackColor(track === "—" ? null : track, tracks),
+                }}
+              />
+              {track === "—" ? "No track" : track}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div
+        className="public-calendar-frame"
+        style={
+          {
+            "--cal-hours": endHour - startHour,
+            "--cal-body-height": `${bodyHeight}px`,
+          } as CSSProperties
+        }
+      >
+        <div className="public-calendar-time">
+          {Array.from({ length: endHour - startHour + 1 }, (_, index) => {
+            const hour = startHour + index;
+            return (
+              <span
+                className="public-calendar-time-tick"
+                key={hour}
+                style={{ top: `${index * 60 * CALENDAR_PIXELS_PER_MINUTE}px` }}
+              >
+                {formatCalendarHour(hour)}
+              </span>
+            );
+          })}
+        </div>
+        <div
+          className="public-calendar-days"
+          style={{ gridTemplateColumns: `repeat(${days.length}, 1fr)` }}
+        >
+          {days.map((date) => {
+            const dayItems = items
+              .filter(
+                (item) => instantLocalDate(item.startsAt, timezone) === date,
+              )
+              .map((item) => {
+                const startParts = instantLocalParts(item.startsAt, timezone);
+                const endParts = instantLocalParts(item.endsAt, timezone);
+                return {
+                  ...item,
+                  topMinutes: startParts.minutes,
+                  endMinutes: endParts.minutes,
+                };
+              });
+            const placed = layoutDayItems(dayItems);
+            return (
+              <div className="public-calendar-day" key={date}>
+                <div className="public-calendar-day-label">
+                  {formatCalendarDay(date)}
+                </div>
+                <div className="public-calendar-day-body">
+                  {Array.from({ length: endHour - startHour }, (_, index) => (
+                    <div
+                      className="public-calendar-hour-line"
+                      key={index}
+                      style={{
+                        top: `${(index + 1) * 60 * CALENDAR_PIXELS_PER_MINUTE}px`,
+                      }}
+                    />
+                  ))}
+                  {placed.length === 0 ? (
+                    <p className="public-calendar-day-empty">
+                      Nothing scheduled
+                    </p>
+                  ) : (
+                    placed.map((item) => {
+                      const top =
+                        (item.topMinutes - startHour * 60) *
+                        CALENDAR_PIXELS_PER_MINUTE;
+                      const height =
+                        Math.max(15, item.endMinutes - item.topMinutes) *
+                        CALENDAR_PIXELS_PER_MINUTE;
+                      const color = trackColor(item.trackName, tracks);
+                      return (
+                        <article
+                          className="public-calendar-block"
+                          key={item.id}
+                          style={
+                            {
+                              "--block-top": `${top}px`,
+                              "--block-height": `${height}px`,
+                              "--block-lane": item.lane,
+                              "--block-lane-count": item.laneCount,
+                              "--block-color": color,
+                            } as CSSProperties
+                          }
+                        >
+                          <div className="public-calendar-block-time">
+                            {formatPublicTime(item.startsAt, timezone)} ·{" "}
+                            {item.roomName ?? "All rooms"}
+                          </div>
+                          <h3>{item.title}</h3>
+                          {item.speakers.length > 0 && (
+                            <p>
+                              {item.speakers
+                                .map((speaker) => speaker.displayName)
+                                .join(", ")}
+                            </p>
+                          )}
+                        </article>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function formatPublicTime(value: string, timezone: string): string {
+  const parts = new Intl.DateTimeFormat("en", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: timezone,
+  }).formatToParts(new Date(value));
+  return parts
+    .filter((part) => part.type === "hour" || part.type === "minute")
+    .map((part) => part.value)
+    .join("");
 }
 
 function AgendaItemEditor({
