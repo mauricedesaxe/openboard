@@ -56,6 +56,11 @@ import {
 import { AgendaPage, PublicAgendaPage } from "./AgendaPage";
 import { MutationStatus } from "./MutationStatus";
 import { authClient } from "./auth";
+import {
+  eventSlugFromPath,
+  eventSwitchPath,
+  type NavigationEvent,
+} from "./event-navigation";
 import { useMutationStatuses } from "./mutation-feedback";
 import { useTRPC } from "./trpc";
 
@@ -145,7 +150,6 @@ function AuthenticatedApp({ email }: { email: string }) {
   const location = useLocation();
   const navigate = useNavigate();
   const events = useQuery(trpc.events.list.queryOptions());
-  const speakerProfile = useQuery(trpc.speakerProfile.getOwn.queryOptions());
   const activeSlug = eventSlugFromPath(location.pathname);
   const activeEvent = events.data?.find((event) => event.slug === activeSlug);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -203,7 +207,6 @@ function AuthenticatedApp({ email }: { email: string }) {
             setDrawerOpen(false);
           }}
           signOutPending={signOutState.status === "pending"}
-          speakerProfileEligible={Boolean(speakerProfile.data?.eligible)}
         />
         {activeEvent && (
           <div className="drawer-event-navigation">
@@ -259,13 +262,6 @@ function AuthenticatedApp({ email }: { email: string }) {
   );
 }
 
-type NavigationEvent = {
-  name: string;
-  slug: string;
-  access: "owner" | "organizer" | "reviewer";
-  permissions: Array<"organizer" | "reviewer">;
-};
-
 function AppNavigation({
   activeEvent,
   email,
@@ -282,7 +278,6 @@ function AppNavigation({
   onSignOut: () => void;
   onSwitch: (slug: string) => void;
   signOutPending: boolean;
-  speakerProfileEligible: boolean;
 }) {
   return (
     <>
@@ -376,7 +371,7 @@ function EventNavigation({
       review: ["review", "decisions"],
       agenda: ["agenda-conflicts", "unplaced"],
       readiness: ["readiness"],
-      team: ["team"],
+      team: ["team", "team-expired"],
       communications: ["communications"],
     };
     return workspace.data.attention
@@ -417,7 +412,7 @@ function EventNavigation({
               {badgeCount(path) > 0 && (
                 <span
                   className="navigation-badge"
-                  aria-label={`${badgeCount(path)} items need attention`}
+                  aria-label={`${badgeCount(path)} ${badgeCount(path) === 1 ? "item needs" : "items need"} attention`}
                 >
                   {badgeCount(path)}
                 </span>
@@ -428,33 +423,6 @@ function EventNavigation({
       ))}
     </nav>
   );
-}
-
-function eventSlugFromPath(pathname: string): string | undefined {
-  return pathname.match(/^\/events\/([^/]+)(?:\/|$)/)?.[1];
-}
-
-function eventSwitchPath(pathname: string, event: NavigationEvent): string {
-  const area = pathname.match(/^\/events\/[^/]+\/([^/]+)/)?.[1] ?? "";
-  const organizerOnly = new Set([
-    "tracks",
-    "rooms",
-    "cfp",
-    "agenda",
-    "readiness",
-    "onboarding",
-    "communications",
-    "settings",
-  ]);
-  const ownerOnly = area === "team";
-  if (
-    (organizerOnly.has(area) && !event.permissions.includes("organizer")) ||
-    (ownerOnly && event.access !== "owner")
-  ) {
-    return `/events/${event.slug}`;
-  }
-  const targetArea = area === "cfp" ? "cfp/setup" : area;
-  return `/events/${event.slug}${targetArea ? `/${targetArea}` : ""}`;
 }
 
 function SignInPage() {
@@ -1041,7 +1009,7 @@ function ReviewerHome({
     roundStatus: string;
     remaining: number;
     assigned: number;
-    deadline: string | null;
+    cfpDeadline: string | null;
   };
   slug: string;
 }) {
@@ -1062,10 +1030,10 @@ function ReviewerHome({
           <strong>{reviewer.assigned}</strong>
         </div>
         <div>
-          <span>Deadline</span>
+          <span>CFP deadline</span>
           <strong>
-            {reviewer.deadline
-              ? reviewer.deadline.slice(0, 10)
+            {reviewer.cfpDeadline
+              ? reviewer.cfpDeadline.slice(0, 10)
               : "Not available"}
           </strong>
         </div>
@@ -1082,6 +1050,18 @@ function ReviewerHome({
 
 function EventTeamPage() {
   const { slug = "" } = useParams();
+  const trpc = useTRPC();
+  const workspace = useQuery(trpc.events.workspace.queryOptions({ slug }));
+  if (workspace.isPending) return <FullPageStatus label="Opening event team" />;
+  if (workspace.isError || workspace.data.event.access !== "owner")
+    return (
+      <div className="page">
+        <BoardStatus
+          label="Team unavailable"
+          detail="Only the event owner can manage the event team."
+        />
+      </div>
+    );
   return (
     <div className="page">
       <EventTeamPanel slug={slug} />

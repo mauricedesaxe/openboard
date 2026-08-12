@@ -19,7 +19,7 @@ const workspaceSchema = z.object({
       roundStatus: z.string(),
       remaining: z.number(),
       assigned: z.number(),
-      deadline: z.string().nullable(),
+      cfpDeadline: z.string().nullable(),
     })
     .nullable(),
   statuses: z.array(z.object({ key: z.string(), href: z.string() })),
@@ -91,10 +91,11 @@ describe("event workspace", () => {
       "query",
     );
     const events = getResult(listResponse.body, eventSchema.array());
-    expect(events[0]).toMatchObject({
-      access: "organizer",
-      permissions: ["organizer", "reviewer"],
-    });
+    expect(events[0]?.access).toBe("organizer");
+    expect(events[0]?.permissions.toSorted()).toEqual([
+      "organizer",
+      "reviewer",
+    ]);
 
     const workspaceResponse = await callTrpc(
       "events.workspace",
@@ -142,6 +143,104 @@ describe("event workspace", () => {
     expect(workspace.statuses).toEqual([]);
     expect(workspace.reviewer).toMatchObject({ assigned: 0, remaining: 0 });
   });
+
+  test("scopes reviewer Home to the current review round", async () => {
+    const owner = await signIn("workspace-round-owner@example.com");
+    const reviewer = await signIn("workspace-round-reviewer@example.com");
+    await createEvent(owner.cookie, "workspace-round-event");
+    const event = await eventId("workspace-round-event");
+    const now = Date.now();
+    const trackId = crypto.randomUUID();
+    await testEnvironment.DB.prepare(
+      `INSERT INTO event_roles
+       (id, event_id, user_id, role, granted_by_user_id, created_at)
+       VALUES (?, ?, ?, 'reviewer', ?, ?)`,
+    )
+      .bind(crypto.randomUUID(), event, reviewer.userId, owner.userId, now)
+      .run();
+    await testEnvironment.DB.prepare(
+      `INSERT INTO tracks
+       (id, event_id, name, position, created_at, updated_at)
+       VALUES (?, ?, 'Workspace track', 0, ?, ?)`,
+    )
+      .bind(trackId, event, now, now)
+      .run();
+
+    await insertReviewRound({
+      eventId: event,
+      ownerUserId: owner.userId,
+      reviewerUserId: reviewer.userId,
+      trackId,
+      status: "open",
+      deadline: "2027-09-01T00:00:00Z",
+      createdAt: now,
+    });
+    await insertReviewRound({
+      eventId: event,
+      ownerUserId: owner.userId,
+      reviewerUserId: reviewer.userId,
+      trackId,
+      status: "draft",
+      deadline: "2027-09-15T00:00:00Z",
+      createdAt: now + 1,
+    });
+
+    const response = await callTrpc(
+      "events.workspace",
+      { slug: "workspace-round-event" },
+      reviewer.cookie,
+      "query",
+    );
+    const workspace = getResult(response.body, workspaceSchema);
+    expect(workspace.reviewer).toEqual({
+      roundStatus: "open",
+      remaining: 1,
+      assigned: 1,
+      cfpDeadline: "2027-09-01T00:00:00Z",
+    });
+  });
+
+  test("separates active and expired team invitations", async () => {
+    const owner = await signIn("workspace-invite-owner@example.com");
+    await createEvent(owner.cookie, "workspace-invite-event");
+    const event = await eventId("workspace-invite-event");
+    const now = Date.now();
+    for (const [email, expiresAt] of [
+      ["active@example.com", now + 60_000],
+      ["expired@example.com", now - 60_000],
+    ] as const) {
+      await testEnvironment.DB.prepare(
+        `INSERT INTO invitations
+         (id, event_id, email, role, secret_hash, status, invited_by_user_id,
+          expires_at, created_at)
+         VALUES (?, ?, ?, 'organizer', ?, 'pending', ?, ?, ?)`,
+      )
+        .bind(
+          crypto.randomUUID(),
+          event,
+          email,
+          crypto.randomUUID(),
+          owner.userId,
+          expiresAt,
+          now,
+        )
+        .run();
+    }
+
+    const response = await callTrpc(
+      "events.workspace",
+      { slug: "workspace-invite-event" },
+      owner.cookie,
+      "query",
+    );
+    const workspace = getResult(response.body, workspaceSchema);
+    expect(workspace.attention).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "team", severity: "warning" }),
+        expect.objectContaining({ key: "team-expired", severity: "critical" }),
+      ]),
+    );
+  });
 });
 
 async function createEvent(cookie: string, slug: string) {
@@ -157,4 +256,95 @@ async function createEvent(cookie: string, slug: string) {
     cookie,
   );
   expect(response.status).toBe(200);
+}
+
+async function eventId(slug: string) {
+  const event = await testEnvironment.DB.prepare(
+    "SELECT id FROM events WHERE slug = ?",
+  )
+    .bind(slug)
+    .first<{ id: string }>();
+  expect(event).toBeTruthy();
+  return event?.id as string;
+}
+
+async function insertReviewRound(input: {
+  eventId: string;
+  ownerUserId: string;
+  reviewerUserId: string;
+  trackId: string;
+  status: "draft" | "open";
+  deadline: string;
+  createdAt: number;
+}) {
+  const cfpId = crypto.randomUUID();
+  const roundId = crypto.randomUUID();
+  const submissionId = crypto.randomUUID();
+  await testEnvironment.DB.prepare(
+    `INSERT INTO cfps
+     (id, event_id, name, deadline, status, formats_json, custom_fields_json,
+      created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, '["Talk"]', '[]', ?, ?)`,
+  )
+    .bind(
+      cfpId,
+      input.eventId,
+      `${input.status} CFP`,
+      input.deadline,
+      input.status,
+      input.createdAt,
+      input.createdAt,
+    )
+    .run();
+  await testEnvironment.DB.prepare(
+    `INSERT INTO review_rounds
+     (id, event_id, cfp_id, name, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(
+      roundId,
+      input.eventId,
+      cfpId,
+      `${input.status} round`,
+      input.status,
+      input.createdAt,
+      input.createdAt,
+    )
+    .run();
+  if (input.status === "draft") return;
+  await testEnvironment.DB.prepare(
+    `INSERT INTO submissions
+     (id, event_id, cfp_id, cfp_revision, owner_user_id, client_draft_id,
+      track_id, title, abstract, format, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Workspace abstract', 'Talk', 'active', ?, ?)`,
+  )
+    .bind(
+      submissionId,
+      input.eventId,
+      cfpId,
+      input.createdAt,
+      input.ownerUserId,
+      crypto.randomUUID(),
+      input.trackId,
+      `${input.status} submission`,
+      input.createdAt,
+      input.createdAt,
+    )
+    .run();
+  await testEnvironment.DB.prepare(
+    `INSERT INTO reviewer_assignments
+     (id, event_id, review_round_id, submission_id, reviewer_user_id,
+      assigned_by_user_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(
+      crypto.randomUUID(),
+      input.eventId,
+      roundId,
+      submissionId,
+      input.reviewerUserId,
+      input.ownerUserId,
+      input.createdAt,
+    )
+    .run();
 }

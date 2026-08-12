@@ -152,7 +152,8 @@ export async function findEventForOrganizer(
   return {
     ...result,
     access: eventAccess,
-    permissions: ["organizer"],
+    permissions:
+      eventAccess === "owner" ? ["organizer", "reviewer"] : ["organizer"],
   } as Event & {
     agendaRevision: number;
   };

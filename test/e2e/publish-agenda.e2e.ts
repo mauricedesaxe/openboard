@@ -118,7 +118,10 @@ test("publishes a working placement to every public agenda view", async ({
   });
 
   await page.goto(`/events/${slug}`);
-  await page.getByRole("link", { name: "Open working agenda" }).click();
+  await page
+    .getByRole("navigation", { name: "Browser Agenda Conference navigation" })
+    .getByRole("link", { name: "Agenda" })
+    .click();
   await expect(
     page.getByRole("heading", { name: "Build the agenda." }),
   ).toBeVisible();

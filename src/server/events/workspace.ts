@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 
 import type { UserId } from "../../shared/events";
 import { getWorkingAgenda } from "../agendas/repository";
@@ -25,25 +25,19 @@ export async function getEventWorkspace(
 
   const organizer = event.permissions.includes("organizer");
   const reviewer = event.permissions.includes("reviewer");
-  const [
-    cfp,
-    review,
-    agenda,
-    readiness,
-    communications,
-    team,
-    myReviews,
-    reviewerRound,
-  ] = await Promise.all([
-    organizer ? getCfpSetup(database, userId, slug) : null,
-    organizer ? getOrganizerReviewBoard(database, userId, slug) : null,
-    organizer ? getWorkingAgenda(database, userId, slug) : null,
-    organizer ? getOrganizerOnboardingBoard(database, userId, slug) : null,
-    organizer ? listCommunicationFailures(database, userId, slug) : null,
-    event.access === "owner" ? listEventTeam(database, userId, slug) : null,
-    reviewer ? listOwnReviewAssignments(database, userId, slug) : [],
-    reviewer ? getReviewerRound(database, event.id) : null,
-  ]);
+  const [cfp, review, agenda, readiness, communications, team, reviewerRound] =
+    await Promise.all([
+      organizer ? getCfpSetup(database, userId, slug) : null,
+      organizer ? getOrganizerReviewBoard(database, userId, slug) : null,
+      organizer ? getWorkingAgenda(database, userId, slug) : null,
+      organizer ? getOrganizerOnboardingBoard(database, userId, slug) : null,
+      organizer ? listCommunicationFailures(database, userId, slug) : null,
+      event.access === "owner" ? listEventTeam(database, userId, slug) : null,
+      reviewer ? getReviewerRound(database, event.id) : null,
+    ]);
+  const myReviews = reviewerRound
+    ? await listOwnReviewAssignments(database, userId, slug, reviewerRound.id)
+    : [];
 
   const attention = organizer
     ? organizerAttention(slug, {
@@ -64,11 +58,10 @@ export async function getEventWorkspace(
     attention,
     reviewer: reviewer
       ? {
-          roundStatus:
-            myReviews[0]?.roundStatus ?? reviewerRound?.status ?? "unavailable",
+          roundStatus: reviewerRound?.status ?? "unavailable",
           remaining: remainingReviews,
           assigned: myReviews.length,
-          deadline: reviewerRound?.deadline ?? null,
+          cfpDeadline: reviewerRound?.cfpDeadline ?? null,
         }
       : null,
     statuses: organizer
@@ -86,11 +79,18 @@ export async function getEventWorkspace(
 
 async function getReviewerRound(database: Database, eventId: string) {
   const [round] = await database
-    .select({ status: reviewRounds.status, deadline: cfps.deadline })
+    .select({
+      id: reviewRounds.id,
+      status: reviewRounds.status,
+      cfpDeadline: cfps.deadline,
+    })
     .from(reviewRounds)
     .innerJoin(cfps, eq(cfps.id, reviewRounds.cfpId))
     .where(eq(reviewRounds.eventId, eventId))
-    .orderBy(desc(reviewRounds.createdAt))
+    .orderBy(
+      sql`CASE ${cfps.status} WHEN 'open' THEN 0 ELSE 1 END`,
+      desc(reviewRounds.createdAt),
+    )
     .limit(1);
   return round ?? null;
 }
@@ -274,15 +274,30 @@ function organizerAttention(
   }
   if (state.team) {
     const pending = state.team.invitations.filter(
-      (invitation) => invitation.status === "pending",
+      (invitation) => invitation.usable,
     ).length;
+    const expired = state.team.invitations.filter(
+      (invitation) => invitation.status === "pending" && !invitation.usable,
+    ).length;
+    if (expired > 0)
+      items.push(
+        attention(
+          "team-expired",
+          "critical",
+          `${expired} team ${expired === 1 ? "invitation has" : "invitations have"} expired`,
+          "Replace each expired invitation to send a usable link.",
+          expired,
+          route("team"),
+          null,
+        ),
+      );
     if (pending > 0)
       items.push(
         attention(
           "team",
           "warning",
           `${pending} team ${pending === 1 ? "invitation is" : "invitations are"} pending`,
-          "Replace expired invitations or follow up on active ones.",
+          "Follow up before each active invitation expires.",
           pending,
           route("team"),
           null,
@@ -376,12 +391,21 @@ function readinessStatus(readiness: OrganizerState["readiness"]) {
 }
 
 function teamStatus(team: OrganizerState["team"]) {
+  const people = team ? team.roles.length + 1 : 0;
+  const pending =
+    team?.invitations.filter((invitation) => invitation.usable).length ?? 0;
+  const expired =
+    team?.invitations.filter(
+      (invitation) => invitation.status === "pending" && !invitation.usable,
+    ).length ?? 0;
   return {
     key: "team",
     label: "Team",
-    value: team ? `${team.roles.length + 1} people` : "Owner only",
+    value: team
+      ? `${people} ${people === 1 ? "person" : "people"}`
+      : "Owner only",
     detail: team
-      ? `${team.invitations.filter((invitation) => invitation.status === "pending").length} pending invitations`
+      ? `${pending} active, ${expired} expired invitations`
       : "Team details are owner-only",
     href: "team",
   };

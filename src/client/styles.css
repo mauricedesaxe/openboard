@@ -405,7 +405,7 @@ a {
 }
 
 .page {
-  width: min(1180px, 92vw);
+  width: min(1180px, calc(100% - 48px));
   margin: 0 auto;
   padding: 70px 0 100px;
 }
