@@ -286,6 +286,9 @@ async function mutate(
 }
 
 async function publishAgenda(page: Parameters<typeof signIn>[0]) {
+  await expect(
+    page.getByRole("button", { name: "Publish agenda" }),
+  ).toBeEnabled();
   const response = page.waitForResponse(
     (candidate) =>
       candidate.url().includes("/api/trpc/agendas.publish") &&

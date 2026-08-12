@@ -832,6 +832,11 @@ a {
   grid-template-columns: minmax(0, 1fr) minmax(360px, 400px);
 }
 .agenda-palette {
+  position: sticky;
+  top: 16px;
+  align-self: start;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
   min-width: 0;
   border-right: 1px solid var(--ink);
   padding: 20px;
@@ -907,6 +912,9 @@ a {
   border-radius: 0;
   box-shadow: 2px 2px 0 rgba(27, 39, 36, 0.25);
   background: #f6f0df;
+  color: var(--ink);
+}
+.agenda-calendar .fc-event-main {
   color: var(--ink);
 }
 .agenda-calendar .fc-event:hover,

@@ -152,6 +152,7 @@ export function AgendaCalendar({
         ]}
         ref={calendarRef}
         selectable={editable}
+        scrollTime="08:00:00"
         slotDuration="00:15:00"
         slotEventOverlap
         snapDuration="00:15:00"
@@ -188,10 +189,13 @@ function AgendaEventCard({
       }
     >
       <strong>{info.event.title}</strong>
-      <span>{item.roomName ?? "All rooms"}</span>
-      {item.speakers.length > 0 && (
+      <span>
+        {item.roomName ??
+          (item.kind === "service" ? "All rooms" : "Unassigned")}
+      </span>
+      {(item.speakers?.length ?? 0) > 0 && (
         <small>
-          {item.speakers.map((speaker) => speaker.displayName).join(", ")}
+          {item.speakers?.map((speaker) => speaker.displayName).join(", ")}
         </small>
       )}
       <div className="agenda-calendar-card-status">
