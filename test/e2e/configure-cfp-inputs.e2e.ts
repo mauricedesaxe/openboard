@@ -82,9 +82,7 @@ test("refreshes the public CFP after its definition changes", async ({
   ).toBeVisible();
 });
 
-test("defaults and explains the CFP deadline in event time", async ({
-  page,
-}) => {
+test("bounds and explains the CFP deadline in event time", async ({ page }) => {
   const suffix = `${Date.now()}`;
   const slug = `browser-cfp-deadline-${suffix}`;
   await page.goto("/");
@@ -94,7 +92,22 @@ test("defaults and explains the CFP deadline in event time", async ({
 
   const deadline = page.getByLabel("Deadline");
   await expect(deadline).toHaveValue("2028-08-10T17:00");
+  await expect(deadline).toHaveAttribute("min", /^20\d\d-\d\d-\d\dT\d\d:\d\d$/);
+  await expect(deadline).toHaveAttribute("max", "2028-08-12T23:59");
   await expect(page.getByText(/Aug 10, 2028.*Aug 12, 2028/)).toBeVisible();
+
+  await deadline.fill("2020-01-01T09:00");
+  await page.getByRole("button", { name: "Create draft" }).click();
+  await expect(
+    page.getByText("Choose a deadline in the future."),
+  ).toBeVisible();
+
+  await deadline.fill("2028-08-13T00:00");
+  await page.getByRole("button", { name: "Create draft" }).click();
+  await expect(
+    page.getByText("Choose a deadline on or before the event end date."),
+  ).toBeVisible();
+
   await deadline.fill("2028-07-01T09:00");
   await expect(
     page.getByText("The deadline is before the event starts."),

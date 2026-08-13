@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  cfpDeadlineInputBounds,
   defaultCfpDeadline,
   eventLocalDateTimeToIso,
   instantFallsAfterLocalDate,
@@ -126,5 +127,28 @@ describe("event deadline timezones", () => {
         now: new Date("2027-08-12T22:30:00Z"),
       }),
     ).toBe("");
+  });
+
+  test("bounds CFP deadlines in event time across daylight saving changes", () => {
+    expect(
+      cfpDeadlineInputBounds({
+        endsOn: "2027-10-31",
+        timezone: "Europe/Berlin",
+        now: new Date("2027-03-28T00:59:30Z"),
+      }),
+    ).toEqual({
+      min: "2027-03-28T03:00",
+      max: "2027-10-31T23:59",
+    });
+    expect(
+      cfpDeadlineInputBounds({
+        endsOn: "2027-10-31",
+        timezone: "Europe/Berlin",
+        now: new Date("2027-10-31T00:59:30Z"),
+      }),
+    ).toEqual({
+      min: "2027-10-31T03:00",
+      max: "2027-10-31T23:59",
+    });
   });
 });

@@ -119,6 +119,45 @@ export function defaultCfpDeadline(input: {
     : "";
 }
 
+export function cfpDeadlineInputBounds(input: {
+  endsOn: string;
+  timezone: string;
+  now?: Date;
+}): { min: string; max: string } {
+  const now = input.now ?? new Date();
+  let nextMinute = new Date(
+    Math.floor(now.getTime() / millisecondsPerMinute) * millisecondsPerMinute +
+      millisecondsPerMinute,
+  );
+  let min = "";
+  for (
+    let attempt = 0;
+    attempt <= maximumTimezoneOverlapMinutes;
+    attempt += 1
+  ) {
+    const localDateTime = isoToEventLocalDateTime({
+      instant: nextMinute.toISOString(),
+      timezone: input.timezone,
+    });
+    const resolution = resolveEventLocalDateTime({
+      localDateTime,
+      timezone: input.timezone,
+    });
+    if (
+      resolution.status === "resolved" &&
+      resolution.iso === nextMinute.toISOString()
+    ) {
+      min = localDateTime;
+      break;
+    }
+    nextMinute = new Date(nextMinute.getTime() + millisecondsPerMinute);
+  }
+  return {
+    min,
+    max: `${input.endsOn}T23:59`,
+  };
+}
+
 export function formatEventDateRange(startsOn: string, endsOn: string): string {
   const formatter = new Intl.DateTimeFormat(undefined, {
     day: "numeric",

@@ -38,6 +38,7 @@ import {
 } from "../shared/cfps";
 import type { CommunicationPurpose } from "../shared/communications";
 import {
+  cfpDeadlineInputBounds,
   defaultCfpDeadline,
   eventLocalDateTimeToIso,
   formatEventDateRange,
@@ -5237,6 +5238,7 @@ function CfpBuilder({
     },
   ]);
   const formId = cfp?.id ?? "new";
+  const deadlineBounds = cfpDeadlineInputBounds({ endsOn, timezone });
 
   function parsedDefinition(): CfpDefinitionInput | undefined {
     const parsed = cfpDefinitionInputSchema.safeParse(definition);
@@ -5350,14 +5352,17 @@ function CfpBuilder({
             >
               <input
                 id={`cfp-deadline-${formId}`}
+                max={deadlineBounds.max}
+                min={deadlineBounds.min}
                 type="datetime-local"
                 value={isoToEventLocalDateTime({
                   instant: definition.deadline,
                   timezone,
                 })}
                 onChange={(event) => {
+                  const localDateTime = event.target.value;
                   const deadline = eventLocalDateTimeToIso({
-                    localDateTime: event.target.value,
+                    localDateTime,
                     timezone,
                   });
                   setDefinition((current) => ({
@@ -5365,15 +5370,24 @@ function CfpBuilder({
                     deadline: deadline ?? "",
                   }));
                   setValidationError(
-                    deadline
-                      ? undefined
-                      : {
-                          message:
-                            "Choose a deadline that exists in the event timezone.",
-                          path: ["deadline"],
-                        },
+                    deadlineInputError({
+                      deadline,
+                      localDateTime,
+                      max: deadlineBounds.max,
+                      min: deadlineBounds.min,
+                    }),
                   );
                 }}
+                onInvalid={(event) =>
+                  setValidationError(
+                    deadlineInputError({
+                      deadline: definition.deadline,
+                      localDateTime: event.currentTarget.value,
+                      max: deadlineBounds.max,
+                      min: deadlineBounds.min,
+                    }),
+                  )
+                }
               />
               {deadlineBeforeStart && (
                 <span className="form-warning" role="status">
@@ -6869,6 +6883,33 @@ function formatDeadline(value: string, timezone: string): string {
     year: "numeric",
     timeZone: timezone,
   }).format(new Date(value));
+}
+
+function deadlineInputError(input: {
+  deadline: string | undefined;
+  localDateTime: string;
+  max: string;
+  min: string;
+}): { message: string; path: (string | number)[] } | undefined {
+  if (input.localDateTime < input.min) {
+    return {
+      message: "Choose a deadline in the future.",
+      path: ["deadline"],
+    };
+  }
+  if (input.localDateTime > input.max) {
+    return {
+      message: "Choose a deadline on or before the event end date.",
+      path: ["deadline"],
+    };
+  }
+  if (!input.deadline) {
+    return {
+      message: "Choose a deadline that exists in the event timezone.",
+      path: ["deadline"],
+    };
+  }
+  return undefined;
 }
 
 function cfpValidationError(
