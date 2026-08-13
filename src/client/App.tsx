@@ -3649,6 +3649,13 @@ function ReviewAssignmentCard({
     }),
   );
   const editable = assignment.roundStatus === "open";
+  const unavailableMessage =
+    assignment.roundStatus === "draft"
+      ? "Score and comment controls are unavailable until an organizer opens this review round."
+      : assignment.roundStatus === "closed"
+        ? "Score and comment controls are unavailable because this review round is closed."
+        : undefined;
+  const unavailableMessageId = `review-unavailable-${assignment.assignmentId}`;
   const saveMessage = save.isPending
     ? "Saving review…"
     : save.isSuccess
@@ -3675,8 +3682,16 @@ function ReviewAssignmentCard({
           });
         }}
       >
+        {unavailableMessage && (
+          <p className="review-unavailable" id={unavailableMessageId}>
+            {unavailableMessage}
+          </p>
+        )}
         <Field label="Score" name={`score-${assignment.assignmentId}`}>
           <select
+            aria-describedby={
+              unavailableMessage ? unavailableMessageId : undefined
+            }
             disabled={!editable}
             id={`score-${assignment.assignmentId}`}
             onChange={(event) => setScore(Number(event.target.value))}
@@ -3694,6 +3709,9 @@ function ReviewAssignmentCard({
           name={`comment-${assignment.assignmentId}`}
         >
           <textarea
+            aria-describedby={
+              unavailableMessage ? unavailableMessageId : undefined
+            }
             disabled={!editable}
             id={`comment-${assignment.assignmentId}`}
             maxLength={5000}
@@ -3714,7 +3732,8 @@ function ReviewAssignmentCard({
         </button>
         {save.isError ? (
           <p className="review-save-status review-save-error" role="alert">
-            {save.error.message}
+            Review could not be saved. Your score and comment are still here.
+            Try again.
           </p>
         ) : saveMessage ? (
           <p className="review-save-status" role="status">

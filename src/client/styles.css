@@ -1865,6 +1865,15 @@ a {
 .reviewer-card .review-controls textarea {
   min-height: 100px;
 }
+.review-unavailable {
+  margin: 0;
+  border-left: 3px solid var(--ink);
+  padding: 10px 12px;
+  background: rgba(27, 39, 36, 0.08);
+  color: rgba(27, 39, 36, 0.78);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .review-save-status {
   margin: 4px 0 0;
   color: #185f43;
