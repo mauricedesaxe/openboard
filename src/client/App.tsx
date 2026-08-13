@@ -6025,6 +6025,7 @@ function SubmissionPage() {
   const update = useMutation(
     trpc.submissions.updateOwn.mutationOptions({
       onSuccess: async (saved) => {
+        setSelectedFiles({});
         setEditState({
           submissionId: saved.id,
           content: submissionContent(saved),
@@ -6313,6 +6314,9 @@ function SubmissionPage() {
                       [field.key]: { file, uploadId: crypto.randomUUID() },
                     }));
                   }}
+                  onFileInvalid={() =>
+                    setFileError(`Choose a file for ${field.label}.`)
+                  }
                 />
               ))}
             </fieldset>
@@ -7138,6 +7142,9 @@ function PublicCfpPage() {
                           file,
                         )
                       }
+                      onFileInvalid={() =>
+                        setFileError(`Choose a file for ${field.label}.`)
+                      }
                     />
                   ),
                 )}
@@ -7203,6 +7210,7 @@ function PublicCustomField({
   file,
   onChange,
   onFileChange,
+  onFileInvalid,
 }: {
   disabled: boolean;
   field: CustomField;
@@ -7210,6 +7218,7 @@ function PublicCustomField({
   file: (Pick<StoredFile, "fileName"> & { url?: string }) | undefined;
   onChange: (value: string) => void;
   onFileChange?: (file: File | undefined) => void;
+  onFileInvalid?: () => void;
 }) {
   if (field.type === "long_text")
     return (
@@ -7255,6 +7264,7 @@ function PublicCustomField({
           required={field.required && !file}
           type="file"
           onChange={(event) => onFileChange?.(event.target.files?.[0])}
+          onInvalid={onFileInvalid}
         />
         {file &&
           (file.url ? (

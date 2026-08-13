@@ -825,6 +825,7 @@ export const appRouter = trpc.router({
         }
         const result = await submitProposal(
           ctx.database,
+          ctx.files,
           ctx.userId,
           ctx.session.user.email,
           input,
@@ -928,6 +929,7 @@ export const appRouter = trpc.router({
       .mutation(async ({ ctx, input }) => {
         const result = await updateOwnSubmission(
           ctx.database,
+          ctx.files,
           ctx.userId,
           input.submissionId,
           input,
