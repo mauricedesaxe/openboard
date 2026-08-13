@@ -335,6 +335,10 @@ function AppNavigation({
   onSwitch: (slug: string) => void;
   signOutPending: boolean;
 }) {
+  const switcherEvents =
+    activeEvent && !events.some((event) => event.slug === activeEvent.slug)
+      ? [activeEvent, ...events]
+      : events;
   return (
     <>
       <Link className="wordmark sidebar-wordmark" onClick={onNavigate} to="/">
@@ -358,13 +362,7 @@ function AppNavigation({
                   Choose an event
                 </option>
               )}
-              {activeEvent &&
-                !events.some((event) => event.slug === activeEvent.slug) && (
-                  <option key={activeEvent.slug} value={activeEvent.slug}>
-                    {activeEvent.name}
-                  </option>
-                )}
-              {events.map((event) => (
+              {switcherEvents.map((event) => (
                 <option key={event.slug} value={event.slug}>
                   {event.name}
                 </option>
