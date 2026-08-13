@@ -3658,9 +3658,15 @@ function ReviewAssignmentCard({
   const unavailableMessageId = `review-unavailable-${assignment.assignmentId}`;
   const saveMessage = save.isPending
     ? "Saving review…"
-    : save.isSuccess
+    : save.isSuccess &&
+        save.variables.score === score &&
+        (save.variables.comment ?? "") === (comment.trim() || "")
       ? "Review saved"
       : undefined;
+  const saveErrorMessage =
+    save.error?.data?.code === "CONFLICT"
+      ? save.error.message
+      : "Review could not be saved. Your score and comment are still here. Try again.";
 
   return (
     <article className="review-proposal reviewer-card">
@@ -3694,7 +3700,10 @@ function ReviewAssignmentCard({
             }
             disabled={!editable}
             id={`score-${assignment.assignmentId}`}
-            onChange={(event) => setScore(Number(event.target.value))}
+            onChange={(event) => {
+              save.reset();
+              setScore(Number(event.target.value));
+            }}
             value={score}
           >
             {[1, 2, 3, 4, 5].map((value) => (
@@ -3715,7 +3724,10 @@ function ReviewAssignmentCard({
             disabled={!editable}
             id={`comment-${assignment.assignmentId}`}
             maxLength={5000}
-            onChange={(event) => setComment(event.target.value)}
+            onChange={(event) => {
+              save.reset();
+              setComment(event.target.value);
+            }}
             value={comment}
           />
         </Field>
@@ -3732,8 +3744,7 @@ function ReviewAssignmentCard({
         </button>
         {save.isError ? (
           <p className="review-save-status review-save-error" role="alert">
-            Review could not be saved. Your score and comment are still here.
-            Try again.
+            {saveErrorMessage}
           </p>
         ) : saveMessage ? (
           <p className="review-save-status" role="status">

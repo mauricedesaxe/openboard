@@ -199,6 +199,9 @@ test("refreshes the organizer average after saving a review", async ({
   await reviewCard.getByRole("button", { name: "Save review" }).click();
   await expect(reviewCard.getByRole("status")).toHaveText("Saving review…");
   await expect(reviewCard.getByRole("status")).toHaveText("Review saved");
+  await reviewCard.getByLabel("Score").selectOption("4");
+  await expect(reviewCard.getByRole("status")).toHaveCount(0);
+  await reviewCard.getByLabel("Score").selectOption("5");
   await page.unroute(/\/api\/trpc\/reviews\.save(?:\?|$)/);
   const lowerScoredCard = page
     .locator(".reviewer-card")
