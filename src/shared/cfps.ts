@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { MAX_STORED_FILE_MB } from "./files";
+
 export type CfpId = string & { readonly __brand: "CfpId" };
 export type TrackId = string & { readonly __brand: "TrackId" };
 
@@ -61,8 +63,23 @@ export const customFieldSchema = z.discriminatedUnion("type", [
   z.object({
     ...fieldBase,
     type: z.literal("file"),
-    acceptedTypes: z.array(z.string().trim().min(1).max(120)).min(1).max(20),
-    maxSizeMb: z.number().int().min(1).max(100),
+    acceptedTypes: z
+      .array(
+        z
+          .string()
+          .trim()
+          .toLowerCase()
+          .regex(
+            /^[a-z0-9][a-z0-9!#$&^_.+-]*\/(?:[a-z0-9][a-z0-9!#$&^_.+-]*|\*)$/,
+            "Use MIME types such as application/pdf or image/*.",
+          ),
+      )
+      .min(1)
+      .max(20)
+      .refine((types) => new Set(types).size === types.length, {
+        message: "Use each accepted type once.",
+      }),
+    maxSizeMb: z.number().int().min(1).max(MAX_STORED_FILE_MB),
   }),
 ]);
 

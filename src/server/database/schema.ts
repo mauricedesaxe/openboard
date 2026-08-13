@@ -433,6 +433,56 @@ export const formResponses = sqliteTable("form_responses", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+export const submissionFileUploads = sqliteTable(
+  "submission_file_uploads",
+  {
+    id: text("id").primaryKey(),
+    cfpId: text("cfp_id")
+      .notNull()
+      .references(() => cfps.id, { onDelete: "cascade" }),
+    clientDraftId: text("client_draft_id").notNull(),
+    fieldKey: text("field_key").notNull(),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => user.id),
+    storedFileId: text("stored_file_id")
+      .notNull()
+      .unique()
+      .references(() => storedFiles.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("submission_file_uploads_draft_idx").on(
+      table.cfpId,
+      table.ownerUserId,
+      table.clientDraftId,
+    ),
+  ],
+);
+
+export const formResponseAttachments = sqliteTable(
+  "form_response_attachments",
+  {
+    id: text("id").primaryKey(),
+    formResponseId: text("form_response_id")
+      .notNull()
+      .references(() => formResponses.id, { onDelete: "cascade" }),
+    fieldKey: text("field_key").notNull(),
+    storedFileId: text("stored_file_id")
+      .notNull()
+      .unique()
+      .references(() => storedFiles.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("form_response_attachments_response_idx").on(table.formResponseId),
+    uniqueIndex("form_response_attachments_field_idx").on(
+      table.formResponseId,
+      table.fieldKey,
+    ),
+  ],
+);
+
 export const decisions = sqliteTable("decisions", {
   id: text("id").primaryKey(),
   submissionId: text("submission_id")
@@ -1106,6 +1156,7 @@ export const schema = {
   eventRoles,
   cfps,
   events,
+  formResponseAttachments,
   formResponses,
   invitations,
   onboardingFormResponses,
@@ -1121,6 +1172,7 @@ export const schema = {
   session,
   speakerProfiles,
   storedFiles,
+  submissionFileUploads,
   submissions,
   submissionSpeakerInvitations,
   submissionSpeakers,

@@ -3,7 +3,13 @@ import { z } from "zod";
 
 import { cfpSchema } from "../src/shared/cfps";
 
-import { callTrpc, getResult, signIn, testEnvironment } from "./support";
+import {
+  callTrpc,
+  getResult,
+  signIn,
+  testEnvironment,
+  workerFetch,
+} from "./support";
 
 const idSchema = z.object({ id: z.string() });
 const submissionSchema = z.object({
@@ -28,6 +34,16 @@ const submissionSchema = z.object({
     z.object({ id: z.string(), name: z.string(), email: z.string() }),
   ),
   customAnswers: z.record(z.string(), z.string()),
+  fileAnswers: z.record(
+    z.string(),
+    z.object({
+      id: z.string(),
+      fileName: z.string(),
+      contentType: z.string(),
+      sizeBytes: z.number(),
+      url: z.string(),
+    }),
+  ),
   decision: z.object({
     status: z.enum(["pending", "accepted", "declined"]),
   }),
@@ -107,6 +123,31 @@ describe("submit a proposal through the local-first flow", () => {
                 type: "short_text",
                 required: false,
               },
+              {
+                key: "outline",
+                label: "Session outline",
+                type: "file",
+                required: true,
+                acceptedTypes: ["application/pdf"],
+                maxSizeMb: 1,
+              },
+              {
+                key: "hidden_outline",
+                label: "Experienced outline",
+                type: "file",
+                required: false,
+                acceptedTypes: ["application/pdf"],
+                maxSizeMb: 1,
+                condition: { fieldKey: "audience", equals: "Experienced" },
+              },
+              {
+                key: "slides",
+                label: "Slides",
+                type: "file",
+                required: false,
+                acceptedTypes: ["application/pdf"],
+                maxSizeMb: 1,
+              },
             ],
           },
           owner.cookie,
@@ -168,6 +209,7 @@ describe("submit a proposal through the local-first flow", () => {
         notes: "Bring questions.",
         removed_question: "This stale answer must not be persisted.",
       },
+      fileAnswers: {},
     };
     expect((await callTrpc("submissions.submit", proposal)).status).toBe(401);
     await testEnvironment.DB.prepare(
@@ -190,6 +232,77 @@ describe("submit a proposal through the local-first flow", () => {
       submitter.cookie,
     );
     expect(invalidOption.status).toBe(400);
+    const invalidType = await callTrpc(
+      "submissions.uploadFile",
+      {
+        slug,
+        cfpId: draft.id,
+        clientDraftId: proposal.clientDraftId,
+        uploadId: crypto.randomUUID(),
+        fieldKey: "outline",
+        customAnswers: proposal.customAnswers,
+        fileName: "outline.txt",
+        contentType: "text/plain",
+        contentBase64: btoa("outline"),
+      },
+      submitter.cookie,
+    );
+    expect(invalidType.status).toBe(400);
+    const excessive = await callTrpc(
+      "submissions.uploadFile",
+      {
+        slug,
+        cfpId: draft.id,
+        clientDraftId: proposal.clientDraftId,
+        uploadId: crypto.randomUUID(),
+        fieldKey: "outline",
+        customAnswers: proposal.customAnswers,
+        fileName: "outline.pdf",
+        contentType: "application/pdf",
+        contentBase64: btoa("x".repeat(1_000_001)),
+      },
+      submitter.cookie,
+    );
+    expect(excessive.status).toBe(400);
+    const uploadId = crypto.randomUUID();
+    const uploadInput = {
+      slug,
+      cfpId: draft.id,
+      clientDraftId: proposal.clientDraftId,
+      uploadId,
+      fieldKey: "outline",
+      customAnswers: proposal.customAnswers,
+      fileName: "outline.pdf",
+      contentType: "application/pdf",
+      contentBase64: btoa("proposal outline"),
+    };
+    const uploaded = getResult(
+      (await callTrpc("submissions.uploadFile", uploadInput, submitter.cookie))
+        .body,
+      z.object({ id: z.string(), fileName: z.string(), url: z.string() }),
+    );
+    const retriedUpload = getResult(
+      (await callTrpc("submissions.uploadFile", uploadInput, submitter.cookie))
+        .body,
+      z.object({ id: z.string() }),
+    );
+    expect(retriedUpload.id).toBe(uploaded.id);
+    const slides = getResult(
+      (
+        await callTrpc(
+          "submissions.uploadFile",
+          {
+            ...uploadInput,
+            uploadId: crypto.randomUUID(),
+            fieldKey: "slides",
+            fileName: "slides.pdf",
+          },
+          submitter.cookie,
+        )
+      ).body,
+      z.object({ id: z.string() }),
+    );
+    proposal.fileAnswers = { outline: uploaded.id, slides: slides.id };
     expect(
       (
         await callTrpc(
@@ -235,12 +348,25 @@ describe("submit a proposal through the local-first flow", () => {
       track: { id: track.id, name: "Data systems" },
       proposedSpeakers: proposal.proposedSpeakers,
       customAnswers: { audience: "Beginner", notes: "Bring questions." },
+      fileAnswers: {
+        outline: { id: uploaded.id, fileName: "outline.pdf" },
+        slides: { id: slides.id, fileName: "slides.pdf" },
+      },
       decision: { status: "pending" },
       confirmation: { status: "recorded" },
       permissions: { canEdit: true, canWithdraw: true },
     });
     expect(submitted.customAnswers).not.toHaveProperty("requirements");
     expect(submitted.customAnswers).not.toHaveProperty("removed_question");
+    expect(submitted.fileAnswers).not.toHaveProperty("hidden_outline");
+    expect((await workerFetch(uploaded.url)).status).toBe(404);
+    const fileResponse = await workerFetch(uploaded.url, {
+      headers: { Cookie: submitter.cookie },
+    });
+    expect(fileResponse.status).toBe(200);
+    expect(new TextDecoder().decode(await fileResponse.arrayBuffer())).toBe(
+      "proposal outline",
+    );
     expect(submitted.form).toMatchObject({
       deadline: draft.deadline,
       formats: draft.formats,
@@ -362,6 +488,10 @@ describe("submit a proposal through the local-first flow", () => {
             format: proposal.format,
             trackId: proposal.trackId,
             customAnswers,
+            fileAnswers: {
+              outline: uploaded.id,
+              slides: slides.id,
+            },
           },
           submitter.cookie,
         ),
@@ -415,6 +545,7 @@ describe("submit a proposal through the local-first flow", () => {
             format: proposal.format,
             trackId: proposal.trackId,
             customAnswers: winningUpdate.customAnswers,
+            fileAnswers: { outline: uploaded.id },
           },
           submitter.cookie,
         )
@@ -490,6 +621,7 @@ describe("submit a proposal through the local-first flow", () => {
             format: proposal.format,
             trackId: proposal.trackId,
             customAnswers: { audience: "Beginner" },
+            fileAnswers: { outline: uploaded.id },
           },
           submitter.cookie,
         )
