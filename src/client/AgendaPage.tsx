@@ -1160,18 +1160,12 @@ export function PublicAgendaPage() {
       />
     );
   const data = agenda.data;
+  const roomsById = new Map(data.rooms.map((room) => [room.id, room]));
+  const tracksById = new Map(data.tracks.map((track) => [track.id, track]));
   const view = searchParams.get("view") === "list" ? "list" : "calendar";
   const selectedId = searchParams.get("item");
   const selected = data.items.find((item) => item.id === selectedId) ?? null;
-  const rooms = unique(
-    data.items.flatMap((item) =>
-      item.roomId && item.roomName
-        ? [{ id: item.roomId, name: item.roomName }]
-        : [],
-    ),
-    (room) => room.id,
-  );
-  const roomId = rooms.some((room) => room.id === searchParams.get("room"))
+  const roomId = data.rooms.some((room) => room.id === searchParams.get("room"))
     ? (searchParams.get("room") ?? "")
     : "";
   const visibleStart = clampVisibleStart(
@@ -1228,7 +1222,7 @@ export function PublicAgendaPage() {
             value={roomId}
           >
             <option value="">All rooms</option>
-            {rooms.map((room) => (
+            {data.rooms.map((room) => (
               <option key={room.id} value={room.id}>
                 {room.name}
               </option>
@@ -1244,14 +1238,19 @@ export function PublicAgendaPage() {
           endsOn={data.event.endsOn}
           items={data.items.map((item) => ({
             id: item.id,
-            kind: item.kind,
+            kind: item.kind === "session" ? "program" : "service",
             title: item.title,
             roomId: item.roomId,
-            roomName: item.roomName,
+            roomName: item.roomId
+              ? (roomsById.get(item.roomId)?.name ?? null)
+              : null,
             startsAt: item.startsAt,
             endsAt: item.endsAt,
-            trackName: item.trackName,
-            speakers: item.speakers,
+            trackName:
+              item.kind === "session"
+                ? (tracksById.get(item.trackId)?.name ?? null)
+                : null,
+            speakers: item.kind === "session" ? item.speakers : [],
           }))}
           onSelect={(id) => updateUrl({ item: id })}
           onVisibleStartChange={(start) => updateUrl({ start })}
@@ -1275,8 +1274,13 @@ export function PublicAgendaPage() {
               Close
             </button>
             <div className="eyebrow">
-              {selected.roomName ?? "All rooms"}
-              {selected.trackName ? ` · ${selected.trackName}` : ""}
+              {selected.roomId
+                ? (roomsById.get(selected.roomId)?.name ?? "All rooms")
+                : "All rooms"}
+              {selected.kind === "session" &&
+              tracksById.get(selected.trackId)?.name
+                ? ` · ${tracksById.get(selected.trackId)?.name}`
+                : ""}
             </div>
             <h2>{selected.title}</h2>
             <p>
@@ -1286,14 +1290,14 @@ export function PublicAgendaPage() {
                 data.event.timezone,
               )}
             </p>
-            {selected.speakers.length > 0 && (
+            {selected.kind === "session" && selected.speakers.length > 0 && (
               <p>
                 {selected.speakers
                   .map((speaker) => speaker.displayName)
                   .join(", ")}
               </p>
             )}
-            {selected.abstract && (
+            {selected.kind === "session" && selected.abstract && (
               <p className="agenda-abstract">{selected.abstract}</p>
             )}
           </aside>

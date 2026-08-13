@@ -59,7 +59,6 @@ import {
 
 import {
   getAgendaPublicationStatus,
-  getPublishedAgenda,
   getWorkingAgenda,
   moveAgendaItem,
   placeProgramItem,
@@ -134,6 +133,7 @@ import {
   updateRoom,
   updateTrack,
 } from "./program-setup/repository";
+import { findPublishedSchedule } from "./published-schedule/repository";
 import {
   assignReviewer,
   closeReviewRound,
@@ -387,14 +387,18 @@ export const appRouter = trpc.router({
         return result.value;
       }),
     published: trpc.procedure.input(slugInput).query(async ({ ctx, input }) => {
-      const agenda = await getPublishedAgenda(ctx.database, input.slug);
-      if (!agenda) {
+      const schedule = await findPublishedSchedule(
+        ctx.database,
+        input.slug,
+        new URL(ctx.request.url).origin,
+      );
+      if (!schedule) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "This event has no published agenda.",
         });
       }
-      return agenda;
+      return schedule;
     }),
   }),
   events: trpc.router({

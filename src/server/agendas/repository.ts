@@ -30,7 +30,6 @@ import {
   communicationTemplates,
   calendarSyncStates,
   decisions,
-  events,
   programItems,
   publishedAgendaItems,
   publishedAgendaSpeakers,
@@ -806,80 +805,6 @@ export async function publishAgenda(
   return {
     ok: true,
     value: { revision, deliveryWork: deliveryValues.length },
-  };
-}
-
-export async function getPublishedAgenda(database: Database, slug: string) {
-  await database
-    .update(agendaPublications)
-    .set({ finalized: true })
-    .where(
-      and(
-        eq(agendaPublications.requiresFinalization, false),
-        eq(agendaPublications.finalized, false),
-      ),
-    );
-  const [publication] = await database
-    .select()
-    .from(agendaPublications)
-    .innerJoin(events, eq(events.id, agendaPublications.eventId))
-    .where(and(eq(events.slug, slug), eq(agendaPublications.finalized, true)))
-    .orderBy(desc(agendaPublications.revision))
-    .limit(1);
-  if (!publication) return undefined;
-  const itemRows = await database
-    .select()
-    .from(publishedAgendaItems)
-    .where(
-      and(
-        eq(
-          publishedAgendaItems.publicationId,
-          publication.agenda_publications.id,
-        ),
-        eq(publishedAgendaItems.canceled, false),
-      ),
-    )
-    .orderBy(
-      asc(publishedAgendaItems.startsAt),
-      asc(publishedAgendaItems.roomPosition),
-      asc(publishedAgendaItems.title),
-    );
-  const speakerRows =
-    itemRows.length === 0
-      ? []
-      : await database
-          .select()
-          .from(publishedAgendaSpeakers)
-          .where(
-            inArray(
-              publishedAgendaSpeakers.publishedAgendaItemId,
-              itemRows.map((item) => item.id),
-            ),
-          )
-          .orderBy(asc(publishedAgendaSpeakers.position));
-  const revision = publication.agenda_publications;
-  return {
-    event: {
-      name: revision.eventName,
-      slug,
-      timezone: revision.timezone,
-      startsOn: revision.startsOn,
-      endsOn: revision.endsOn,
-    },
-    revision: revision.revision,
-    publishedAt: revision.createdAt.toISOString(),
-    items: itemRows.map((item) => ({
-      ...item,
-      speakers: speakerRows
-        .filter((speaker) => speaker.publishedAgendaItemId === item.id)
-        .map((speaker) => ({
-          submissionSpeakerId: speaker.submissionSpeakerId,
-          displayName: speaker.displayName,
-          bio: speaker.bio,
-          headshotUrl: speaker.headshotUrl,
-          position: speaker.position,
-        })),
-    })),
   };
 }
 
