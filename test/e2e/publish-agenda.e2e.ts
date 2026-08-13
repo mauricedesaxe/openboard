@@ -1,4 +1,11 @@
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { gunzipSync } from "node:zlib";
+
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type APIResponse,
+} from "@playwright/test";
 
 import { signIn } from "./support";
 
@@ -336,11 +343,30 @@ test("publishes a working placement to every public agenda view", async ({
     ).toHaveAttribute("href", output);
   }
   const [scheduleResponse, calendarResponse] = await Promise.all([
-    page.request.get(scheduleJsonUrl),
-    page.request.get(calendarUrl),
+    page.request.get(scheduleJsonUrl, {
+      headers: { "Accept-Encoding": "identity" },
+    }),
+    page.request.get(calendarUrl, {
+      headers: { "Accept-Encoding": "identity" },
+    }),
   ]);
   expect(scheduleResponse.ok()).toBe(true);
   expect(calendarResponse.ok()).toBe(true);
+  const scheduleOutput = JSON.parse(
+    await decodedResponseText(scheduleResponse),
+  ) as {
+    revision: number;
+    items: Array<{ title: string }>;
+  };
+  const calendarOutput = await decodedResponseText(calendarResponse);
+  expect(scheduleOutput.revision).toBe(1);
+  expect(calendarOutput).toContain("X-OPENBOARD-REVISION:1\r\n");
+  expect(await query(page.request, "agendas.published", { slug })).toEqual(
+    scheduleOutput,
+  );
+  for (const item of scheduleOutput.items) {
+    expect(calendarOutput).toContain(`SUMMARY:${item.title}`);
+  }
 
   await page.evaluate(() => {
     Object.assign(window, { copiedUrls: [] });
@@ -412,6 +438,7 @@ test("publishes a working placement to every public agenda view", async ({
   ).toBeVisible();
 
   await page.getByRole("link", { name: "View public agenda" }).click();
+  await expect(page.getByText("Published agenda · revision 1")).toBeVisible();
   await expect(
     page.getByText("A browser-built agenda", { exact: true }),
   ).toBeVisible();
@@ -618,6 +645,13 @@ test("publishes a working placement to every public agenda view", async ({
   expect(pageErrors).toEqual([]);
   expect(firstPlacement.id).toBeTruthy();
 });
+
+async function decodedResponseText(response: APIResponse): Promise<string> {
+  const body = await response.body();
+  return new TextDecoder().decode(
+    body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body,
+  );
+}
 
 async function mutate(
   request: APIRequestContext,

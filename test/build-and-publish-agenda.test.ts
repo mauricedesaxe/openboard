@@ -5,6 +5,7 @@ import { createDatabase } from "../src/server/database/client";
 import { processAgendaDeliveryWork } from "../src/server/published-schedule/delivery";
 import { saveOwnSpeakerProfile } from "../src/server/speaker-profiles/repository";
 import type { UserId } from "../src/shared/events";
+import { publishedScheduleSchema } from "../src/shared/published-schedule";
 
 import {
   callTrpc,
@@ -37,24 +38,6 @@ const workingAgendaSchema = z.object({
       roomName: z.string().nullable(),
       revision: z.number(),
       conflicts: z.array(z.enum(["room", "speaker"])),
-    }),
-  ),
-});
-const publishedAgendaSchema = z.object({
-  revision: z.number(),
-  event: z.object({ name: z.string(), timezone: z.string() }),
-  items: z.array(
-    z.object({
-      agendaItemId: z.string(),
-      title: z.string(),
-      roomName: z.string().nullable(),
-      startsAt: z.string(),
-      speakers: z.array(
-        z.object({
-          displayName: z.string(),
-          headshotUrl: z.string().nullable(),
-        }),
-      ),
     }),
   ),
 });
@@ -348,10 +331,17 @@ describe("build and publish an agenda", () => {
       "Lunch",
       "Independent systems",
     ]);
-    expect(published.items[0]?.speakers[0]?.displayName).toBe("Shared Speaker");
-    const publishedHeadshotUrl = published.items[0]?.speakers[0]?.headshotUrl;
+    const firstPublishedSession = published.items[0];
+    expect(firstPublishedSession?.kind).toBe("session");
+    if (firstPublishedSession?.kind !== "session") {
+      throw new Error("Published session missing.");
+    }
+    expect(firstPublishedSession.speakers[0]?.displayName).toBe(
+      "Shared Speaker",
+    );
+    const publishedHeadshotUrl = firstPublishedSession.speakers[0]?.headshotUrl;
     expect(publishedHeadshotUrl).toMatch(
-      /^\/api\/speaker-headshots\/[0-9a-f-]+$/,
+      /^https?:\/\/[^/]+\/api\/speaker-headshots\/[0-9a-f-]+$/,
     );
     const replacedProfile = getResult(
       (
@@ -374,7 +364,13 @@ describe("build and publish an agenda", () => {
       z.object({ headshotUrl: z.string() }),
     );
     expect(replacedProfile.headshotUrl).not.toBe(publishedHeadshotUrl);
-    expect((await workerFetch(publishedHeadshotUrl ?? "")).status).toBe(200);
+    expect(
+      (
+        await workerFetch(
+          publishedHeadshotUrl ? new URL(publishedHeadshotUrl).pathname : "",
+        )
+      ).status,
+    ).toBe(200);
     expect(
       (
         await workerFetch(replacedProfile.headshotUrl, {
@@ -536,6 +532,7 @@ describe("build and publish an agenda", () => {
         }
       ).speakers[0]?.headshotUrl,
     ).toMatch(/^https?:\/\/[^/]+\/api\/speaker-headshots\/[0-9a-f-]+$/);
+    expect(publicSchedule).toEqual(published);
 
     const calendarResponse = await workerFetch(
       `/api/v1/events/${slug}/schedule.ics`,
@@ -661,9 +658,16 @@ describe("build and publish an agenda", () => {
       ),
     ]);
     published = await getPublished(slug);
-    expect(published.items[0]?.title).toBe("Opening systems");
-    expect(published.items[0]?.roomName).toBe("Main hall");
-    expect(published.items[0]?.speakers[0]?.displayName).toBe("Shared Speaker");
+    const unchangedPublishedSession = published.items[0];
+    expect(unchangedPublishedSession?.title).toBe("Opening systems");
+    expect(
+      publishedRoomName(published, unchangedPublishedSession?.roomId),
+    ).toBe("Main hall");
+    expect(
+      unchangedPublishedSession?.kind === "session"
+        ? unchangedPublishedSession.speakers[0]?.displayName
+        : undefined,
+    ).toBe("Shared Speaker");
 
     working = await getWorking(owner.cookie, slug);
     await testEnvironment.DB.prepare(
@@ -724,9 +728,9 @@ describe("build and publish an agenda", () => {
     );
     published = await getPublished(slug);
     expect(published.revision).toBe(2);
-    expect(
-      published.items.some((item) => item.agendaItemId === firstPlacement.id),
-    ).toBe(false);
+    expect(published.items.some((item) => item.id === firstPlacement.id)).toBe(
+      false,
+    );
     const canceledJson = await workerFetch(`/api/v1/events/${slug}/schedule`);
     const canceledCalendar = await workerFetch(
       `/api/v1/events/${slug}/schedule.ics`,
@@ -789,11 +793,16 @@ describe("build and publish an agenda", () => {
     );
     published = await getPublished(slug);
     expect(published.revision).toBe(3);
-    expect(published.items[0]?.title).toBe("Opening systems, revised");
-    expect(published.items[0]?.roomName).toBe("Grand hall");
-    expect(published.items[0]?.speakers[0]?.displayName).toBe(
-      "Shared Speaker, revised",
+    const restoredPublishedSession = published.items[0];
+    expect(restoredPublishedSession?.title).toBe("Opening systems, revised");
+    expect(publishedRoomName(published, restoredPublishedSession?.roomId)).toBe(
+      "Grand hall",
     );
+    expect(
+      restoredPublishedSession?.kind === "session"
+        ? restoredPublishedSession.speakers[0]?.displayName
+        : undefined,
+    ).toBe("Shared Speaker, revised");
     const restoredJson = await workerFetch(`/api/v1/events/${slug}/schedule`);
     const restoredCalendar = await workerFetch(
       `/api/v1/events/${slug}/schedule.ics`,
@@ -910,9 +919,11 @@ describe("build and publish an agenda", () => {
     ).toBe(200);
     const published = await getPublished(slug);
     expect(published.items).toHaveLength(70);
-    expect(published.items.every((item) => item.speakers.length === 3)).toBe(
-      true,
-    );
+    expect(
+      published.items.every(
+        (item) => item.kind === "session" && item.speakers.length === 3,
+      ),
+    ).toBe(true);
   }, 15_000);
 
   test("exposes only finalized revisions and closes them to later rows", async () => {
@@ -1510,8 +1521,15 @@ async function getWorking(cookie: string, slug: string) {
 async function getPublished(slug: string) {
   return getResult(
     (await callTrpc("agendas.published", { slug }, undefined, "query")).body,
-    publishedAgendaSchema,
+    publishedScheduleSchema,
   );
+}
+
+function publishedRoomName(
+  schedule: z.infer<typeof publishedScheduleSchema>,
+  roomId: string | null | undefined,
+) {
+  return schedule.rooms.find((room) => room.id === roomId)?.name;
 }
 
 async function expectOk(procedure: string, input: unknown, cookie: string) {
