@@ -26,6 +26,14 @@ test("refreshes the public CFP after its definition changes", async ({
   await page.getByRole("button", { name: "Add" }).click();
   await expect(page.getByText("Room created", { exact: true })).toBeVisible();
   await page.goto(`/events/${slug}/cfp/manage`);
+  const cfpNavigation = page
+    .getByRole("navigation", {
+      name: "Browser CFP Input Conference navigation",
+    })
+    .getByRole("link", { name: "CFP" });
+  await expect(
+    cfpNavigation.getByLabel("1 item needs attention"),
+  ).toBeVisible();
 
   const formats = page.getByRole("textbox", { name: "Formats" });
   await formats.fill("");
@@ -41,6 +49,9 @@ test("refreshes the public CFP after its definition changes", async ({
   await page.getByRole("textbox", { name: "CFP name" }).fill("Browser CFP");
   await page.getByRole("button", { name: "Create draft" }).click();
   await expect(page.getByText("Draft created", { exact: true })).toBeVisible();
+  await expect(
+    cfpNavigation.getByLabel("1 item needs attention"),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Save form" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Formats" })).toHaveValue(
     "Talk, Lightning talk",
@@ -50,6 +61,7 @@ test("refreshes the public CFP after its definition changes", async ({
   );
 
   await page.getByRole("button", { name: "Open CFP" }).click();
+  await expect(cfpNavigation.getByLabel(/needs attention/)).toHaveCount(0);
   await page.getByRole("link", { name: "View public form →" }).click();
   await expect(
     page.getByRole("heading", { name: "Browser CFP", exact: true }),

@@ -5176,6 +5176,9 @@ function CfpBuilder({
     await queryClient.invalidateQueries(
       trpc.cfps.publicByEventSlug.queryFilter({ slug }),
     );
+    await queryClient.invalidateQueries(
+      trpc.events.workspace.queryFilter({ slug }),
+    );
   };
   const create = useMutation(
     trpc.cfps.createDraft.mutationOptions({ onSuccess: refresh }),
