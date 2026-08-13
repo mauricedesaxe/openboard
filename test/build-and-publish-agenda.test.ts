@@ -594,6 +594,11 @@ describe("build and publish an agenda", () => {
       } else {
         expect(await uncompressedResponse.json()).toBeTypeOf("object");
       }
+
+      const rejectedGzipResponse = await workerFetch(path, {
+        headers: { "Accept-Encoding": "gzip;q=0" },
+      });
+      expect(rejectedGzipResponse.headers.get("content-encoding")).toBeNull();
     }
 
     await expectOk(
