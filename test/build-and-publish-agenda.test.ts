@@ -1266,6 +1266,28 @@ describe("build and publish an agenda", () => {
         .first(),
     ).toEqual({ action: "cancel", sequence: 1 });
     await testEnvironment.DB.prepare(
+      "UPDATE submission_speakers SET invited_email = 'restored@example.com' WHERE submission_id = (SELECT submission_id FROM program_items WHERE id = ?)",
+    )
+      .bind(fixture.programItemIds[0])
+      .run();
+    await expectOk(
+      "agendas.placeProgram",
+      {
+        slug,
+        programItemId: fixture.programItemIds[0],
+        roomId: fixture.roomId,
+        startsAtLocal: "2028-08-10T11:00",
+        endsAtLocal: "2028-08-10T12:00",
+      },
+      owner.cookie,
+    );
+    working = await getWorking(owner.cookie, slug);
+    await expectOk(
+      "agendas.publish",
+      { slug, expectedRevision: working.revision },
+      owner.cookie,
+    );
+    await testEnvironment.DB.prepare(
       "UPDATE calendar_sync_states SET sequence = 2 WHERE agenda_item_id = ?",
     )
       .bind(placement.id)
@@ -1274,6 +1296,7 @@ describe("build and publish an agenda", () => {
       agendaItemId: string;
       method: string;
       sequence: number;
+      calendar: string;
     }> = [];
     expect(
       await processAgendaDeliveryWork(
@@ -1283,15 +1306,29 @@ describe("build and publish an agenda", () => {
             agendaItemId: delivery.agendaItemId,
             method: delivery.method,
             sequence: delivery.sequence,
+            calendar: delivery.calendar,
           });
           return Promise.resolve();
         },
         { organizerEmail: "calendar@example.com", limit: 10_000 },
       ),
     ).toMatchObject({ failed: 0 });
-    expect(
-      deliveries.filter((delivery) => delivery.agendaItemId === placement.id),
-    ).toEqual([{ agendaItemId: placement.id, method: "CANCEL", sequence: 1 }]);
+    const placementDeliveries = deliveries.filter(
+      (delivery) =>
+        delivery.agendaItemId === placement.id && delivery.method === "CANCEL",
+    );
+    expect(placementDeliveries).toHaveLength(1);
+    expect(placementDeliveries[0]).toMatchObject({
+      agendaItemId: placement.id,
+      method: "CANCEL",
+      sequence: 1,
+    });
+    expect(placementDeliveries[0]?.calendar).toContain(
+      "DTSTART:20280810T070000Z",
+    );
+    expect(placementDeliveries[0]?.calendar).not.toContain(
+      "DTSTART:20280810T090000Z",
+    );
   });
 
   test("does not place a program item through another event", async () => {

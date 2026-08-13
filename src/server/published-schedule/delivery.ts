@@ -1,4 +1,15 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  or,
+} from "drizzle-orm";
 
 import type { AgendaItemId } from "../../shared/agendas";
 import type { Database } from "../database/client";
@@ -265,6 +276,12 @@ async function createAgendaCalendarDelivery(
     )
     .limit(1);
   if (!snapshot && candidate.action === "cancel") {
+    const [cancellationPublication] = await database
+      .select({ revision: agendaPublications.revision })
+      .from(agendaPublications)
+      .where(eq(agendaPublications.id, candidate.publicationId))
+      .limit(1);
+    if (!cancellationPublication) return undefined;
     [snapshot] = await database
       .select({
         publishedAt: agendaPublications.createdAt,
@@ -283,7 +300,12 @@ async function createAgendaCalendarDelivery(
         agendaPublications,
         eq(agendaPublications.id, publishedAgendaItems.publicationId),
       )
-      .where(eq(publishedAgendaItems.agendaItemId, candidate.agendaItemId))
+      .where(
+        and(
+          eq(publishedAgendaItems.agendaItemId, candidate.agendaItemId),
+          lt(agendaPublications.revision, cancellationPublication.revision),
+        ),
+      )
       .orderBy(desc(agendaPublications.revision))
       .limit(1);
   }
