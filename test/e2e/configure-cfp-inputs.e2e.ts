@@ -129,11 +129,12 @@ test("saves unrelated changes after a stored CFP deadline passes", async ({
   await mutate(page.request, "cfps.createDraft", {
     slug,
     name: "Past deadline CFP",
-    deadline: "2020-01-01T09:00:00Z",
+    deadline: "2028-08-01T09:00:00Z",
     formats: ["Talk"],
     customFields: [],
   });
 
+  await page.clock.install({ time: new Date("2028-08-02T09:00:00Z") });
   await page.goto(`/events/${slug}/cfp/manage`);
   const draft = page.locator(".cfp-builder").filter({
     has: page.locator(".status-draft"),
