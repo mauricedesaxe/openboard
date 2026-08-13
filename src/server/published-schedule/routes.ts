@@ -64,18 +64,20 @@ async function publicResponse(
 ): Promise<Response> {
   const bytes = new TextEncoder().encode(body);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
-  const etag = `"${[...new Uint8Array(digest)]
+  const fingerprint = [...new Uint8Array(digest)]
     .map((value) => value.toString(16).padStart(2, "0"))
-    .join("")}"`;
+    .join("");
+  const gzip = acceptsGzip(request.headers.get("accept-encoding"));
+  const etag = `"${fingerprint}-${gzip ? "gzip" : "identity"}"`;
   const headers = publicHeaders({ "Content-Type": contentType, ETag: etag });
+  if (gzip) headers.set("Content-Encoding", "gzip");
   if (fileName) {
     headers.set("Content-Disposition", `inline; filename="${fileName}"`);
   }
   if (request.headers.get("if-none-match") === etag) {
     return new Response(null, { status: 304, headers });
   }
-  if (acceptsGzip(request.headers.get("accept-encoding"))) {
-    headers.set("Content-Encoding", "gzip");
+  if (gzip) {
     return new Response(
       new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip")),
       { headers, encodeBody: "manual" },

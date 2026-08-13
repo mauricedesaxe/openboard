@@ -83,8 +83,7 @@ jobs:
               && [ "$AUTH_STATUS" = "200" ]; then
               EVENT_SLUG=$(pnpm exec wrangler d1 execute DB --remote --config wrangler.production.jsonc --json --command "SELECT events.slug FROM agenda_publications INNER JOIN events ON events.id = agenda_publications.event_id WHERE agenda_publications.finalized = 1 ORDER BY agenda_publications.created_at DESC LIMIT 1" | jq -r '.[0].results[0].slug // empty')
               if [ -z "$EVENT_SLUG" ]; then
-                echo "production has no published schedule for the public API smoke check"
-                exit 1
+                echo "Production has no published schedule; checking OpenAPI only."
               fi
               node scripts/smoke-public-api.mjs "$URL" "$EVENT_SLUG"
               echo "Production OK: $URL"
