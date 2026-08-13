@@ -3,7 +3,7 @@ import { ORGANIZER_CFP_AREA } from "../shared/event-routes";
 export type NavigationEvent = {
   name: string;
   slug: string;
-  access: "owner" | "organizer" | "reviewer";
+  access: "owner" | "organizer" | "reviewer" | "submitter";
   permissions: Array<"organizer" | "reviewer">;
 };
 

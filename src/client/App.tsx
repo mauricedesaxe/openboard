@@ -179,8 +179,29 @@ function AuthenticatedApp({ email }: { email: string }) {
   const location = useLocation();
   const navigate = useNavigate();
   const events = useQuery(trpc.events.list.queryOptions());
-  const activeSlug = eventSlugFromPath(location.pathname);
-  const activeEvent = events.data?.find((event) => event.slug === activeSlug);
+  const activeSubmissionId = location.pathname.match(
+    /^\/submissions\/([^/]+)(?:\/|$)/,
+  )?.[1] as SubmissionId | undefined;
+  const activeSubmission = useQuery(
+    trpc.submissions.get.queryOptions(
+      { submissionId: activeSubmissionId ?? "" },
+      { enabled: Boolean(activeSubmissionId) },
+    ),
+  );
+  const activeSlug =
+    eventSlugFromPath(location.pathname) ?? activeSubmission.data?.event.slug;
+  const activeEvent =
+    events.data?.find((event) => event.slug === activeSlug) ??
+    (activeSubmission.data
+      ? {
+          ...activeSubmission.data.event,
+          access: "submitter" as const,
+          permissions: [],
+        }
+      : undefined);
+  const activeProposalPath = activeSubmissionId
+    ? `/submissions/${activeSubmissionId}`
+    : undefined;
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [signOutState, setSignOutState] = useState<
     | { status: "idle" }
@@ -242,13 +263,17 @@ function AuthenticatedApp({ email }: { email: string }) {
             <EventNavigation
               event={activeEvent}
               onNavigate={() => setDrawerOpen(false)}
+              proposalPath={activeProposalPath}
             />
           </div>
         )}
       </aside>
       {activeEvent && (
         <aside className="event-sidebar">
-          <EventNavigation event={activeEvent} />
+          <EventNavigation
+            event={activeEvent}
+            proposalPath={activeProposalPath}
+          />
         </aside>
       )}
       <main className="workspace-main">
@@ -338,6 +363,12 @@ function AppNavigation({
                   Choose an event
                 </option>
               )}
+              {activeEvent &&
+                !events.some((event) => event.slug === activeEvent.slug) && (
+                  <option key={activeEvent.slug} value={activeEvent.slug}>
+                    {activeEvent.name}
+                  </option>
+                )}
               {events.map((event) => (
                 <option key={event.slug} value={event.slug}>
                   {event.name}
@@ -393,13 +424,18 @@ const organizerNavigation = [
 function EventNavigation({
   event,
   onNavigate,
+  proposalPath,
 }: {
   event: NavigationEvent;
   onNavigate?: () => void;
+  proposalPath?: string | undefined;
 }) {
   const trpc = useTRPC();
   const workspace = useQuery(
-    trpc.events.workspace.queryOptions({ slug: event.slug }),
+    trpc.events.workspace.queryOptions(
+      { slug: event.slug },
+      { enabled: event.access !== "submitter" },
+    ),
   );
   const badgeCount = (path: string) => {
     if (!workspace.data) return 0;
@@ -423,10 +459,12 @@ function EventNavigation({
         ...group,
         items: [...group.items],
       }))
-    : [
-        { group: "Overview", items: [["Home", ""]] },
-        { group: "Program", items: [["Review", "review"]] },
-      ];
+    : event.permissions.includes("reviewer")
+      ? [
+          { group: "Overview", items: [["Home", ""]] },
+          { group: "Program", items: [["Review", "review"]] },
+        ]
+      : [];
   if (event.access === "owner") {
     groups
       .find((group) => group.group === "People")
@@ -438,6 +476,14 @@ function EventNavigation({
         <span>Active event</span>
         <strong>{event.name}</strong>
       </div>
+      {proposalPath && event.access === "submitter" && (
+        <div className="navigation-group">
+          <span>Proposal</span>
+          <NavLink end onClick={onNavigate} to={proposalPath}>
+            <span>Proposal</span>
+          </NavLink>
+        </div>
+      )}
       {groups.map((group) => (
         <div className="navigation-group" key={group.group}>
           <span>{group.group}</span>
