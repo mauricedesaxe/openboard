@@ -100,6 +100,7 @@ function publicHeaders(initial?: HeadersInit): Headers {
   const headers = new Headers(initial);
   headers.set("Access-Control-Allow-Origin", "*");
   headers.set("Cache-Control", cacheControl);
+  headers.set("Vary", "Accept-Encoding");
   return headers;
 }
 
