@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
 
 import type { AgendaItemId } from "../../shared/agendas";
 import type { Database } from "../database/client";
@@ -126,14 +126,12 @@ export async function processAgendaDeliveryWork(
     const current = await database
       .select({
         uid: calendarSyncStates.uid,
-        sequence: calendarSyncStates.sequence,
       })
       .from(calendarSyncStates)
       .where(eq(calendarSyncStates.agendaItemId, candidate.agendaItemId))
       .limit(1);
     if (
       current[0]?.uid !== candidate.calendarUid ||
-      current[0]?.sequence !== candidate.calendarSequence ||
       !candidate.recipientKey ||
       !candidate.destination ||
       !candidate.recipientName
@@ -148,6 +146,33 @@ export async function processAgendaDeliveryWork(
         {
           status: "superseded",
         },
+      );
+      if (finished) result.superseded += 1;
+      continue;
+    }
+
+    const [newerRecipientWork] = await database
+      .select({ id: agendaDeliveryWork.id })
+      .from(agendaDeliveryWork)
+      .where(
+        and(
+          eq(agendaDeliveryWork.agendaItemId, candidate.agendaItemId),
+          eq(agendaDeliveryWork.calendarUid, candidate.calendarUid),
+          eq(agendaDeliveryWork.recipientKey, candidate.recipientKey),
+          eq(agendaDeliveryWork.destination, candidate.destination),
+          gt(agendaDeliveryWork.calendarSequence, candidate.calendarSequence),
+        ),
+      )
+      .limit(1);
+    if (newerRecipientWork) {
+      const finished = await finishAttempt(
+        database,
+        candidate.id,
+        claimToken,
+        attemptNumber,
+        startedAt,
+        currentTime(options),
+        { status: "superseded" },
       );
       if (finished) result.superseded += 1;
       continue;
