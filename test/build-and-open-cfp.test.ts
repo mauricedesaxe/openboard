@@ -463,9 +463,9 @@ describe("build and open a conditional CFP", () => {
     await testEnvironment.DB.prepare(
       "UPDATE cfps SET deadline = ? WHERE id = ?",
     )
-      .bind("2020-01-01T09:00:00Z", secondDraft.id)
+      .bind("2020-01-01T09:00:45.678Z", secondDraft.id)
       .run();
-    expect(
+    const renamedExpiredDraft = getResult(
       (
         await callTrpc(
           "cfps.updateDraft",
@@ -478,8 +478,90 @@ describe("build and open a conditional CFP", () => {
           },
           owner.cookie,
         )
+      ).body,
+      cfpSchema,
+    );
+    expect(renamedExpiredDraft.deadline).toBe("2020-01-01T09:00:45.678Z");
+    expect(
+      await testEnvironment.DB.prepare("SELECT deadline FROM cfps WHERE id = ?")
+        .bind(secondDraft.id)
+        .first(),
+    ).toEqual({ deadline: "2020-01-01T09:00:45.678Z" });
+
+    expect(
+      (
+        await callTrpc(
+          "cfps.updateDraft",
+          {
+            ...secondDraft,
+            cfpId: secondDraft.id,
+            deadline: "2020-01-02T09:00:00Z",
+            slug,
+          },
+          owner.cookie,
+        )
       ).status,
-    ).toBe(200);
+    ).toBe(400);
+
+    const futureDeadline = "2027-05-01T09:00:00Z";
+    const rescheduledDraft = getResult(
+      (
+        await callTrpc(
+          "cfps.updateDraft",
+          {
+            ...secondDraft,
+            cfpId: secondDraft.id,
+            deadline: futureDeadline,
+            slug,
+            name: "Rescheduled draft",
+          },
+          owner.cookie,
+        )
+      ).body,
+      cfpSchema,
+    );
+    expect(rescheduledDraft.deadline).toBe(futureDeadline);
+    await testEnvironment.DB.prepare(
+      "UPDATE cfps SET deadline = ? WHERE id = ?",
+    )
+      .bind("2020-01-01T09:00:45.678Z", secondDraft.id)
+      .run();
+
+    const concurrentDeadlineUpdates = await Promise.all([
+      callTrpc(
+        "cfps.updateDraft",
+        {
+          ...secondDraft,
+          cfpId: secondDraft.id,
+          deadline: futureDeadline,
+          slug,
+          name: "Rescheduled draft",
+        },
+        owner.cookie,
+      ),
+      callTrpc(
+        "cfps.updateDraft",
+        {
+          ...secondDraft,
+          cfpId: secondDraft.id,
+          deadline: "2020-01-01T09:00:00Z",
+          slug,
+          name: "Stale draft edit",
+        },
+        owner.cookie,
+      ),
+    ]);
+    expect(
+      concurrentDeadlineUpdates.every(({ status }) =>
+        [200, 400, 409].includes(status),
+      ),
+    ).toBe(true);
+    expect(concurrentDeadlineUpdates[0]?.status).toBe(200);
+    expect(
+      await testEnvironment.DB.prepare("SELECT deadline FROM cfps WHERE id = ?")
+        .bind(secondDraft.id)
+        .first(),
+    ).toEqual({ deadline: futureDeadline });
     const setup = getResult(
       (await callTrpc("cfps.getSetup", { slug }, owner.cookie, "query")).body,
       z.object({ draft: cfpSchema.nullable(), open: cfpSchema.nullable() }),

@@ -1412,6 +1412,7 @@ function throwCfpWriteError(
   error:
     | "already_draft"
     | "already_open"
+    | "cfp_changed"
     | "deadline_after_event"
     | "deadline_passed"
     | "missing_track"
@@ -1430,6 +1431,12 @@ function throwCfpWriteError(
     throw new TRPCError({
       code: "CONFLICT",
       message: "This event already has a draft call for proposals.",
+    });
+  }
+  if (error === "cfp_changed") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "This call for proposals changed. Reload it before saving.",
     });
   }
   if (error === "missing_track") {
