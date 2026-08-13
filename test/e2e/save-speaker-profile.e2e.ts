@@ -147,6 +147,7 @@ async function createClaimedSpeaker(page: Page, slug: string, email: string) {
   await mutate(page, "cfps.open", {
     slug,
     cfpId: cfp.id,
+    expectedDeadline: cfp.deadline,
     name: cfp.name,
     deadline: cfp.deadline,
     formats: cfp.formats,

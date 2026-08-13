@@ -43,6 +43,7 @@ test("refreshes the organizer average after saving a review", async ({
   await mutate(page.request, "cfps.open", {
     slug,
     cfpId: cfp.id,
+    expectedDeadline: cfp.deadline,
     name: cfp.name,
     deadline: cfp.deadline,
     formats: cfp.formats,

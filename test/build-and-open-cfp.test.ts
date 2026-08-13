@@ -250,6 +250,12 @@ describe("build and open a conditional CFP", () => {
     expect(draftResponse.status).toBe(200);
     const draft = getResult(draftResponse.body, cfpSchema);
     expect(draft.status).toBe("draft");
+    const preservedDeadline = "2027-04-30T21:59:45.678Z";
+    await testEnvironment.DB.prepare(
+      "UPDATE cfps SET deadline = ? WHERE id = ?",
+    )
+      .bind(preservedDeadline, draft.id)
+      .run();
     expect(
       (await callTrpc("cfps.createDraft", draftInput, reviewer.cookie)).status,
     ).toBe(404);
@@ -319,7 +325,12 @@ describe("build and open a conditional CFP", () => {
       (
         await callTrpc(
           "cfps.updateDraft",
-          { ...draftInput, cfpId: draft.id, name: "Saved draft" },
+          {
+            ...draftInput,
+            cfpId: draft.id,
+            expectedDeadline: preservedDeadline,
+            name: "Saved draft",
+          },
           owner.cookie,
         )
       ).status,
@@ -342,6 +353,7 @@ describe("build and open a conditional CFP", () => {
           {
             ...draftInput,
             cfpId: draft.id,
+            expectedDeadline: preservedDeadline,
             name: "Speak with us",
             customFields: fieldsWithFile,
           },
@@ -356,6 +368,7 @@ describe("build and open a conditional CFP", () => {
           {
             ...draftInput,
             cfpId: draft.id,
+            expectedDeadline: preservedDeadline,
             name: "Speak with us",
             customFields: fieldsWithFile,
           },
@@ -370,6 +383,7 @@ describe("build and open a conditional CFP", () => {
           {
             ...draftInput,
             cfpId: draft.id,
+            expectedDeadline: preservedDeadline,
             name: "Ignored repeat",
             customFields: fieldsWithFile,
           },
@@ -395,7 +409,7 @@ describe("build and open a conditional CFP", () => {
         timezone: eventInput.timezone,
       },
       name: "Ignored repeat",
-      deadline: draftInput.deadline,
+      deadline: preservedDeadline,
       coreFields: {
         title: { required: true },
         abstract: { required: true },
@@ -426,7 +440,12 @@ describe("build and open a conditional CFP", () => {
       (
         await callTrpc(
           "cfps.updateDraft",
-          { ...draftInput, cfpId: draft.id, name: "Edited while open" },
+          {
+            ...draftInput,
+            cfpId: draft.id,
+            expectedDeadline: preservedDeadline,
+            name: "Edited while open",
+          },
           owner.cookie,
         )
       ).status,
@@ -473,6 +492,7 @@ describe("build and open a conditional CFP", () => {
             ...secondDraft,
             cfpId: secondDraft.id,
             deadline: "2020-01-01T09:00:00Z",
+            expectedDeadline: "2020-01-01T09:00:45.678Z",
             slug,
             name: "Renamed expired draft",
           },
@@ -496,6 +516,7 @@ describe("build and open a conditional CFP", () => {
             ...secondDraft,
             cfpId: secondDraft.id,
             deadline: "2020-01-02T09:00:00Z",
+            expectedDeadline: "2020-01-01T09:00:45.678Z",
             slug,
           },
           owner.cookie,
@@ -512,6 +533,7 @@ describe("build and open a conditional CFP", () => {
             ...secondDraft,
             cfpId: secondDraft.id,
             deadline: futureDeadline,
+            expectedDeadline: "2020-01-01T09:00:45.678Z",
             slug,
             name: "Rescheduled draft",
           },
@@ -521,47 +543,50 @@ describe("build and open a conditional CFP", () => {
       cfpSchema,
     );
     expect(rescheduledDraft.deadline).toBe(futureDeadline);
+    const staleDeadline = "2027-04-01T09:00:00Z";
     await testEnvironment.DB.prepare(
       "UPDATE cfps SET deadline = ? WHERE id = ?",
     )
-      .bind("2020-01-01T09:00:45.678Z", secondDraft.id)
+      .bind(staleDeadline, secondDraft.id)
       .run();
-
-    const concurrentDeadlineUpdates = await Promise.all([
-      callTrpc(
-        "cfps.updateDraft",
-        {
-          ...secondDraft,
-          cfpId: secondDraft.id,
-          deadline: futureDeadline,
-          slug,
-          name: "Rescheduled draft",
-        },
-        owner.cookie,
-      ),
-      callTrpc(
-        "cfps.updateDraft",
-        {
-          ...secondDraft,
-          cfpId: secondDraft.id,
-          deadline: "2020-01-01T09:00:00Z",
-          slug,
-          name: "Stale draft edit",
-        },
-        owner.cookie,
-      ),
-    ]);
+    const newerDeadline = "2027-05-01T09:00:00Z";
     expect(
-      concurrentDeadlineUpdates.every(({ status }) =>
-        [200, 400, 409].includes(status),
-      ),
-    ).toBe(true);
-    expect(concurrentDeadlineUpdates[0]?.status).toBe(200);
+      (
+        await callTrpc(
+          "cfps.updateDraft",
+          {
+            ...secondDraft,
+            cfpId: secondDraft.id,
+            deadline: newerDeadline,
+            expectedDeadline: staleDeadline,
+            slug,
+            name: "Newer draft edit",
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await callTrpc(
+          "cfps.updateDraft",
+          {
+            ...secondDraft,
+            cfpId: secondDraft.id,
+            deadline: staleDeadline,
+            expectedDeadline: staleDeadline,
+            slug,
+            name: "Stale draft edit",
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(409);
     expect(
       await testEnvironment.DB.prepare("SELECT deadline FROM cfps WHERE id = ?")
         .bind(secondDraft.id)
         .first(),
-    ).toEqual({ deadline: futureDeadline });
+    ).toEqual({ deadline: newerDeadline });
     const setup = getResult(
       (await callTrpc("cfps.getSetup", { slug }, owner.cookie, "query")).body,
       z.object({ draft: cfpSchema.nullable(), open: cfpSchema.nullable() }),
@@ -572,7 +597,13 @@ describe("build and open a conditional CFP", () => {
     });
     const secondOpen = await callTrpc(
       "cfps.open",
-      { ...draftInput, slug, cfpId: secondDraft.id, name: "Second CFP" },
+      {
+        ...draftInput,
+        slug,
+        cfpId: secondDraft.id,
+        expectedDeadline: newerDeadline,
+        name: "Second CFP",
+      },
       owner.cookie,
     );
     expect(secondOpen.status).toBe(409);
@@ -620,6 +651,7 @@ describe("build and open a conditional CFP", () => {
             ...draftInput,
             slug: noTrackSlug,
             cfpId: noTrackDraft.id,
+            expectedDeadline: noTrackDraft.deadline,
             name: "No tracks yet",
           },
           owner.cookie,
@@ -643,6 +675,7 @@ describe("build and open a conditional CFP", () => {
           ...draftInput,
           slug: noTrackSlug,
           cfpId: noTrackDraft.id,
+          expectedDeadline: noTrackDraft.deadline,
           name: "Race-safe CFP",
         },
         owner.cookie,
@@ -662,6 +695,7 @@ describe("build and open a conditional CFP", () => {
             ...draftInput,
             slug: noTrackSlug,
             cfpId: noTrackDraft.id,
+            expectedDeadline: noTrackDraft.deadline,
             deadline: "2020-01-01T00:00:00Z",
             name: "Past deadline",
           },
@@ -680,6 +714,7 @@ describe("build and open a conditional CFP", () => {
       {
         ...draftInput,
         cfpId: secondDraft.id,
+        expectedDeadline: newerDeadline,
         customFields: [],
       },
       owner.cookie,

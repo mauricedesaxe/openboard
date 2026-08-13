@@ -432,7 +432,12 @@ describe("invite the event team", () => {
     );
     await callTrpc(
       "cfps.open",
-      { slug: "access-event", cfpId: draft.id, ...draft },
+      {
+        slug: "access-event",
+        cfpId: draft.id,
+        expectedDeadline: draft.deadline,
+        ...draft,
+      },
       owner.cookie,
     );
     const proposal = getResult(

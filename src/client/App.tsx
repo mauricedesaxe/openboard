@@ -5540,8 +5540,14 @@ function CfpBuilder({
       allowExpiredStoredDeadline: Boolean(cfp),
     });
     if (!parsed) return;
-    if (cfp) update.mutate({ slug, cfpId: cfp.id, ...parsed });
-    else create.mutate({ slug, ...parsed });
+    if (cfp) {
+      update.mutate({
+        slug,
+        cfpId: cfp.id,
+        expectedDeadline: cfp.deadline,
+        ...parsed,
+      });
+    } else create.mutate({ slug, ...parsed });
   }
 
   function saveAndOpen() {
@@ -5555,7 +5561,12 @@ function CfpBuilder({
       return;
     }
 
-    open.mutate({ slug, cfpId: cfp.id, ...parsed });
+    open.mutate({
+      slug,
+      cfpId: cfp.id,
+      expectedDeadline: cfp.deadline,
+      ...parsed,
+    });
   }
 
   function updateField(index: number, field: CustomField) {

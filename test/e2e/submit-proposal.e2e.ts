@@ -310,6 +310,7 @@ async function createOpenCfp(page: Page, slug: string) {
   await mutate("cfps.open", {
     slug,
     cfpId: draft.id,
+    expectedDeadline: draft.deadline,
     name: draft.name,
     deadline: draft.deadline,
     formats: draft.formats,

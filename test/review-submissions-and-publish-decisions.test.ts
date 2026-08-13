@@ -160,6 +160,7 @@ describe("review submissions and publish decisions", () => {
       {
         slug,
         cfpId: cfp.id,
+        expectedDeadline: cfp.deadline,
         name: cfp.name,
         deadline: cfp.deadline,
         formats: cfp.formats,

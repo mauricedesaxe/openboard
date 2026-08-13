@@ -8,6 +8,7 @@ import {
   type CfpDefinitionInput,
   type CfpFormContract,
   type CfpId,
+  type ExistingCfpDefinitionInput,
 } from "../../shared/cfps";
 import {
   instantFallsAfterLocalDate,
@@ -129,7 +130,7 @@ export async function updateDraftCfp(
   userId: UserId,
   slug: string,
   cfpId: CfpId,
-  input: CfpDefinitionInput,
+  input: ExistingCfpDefinitionInput,
 ): Promise<CfpWriteResult> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
@@ -156,6 +157,9 @@ export async function updateDraftCfp(
     .limit(1);
   if (!existing) {
     return { ok: false, error: "not_found" };
+  }
+  if (existing.deadline !== input.expectedDeadline) {
+    return { ok: false, error: "cfp_changed" };
   }
   const deadlineUnchanged =
     isoToEventLocalDateTime({
@@ -200,7 +204,7 @@ export async function updateDraftCfp(
         and(
           eq(cfps.id, cfpId),
           eq(cfps.eventId, event.id),
-          eq(cfps.deadline, existing.deadline),
+          eq(cfps.deadline, input.expectedDeadline),
           eq(cfps.status, existing.status),
           existing.lockedAt ? undefined : isNull(cfps.structureLockedAt),
         ),
@@ -250,8 +254,10 @@ export async function updateDraftCfp(
             ok: true,
             value: {
               id: cfpId,
-              ...input,
+              name: input.name,
               deadline,
+              formats: input.formats,
+              customFields: input.customFields,
               status: existing.status,
               structureLocked: true,
             },
@@ -269,8 +275,10 @@ export async function updateDraftCfp(
     ok: true,
     value: {
       id: cfpId,
-      ...input,
+      name: input.name,
       deadline,
+      formats: input.formats,
+      customFields: input.customFields,
       status: existing.status,
       structureLocked: existing.lockedAt !== null,
     },
@@ -282,7 +290,7 @@ export async function saveAndOpenCfp(
   userId: UserId,
   slug: string,
   cfpId: CfpId,
-  input: CfpDefinitionInput,
+  input: ExistingCfpDefinitionInput,
 ): Promise<CfpWriteResult> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
@@ -294,9 +302,6 @@ export async function saveAndOpenCfp(
     })
   ) {
     return { ok: false, error: "deadline_after_event" };
-  }
-  if (new Date(input.deadline) <= new Date()) {
-    return { ok: false, error: "deadline_passed" };
   }
   const [currentOpen] = await database
     .select()
@@ -311,7 +316,11 @@ export async function saveAndOpenCfp(
   }
 
   const [target] = await database
-    .select({ lockedAt: cfps.structureLockedAt, status: cfps.status })
+    .select({
+      deadline: cfps.deadline,
+      lockedAt: cfps.structureLockedAt,
+      status: cfps.status,
+    })
     .from(cfps)
     .where(and(eq(cfps.id, cfpId), eq(cfps.eventId, event.id)))
     .limit(1);
@@ -319,13 +328,29 @@ export async function saveAndOpenCfp(
     return { ok: false, error: "not_found" };
   }
   if (target.lockedAt) return { ok: false, error: "structure_locked" };
+  if (target.deadline !== input.expectedDeadline) {
+    return { ok: false, error: "cfp_changed" };
+  }
+  const deadlineUnchanged =
+    isoToEventLocalDateTime({
+      instant: input.deadline,
+      timezone: event.timezone,
+    }) ===
+    isoToEventLocalDateTime({
+      instant: target.deadline,
+      timezone: event.timezone,
+    });
+  const deadline = deadlineUnchanged ? target.deadline : input.deadline;
+  if (new Date(deadline) <= new Date()) {
+    return { ok: false, error: "deadline_passed" };
+  }
 
   try {
     const result = await database
       .update(cfps)
       .set({
         name: input.name,
-        deadline: input.deadline,
+        deadline,
         status: "open",
         formatsJson: JSON.stringify(input.formats),
         customFieldsJson: JSON.stringify(input.customFields),
@@ -335,6 +360,7 @@ export async function saveAndOpenCfp(
         and(
           eq(cfps.id, cfpId),
           eq(cfps.eventId, event.id),
+          eq(cfps.deadline, input.expectedDeadline),
           eq(cfps.status, currentOpen ? "open" : "draft"),
           isNull(cfps.structureLockedAt),
           exists(
@@ -349,11 +375,22 @@ export async function saveAndOpenCfp(
       );
     if (result.meta.changes === 0) {
       const [latest] = await database
-        .select({ lockedAt: cfps.structureLockedAt })
+        .select({
+          deadline: cfps.deadline,
+          lockedAt: cfps.structureLockedAt,
+          status: cfps.status,
+        })
         .from(cfps)
         .where(and(eq(cfps.id, cfpId), eq(cfps.eventId, event.id)))
         .limit(1);
       if (latest?.lockedAt) return { ok: false, error: "structure_locked" };
+      if (
+        latest &&
+        (latest.deadline !== input.expectedDeadline ||
+          latest.status !== target.status)
+      ) {
+        return { ok: false, error: "cfp_changed" };
+      }
 
       const [activeTrack] = await database
         .select({ id: tracks.id })

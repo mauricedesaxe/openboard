@@ -11,6 +11,7 @@ import {
 } from "../shared/agendas";
 import {
   cfpDefinitionInputSchema,
+  existingCfpDefinitionInputSchema,
   eventOptionNameSchema,
   type CfpId,
   type TrackId,
@@ -765,7 +766,7 @@ export const appRouter = trpc.router({
       }),
     updateDraft: authenticatedProcedure
       .input(
-        slugInput.extend(cfpDefinitionInputSchema.shape).extend({
+        slugInput.extend(existingCfpDefinitionInputSchema.shape).extend({
           cfpId: cfpIdSchema,
         }),
       )
@@ -782,7 +783,7 @@ export const appRouter = trpc.router({
       }),
     open: authenticatedProcedure
       .input(
-        slugInput.extend(cfpDefinitionInputSchema.shape).extend({
+        slugInput.extend(existingCfpDefinitionInputSchema.shape).extend({
           cfpId: cfpIdSchema,
         }),
       )

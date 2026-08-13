@@ -183,6 +183,16 @@ export const cfpDefinitionInputSchema = z.object({
 
 export type CfpDefinitionInput = z.infer<typeof cfpDefinitionInputSchema>;
 
+export const existingCfpDefinitionInputSchema = cfpDefinitionInputSchema.extend(
+  {
+    expectedDeadline: z.iso.datetime({ offset: true }),
+  },
+);
+
+export type ExistingCfpDefinitionInput = z.infer<
+  typeof existingCfpDefinitionInputSchema
+>;
+
 export const cfpStatusSchema = z.enum(["draft", "open"]);
 
 export const cfpSchema = cfpDefinitionInputSchema.extend({
