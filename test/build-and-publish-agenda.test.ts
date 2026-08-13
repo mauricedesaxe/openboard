@@ -1265,6 +1265,11 @@ describe("build and publish an agenda", () => {
         .bind(placement.id)
         .first(),
     ).toEqual({ action: "cancel", sequence: 1 });
+    await testEnvironment.DB.prepare(
+      "UPDATE calendar_sync_states SET sequence = 2 WHERE agenda_item_id = ?",
+    )
+      .bind(placement.id)
+      .run();
     const deliveries: Array<{
       agendaItemId: string;
       method: string;
