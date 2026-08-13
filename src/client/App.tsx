@@ -76,6 +76,7 @@ import { authClient } from "./auth";
 import {
   eventSlugFromPath,
   eventSwitchPath,
+  hasEventPermission,
   reviewLandingPath,
   type NavigationEvent,
   type ReviewPath,
@@ -192,16 +193,14 @@ function AuthenticatedApp({ email }: { email: string }) {
     eventSlugFromPath(location.pathname) ?? activeSubmission.data?.event.slug;
   const activeEvent =
     events.data?.find((event) => event.slug === activeSlug) ??
-    (activeSubmission.data
+    (activeSubmission.data && activeSubmissionId
       ? {
           ...activeSubmission.data.event,
           access: "submitter" as const,
-          permissions: [],
+          permissions: [] as const,
+          proposalPath: `/submissions/${activeSubmissionId}`,
         }
       : undefined);
-  const activeProposalPath = activeSubmissionId
-    ? `/submissions/${activeSubmissionId}`
-    : undefined;
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [signOutState, setSignOutState] = useState<
     | { status: "idle" }
@@ -263,17 +262,13 @@ function AuthenticatedApp({ email }: { email: string }) {
             <EventNavigation
               event={activeEvent}
               onNavigate={() => setDrawerOpen(false)}
-              proposalPath={activeProposalPath}
             />
           </div>
         )}
       </aside>
       {activeEvent && (
         <aside className="event-sidebar">
-          <EventNavigation
-            event={activeEvent}
-            proposalPath={activeProposalPath}
-          />
+          <EventNavigation event={activeEvent} />
         </aside>
       )}
       <main className="workspace-main">
@@ -424,11 +419,9 @@ const organizerNavigation = [
 function EventNavigation({
   event,
   onNavigate,
-  proposalPath,
 }: {
   event: NavigationEvent;
   onNavigate?: () => void;
-  proposalPath?: string | undefined;
 }) {
   const trpc = useTRPC();
   const workspace = useQuery(
@@ -439,7 +432,7 @@ function EventNavigation({
   );
   const badgeCount = (path: string) => {
     if (!workspace.data) return 0;
-    if (path === "review" && !event.permissions.includes("organizer")) {
+    if (path === "review" && !hasEventPermission(event, "organizer")) {
       return workspace.data.reviewer?.remaining ?? 0;
     }
     const keys: Record<string, string[]> = {
@@ -454,12 +447,12 @@ function EventNavigation({
       .filter((item) => keys[path]?.includes(item.key))
       .reduce((sum, item) => sum + item.count, 0);
   };
-  const groups = event.permissions.includes("organizer")
+  const groups = hasEventPermission(event, "organizer")
     ? organizerNavigation.map((group) => ({
         ...group,
         items: [...group.items],
       }))
-    : event.permissions.includes("reviewer")
+    : hasEventPermission(event, "reviewer")
       ? [
           { group: "Overview", items: [["Home", ""]] },
           { group: "Program", items: [["Review", "review"]] },
@@ -476,10 +469,10 @@ function EventNavigation({
         <span>Active event</span>
         <strong>{event.name}</strong>
       </div>
-      {proposalPath && event.access === "submitter" && (
+      {event.access === "submitter" && (
         <div className="navigation-group">
           <span>Proposal</span>
-          <NavLink end onClick={onNavigate} to={proposalPath}>
+          <NavLink end onClick={onNavigate} to={event.proposalPath}>
             <span>Proposal</span>
           </NavLink>
         </div>

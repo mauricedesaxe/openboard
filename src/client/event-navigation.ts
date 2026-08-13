@@ -1,14 +1,29 @@
 import { ORGANIZER_CFP_AREA } from "../shared/event-routes";
 
-export type NavigationEvent = {
-  name: string;
-  slug: string;
-  access: "owner" | "organizer" | "reviewer" | "submitter";
-  permissions: Array<"organizer" | "reviewer">;
-};
+export type NavigationEvent =
+  | {
+      name: string;
+      slug: string;
+      access: "owner" | "organizer" | "reviewer";
+      permissions: Array<"organizer" | "reviewer">;
+    }
+  | {
+      name: string;
+      slug: string;
+      access: "submitter";
+      permissions: [];
+      proposalPath: string;
+    };
 
 export type ReviewPath =
   "review" | "review/assignments" | "review/decisions" | "review/my-reviews";
+
+export function hasEventPermission(
+  event: NavigationEvent,
+  permission: "organizer" | "reviewer",
+): boolean {
+  return event.permissions.some((candidate) => candidate === permission);
+}
 
 export function eventSlugFromPath(pathname: string): string | undefined {
   return pathname.match(/^\/events\/([^/]+)(?:\/|$)/)?.[1];
@@ -31,7 +46,7 @@ export function eventSwitchPath(
   ]);
   const ownerOnly = area === "team";
   if (
-    (organizerOnly.has(area) && !event.permissions.includes("organizer")) ||
+    (organizerOnly.has(area) && !hasEventPermission(event, "organizer")) ||
     (ownerOnly && event.access !== "owner")
   ) {
     return `/events/${event.slug}`;
@@ -49,7 +64,7 @@ export function eventSwitchPath(
 export function reviewLandingPath(
   slug: string,
   requestedPath: ReviewPath,
-  permissions: NavigationEvent["permissions"],
+  permissions: Array<"organizer" | "reviewer">,
 ): string {
   const organizer = permissions.includes("organizer");
   const reviewer = permissions.includes("reviewer");
