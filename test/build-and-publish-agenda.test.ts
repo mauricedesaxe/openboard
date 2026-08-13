@@ -575,6 +575,7 @@ describe("build and publish an agenda", () => {
         headers: { "Accept-Encoding": "gzip" },
       });
       expect(compressedResponse.headers.get("content-encoding")).toBe("gzip");
+      const compressedEtag = compressedResponse.headers.get("etag");
       if (path.endsWith(".ics")) {
         const calendar = await compressedResponse.text();
         expect(calendar).toMatch(/^BEGIN:VCALENDAR\r\n/);
@@ -587,6 +588,8 @@ describe("build and publish an agenda", () => {
         headers: { "Accept-Encoding": "identity" },
       });
       expect(uncompressedResponse.headers.get("content-encoding")).toBeNull();
+      const uncompressedEtag = uncompressedResponse.headers.get("etag");
+      expect(compressedEtag).not.toBe(uncompressedEtag);
       if (path.endsWith(".ics")) {
         expect(await uncompressedResponse.text()).toMatch(
           /^BEGIN:VCALENDAR\r\n/,
@@ -599,6 +602,24 @@ describe("build and publish an agenda", () => {
         headers: { "Accept-Encoding": "gzip;q=0" },
       });
       expect(rejectedGzipResponse.headers.get("content-encoding")).toBeNull();
+
+      const crossEncodingResponse = await workerFetch(path, {
+        headers: {
+          "Accept-Encoding": "gzip",
+          "If-None-Match": uncompressedEtag ?? "",
+        },
+      });
+      expect(crossEncodingResponse.status).toBe(200);
+      const unchangedCompressedResponse = await workerFetch(path, {
+        headers: {
+          "Accept-Encoding": "gzip",
+          "If-None-Match": compressedEtag ?? "",
+        },
+      });
+      expect(unchangedCompressedResponse.status).toBe(304);
+      expect(unchangedCompressedResponse.headers.get("content-encoding")).toBe(
+        "gzip",
+      );
     }
 
     await expectOk(

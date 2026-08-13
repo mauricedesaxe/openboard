@@ -2,30 +2,34 @@ import ICAL from "ical.js";
 
 const [baseUrl, eventSlug] = process.argv.slice(2);
 
-if (!baseUrl || !eventSlug) {
+if (!baseUrl) {
   console.error(
-    "Usage: node scripts/smoke-public-api.mjs <base-url> <event-slug>",
+    "Usage: node scripts/smoke-public-api.mjs <base-url> [event-slug]",
   );
   process.exit(1);
 }
 
 const endpoints = [
   {
-    name: "schedule JSON",
-    path: `/api/v1/events/${encodeURIComponent(eventSlug)}/schedule`,
-    parse: parseJson,
-  },
-  {
-    name: "iCalendar feed",
-    path: `/api/v1/events/${encodeURIComponent(eventSlug)}/schedule.ics`,
-    parse: parseCalendar,
-  },
-  {
     name: "OpenAPI document",
     path: "/api/v1/openapi.json",
     parse: parseJson,
   },
 ];
+if (eventSlug) {
+  endpoints.push(
+    {
+      name: "schedule JSON",
+      path: `/api/v1/events/${encodeURIComponent(eventSlug)}/schedule`,
+      parse: parseJson,
+    },
+    {
+      name: "iCalendar feed",
+      path: `/api/v1/events/${encodeURIComponent(eventSlug)}/schedule.ics`,
+      parse: parseCalendar,
+    },
+  );
+}
 
 for (const endpoint of endpoints) {
   await verifyResponse(endpoint, "gzip", "gzip");
