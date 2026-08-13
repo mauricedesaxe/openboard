@@ -230,6 +230,7 @@ describe("review submissions and publish decisions", () => {
     );
     expect(board.round.status).toBe("draft");
     expect(board.reviewers.map((candidate) => candidate.email)).toEqual([
+      "review-owner@example.com",
       reviewerEmail,
       secondReviewerEmail,
     ]);
@@ -240,6 +241,7 @@ describe("review submissions and publish decisions", () => {
         email,
       })),
     ).toEqual([
+      { assigned: 0, completed: 0, email: "review-owner@example.com" },
       { assigned: 0, completed: 0, email: reviewerEmail },
       { assigned: 0, completed: 0, email: secondReviewerEmail },
     ]);

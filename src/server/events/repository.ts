@@ -58,6 +58,24 @@ export async function createEvent(
         createdAt: now,
         updatedAt: now,
       }),
+      database.insert(eventRoles).values([
+        {
+          id: crypto.randomUUID(),
+          eventId: id,
+          userId: ownerUserId,
+          role: "organizer",
+          grantedByUserId: ownerUserId,
+          createdAt: now,
+        },
+        {
+          id: crypto.randomUUID(),
+          eventId: id,
+          userId: ownerUserId,
+          role: "reviewer",
+          grantedByUserId: ownerUserId,
+          createdAt: now,
+        },
+      ]),
       database
         .insert(communicationTemplates)
         .values(defaultCommunicationTemplateValues(id, now)),

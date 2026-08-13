@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { z } from "zod";
 
 import type { AppConfig } from "../src/server/config";
 import { createDatabase } from "../src/server/database/client";
@@ -85,6 +86,59 @@ describe("sign in and create an event", () => {
       ownerUserId: owner.userId,
       agendaId: created.agendaId,
     });
+
+    const persistedRoles = await testEnvironment.DB.prepare(
+      `SELECT role, user_id AS userId, granted_by_user_id AS grantedByUserId, revoked_at AS revokedAt
+       FROM event_roles
+       WHERE event_id = ?
+       ORDER BY role`,
+    )
+      .bind(created.id)
+      .all<{
+        role: string;
+        userId: string;
+        grantedByUserId: string;
+        revokedAt: number | null;
+      }>();
+    expect(persistedRoles.results).toEqual([
+      {
+        role: "organizer",
+        userId: owner.userId,
+        grantedByUserId: owner.userId,
+        revokedAt: null,
+      },
+      {
+        role: "reviewer",
+        userId: owner.userId,
+        grantedByUserId: owner.userId,
+        revokedAt: null,
+      },
+    ]);
+
+    const teamResponse = await callTrpc(
+      "eventTeam.list",
+      { slug: eventInput.slug },
+      owner.cookie,
+      "query",
+    );
+    expect(teamResponse.status).toBe(200);
+    const team = getResult(
+      teamResponse.body,
+      z.object({
+        owner: z.object({ id: z.string() }),
+        roles: z.array(
+          z.object({
+            userId: z.string(),
+            role: z.enum(["organizer", "reviewer"]),
+          }),
+        ),
+      }),
+    );
+    expect(team.owner.id).toBe(owner.userId);
+    expect(team.roles).toEqual([
+      { userId: owner.userId, role: "organizer" },
+      { userId: owner.userId, role: "reviewer" },
+    ]);
 
     const reloaded = await callTrpc(
       "events.get",
