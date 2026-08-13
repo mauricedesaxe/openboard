@@ -248,6 +248,22 @@ describe("submit a proposal through the local-first flow", () => {
       submitter.cookie,
     );
     expect(invalidType.status).toBe(400);
+    const forgedPdf = await callTrpc(
+      "submissions.uploadFile",
+      {
+        slug,
+        cfpId: draft.id,
+        clientDraftId: proposal.clientDraftId,
+        uploadId: crypto.randomUUID(),
+        fieldKey: "outline",
+        customAnswers: proposal.customAnswers,
+        fileName: "outline.pdf",
+        contentType: "application/pdf",
+        contentBase64: btoa("not a PDF"),
+      },
+      submitter.cookie,
+    );
+    expect(forgedPdf.status).toBe(400);
     const excessive = await callTrpc(
       "submissions.uploadFile",
       {
@@ -274,7 +290,7 @@ describe("submit a proposal through the local-first flow", () => {
       customAnswers: proposal.customAnswers,
       fileName: "outline.pdf",
       contentType: "application/pdf",
-      contentBase64: btoa("proposal outline"),
+      contentBase64: btoa("%PDF-1.7 proposal outline"),
     };
     const uploaded = getResult(
       (await callTrpc("submissions.uploadFile", uploadInput, submitter.cookie))
@@ -302,6 +318,12 @@ describe("submit a proposal through the local-first flow", () => {
       ).body,
       z.object({ id: z.string() }),
     );
+    const slidesObject = await testEnvironment.DB.prepare(
+      "SELECT object_key AS objectKey FROM stored_files WHERE id = ?",
+    )
+      .bind(slides.id)
+      .first<{ objectKey: string }>();
+    expect(slidesObject).toBeTruthy();
     proposal.fileAnswers = { outline: uploaded.id, slides: slides.id };
     expect(
       (
@@ -365,7 +387,7 @@ describe("submit a proposal through the local-first flow", () => {
     });
     expect(fileResponse.status).toBe(200);
     expect(new TextDecoder().decode(await fileResponse.arrayBuffer())).toBe(
-      "proposal outline",
+      "%PDF-1.7 proposal outline",
     );
     expect(submitted.form).toMatchObject({
       deadline: draft.deadline,
@@ -556,6 +578,15 @@ describe("submit a proposal through the local-first flow", () => {
       revision: updated.revision + 1,
       title: "Operating a recovered platform",
     });
+    const removedSlides = await testEnvironment.DB.prepare(
+      "SELECT COUNT(*) AS count FROM stored_files WHERE id = ?",
+    )
+      .bind(slides.id)
+      .first<{ count: number }>();
+    expect(removedSlides?.count).toBe(0);
+    expect(
+      await testEnvironment.FILES.get(slidesObject?.objectKey ?? ""),
+    ).toBeNull();
 
     await testEnvironment.DB.prepare(
       "UPDATE decisions SET status = 'accept_queued' WHERE submission_id = ?",

@@ -52,6 +52,12 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   await page
     .getByRole("textbox", { name: "Workshop requirements" })
     .fill("Keep this answer while hidden.");
+  await page.getByRole("button", { name: "Sign in and submit" }).click();
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Choose a file for Session outline." }),
+  ).toBeVisible();
   await page
     .getByLabel("Session outline")
     .setInputFiles("test/fixtures/outline.pdf");
@@ -294,7 +300,7 @@ async function createOpenCfp(page: Page, slug: string) {
         key: "outline",
         label: "Session outline",
         type: "file",
-        required: false,
+        required: true,
         acceptedTypes: ["application/pdf"],
         maxSizeMb: 1,
         condition: { fieldKey: "audience", equals: "Experienced" },

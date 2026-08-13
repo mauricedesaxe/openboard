@@ -13,7 +13,11 @@ import {
   storedFiles,
   submissionSpeakers,
 } from "../database/schema";
-import { compensateStoredFile, putStoredFile } from "../files/repository";
+import {
+  compensateStoredFile,
+  matchesStoredFileContentType,
+  putStoredFile,
+} from "../files/repository";
 
 export async function findOwnSpeakerProfile(
   database: Database,
@@ -295,19 +299,7 @@ async function findHeadshotReferences(database: Database, fileId: string) {
 }
 
 function isValidHeadshot(bytes: Uint8Array, contentType: string): boolean {
-  if (contentType === "image/jpeg") {
-    return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
-  }
-  if (contentType === "image/png") {
-    return [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every(
-      (value, index) => bytes[index] === value,
-    );
-  }
-  return (
-    contentType === "image/webp" &&
-    new TextDecoder().decode(bytes.slice(0, 4)) === "RIFF" &&
-    new TextDecoder().decode(bytes.slice(8, 12)) === "WEBP"
-  );
+  return matchesStoredFileContentType(bytes, contentType);
 }
 
 async function hasClaimedSpeakerRelationship(

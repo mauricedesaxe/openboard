@@ -49,7 +49,11 @@ import {
   storedFiles,
   tracks,
 } from "../database/schema";
-import { compensateStoredFile, putStoredFile } from "../files/repository";
+import {
+  compensateStoredFile,
+  matchesStoredFileContentType,
+  putStoredFile,
+} from "../files/repository";
 import {
   prepareSubmissionSpeakerInvitation,
   type SubmissionSpeakerInvitationDelivery,
@@ -86,6 +90,7 @@ type SubmitProposalResult =
 
 export async function submitProposal(
   database: Database,
+  files: R2Bucket,
   ownerUserId: UserId,
   ownerEmail: string,
   input: SubmitProposalInput,
@@ -118,6 +123,12 @@ export async function submitProposal(
     clientDraftId: input.clientDraftId,
   });
   if (!validated.ok) return validated;
+  const pendingFiles = await listPendingProposalFiles(
+    database,
+    ownerUserId,
+    input.cfpId,
+    input.clientDraftId,
+  );
 
   const submissionId = crypto.randomUUID() as SubmissionId;
   const formResponseId = crypto.randomUUID();
@@ -232,18 +243,15 @@ export async function submitProposal(
             ),
           ]
         : []),
-      ...(validated.attachments.length > 0
-        ? [
-            database.delete(submissionFileUploads).where(
-              inArray(
-                submissionFileUploads.id,
-                validated.attachments.flatMap((attachment) =>
-                  attachment.uploadId ? [attachment.uploadId] : [],
-                ),
-              ),
-            ),
-          ]
-        : []),
+      database
+        .delete(submissionFileUploads)
+        .where(
+          and(
+            eq(submissionFileUploads.cfpId, input.cfpId),
+            eq(submissionFileUploads.ownerUserId, ownerUserId),
+            eq(submissionFileUploads.clientDraftId, input.clientDraftId),
+          ),
+        ),
       ...communicationInsertStatements(database, confirmation),
       database
         .update(cfps)
@@ -279,6 +287,13 @@ export async function submitProposal(
     }
     return { ok: false, error: "persistence_failed" };
   }
+
+  await removeUnusedProposalFiles(
+    database,
+    files,
+    pendingFiles,
+    new Set(validated.attachments.map(({ storedFileId }) => storedFileId)),
+  );
 
   const submission = await findAccessibleSubmission(
     database,
@@ -539,6 +554,7 @@ function accessibleSubmissionWhere(database: Database, userId: UserId) {
 
 export async function updateOwnSubmission(
   database: Database,
+  files: R2Bucket,
   ownerUserId: UserId,
   submissionId: SubmissionId,
   input: ProposalUpdate,
@@ -573,6 +589,13 @@ export async function updateOwnSubmission(
     { ...input, ownerUserId, clientDraftId: submissionId },
   );
   if (!validated.ok) return validated;
+  const staleFiles = await listProposalWriteFiles(
+    database,
+    ownerUserId,
+    current.formResponseId,
+    current.cfpId,
+    submissionId,
+  );
 
   const now = new Date();
   const writeToken = crypto.randomUUID();
@@ -661,18 +684,15 @@ export async function updateOwnSubmission(
             ),
           ]
         : []),
-      ...(validated.attachments.some(({ uploadId }) => uploadId)
-        ? [
-            database.delete(submissionFileUploads).where(
-              inArray(
-                submissionFileUploads.id,
-                validated.attachments.flatMap((attachment) =>
-                  attachment.uploadId ? [attachment.uploadId] : [],
-                ),
-              ),
-            ),
-          ]
-        : []),
+      database
+        .delete(submissionFileUploads)
+        .where(
+          and(
+            eq(submissionFileUploads.cfpId, current.cfpId),
+            eq(submissionFileUploads.ownerUserId, ownerUserId),
+            eq(submissionFileUploads.clientDraftId, submissionId),
+          ),
+        ),
     ]);
     if (submissionUpdateResult.meta.changes === 0) {
       return { ok: false, error: "submission_closed" };
@@ -695,6 +715,13 @@ export async function updateOwnSubmission(
     }
     return { ok: false, error: "persistence_failed" };
   }
+
+  await removeUnusedProposalFiles(
+    database,
+    files,
+    staleFiles,
+    new Set(validated.attachments.map(({ storedFileId }) => storedFileId)),
+  );
 
   const submission = await findAccessibleSubmission(
     database,
@@ -1004,7 +1031,8 @@ export async function uploadProposalFile(
     input,
     (bytes, contentType) =>
       bytes.byteLength <= field.maxSizeMb * 1_000_000 &&
-      acceptedContentType(field.acceptedTypes, contentType),
+      acceptedContentType(field.acceptedTypes, contentType) &&
+      matchesStoredFileContentType(bytes, contentType),
   );
   if (!stored.ok) return { ok: false, error: "invalid_file" };
 
@@ -1216,6 +1244,79 @@ async function findProposalUpload(
     )
     .limit(1);
   return row ? storedFileValue(row) : undefined;
+}
+
+type ProposalFileCleanupCandidate = {
+  id: string;
+  objectKey: string;
+};
+
+async function listPendingProposalFiles(
+  database: Database,
+  ownerUserId: UserId,
+  cfpId: string,
+  clientDraftId: string,
+): Promise<ProposalFileCleanupCandidate[]> {
+  return database
+    .select({ id: storedFiles.id, objectKey: storedFiles.objectKey })
+    .from(submissionFileUploads)
+    .innerJoin(
+      storedFiles,
+      eq(storedFiles.id, submissionFileUploads.storedFileId),
+    )
+    .where(
+      and(
+        eq(submissionFileUploads.ownerUserId, ownerUserId),
+        eq(submissionFileUploads.cfpId, cfpId),
+        eq(submissionFileUploads.clientDraftId, clientDraftId),
+      ),
+    );
+}
+
+async function listProposalWriteFiles(
+  database: Database,
+  ownerUserId: UserId,
+  formResponseId: string,
+  cfpId: string,
+  clientDraftId: string,
+): Promise<ProposalFileCleanupCandidate[]> {
+  const [attached, pending] = await Promise.all([
+    database
+      .select({ id: storedFiles.id, objectKey: storedFiles.objectKey })
+      .from(formResponseAttachments)
+      .innerJoin(
+        storedFiles,
+        eq(storedFiles.id, formResponseAttachments.storedFileId),
+      )
+      .where(eq(formResponseAttachments.formResponseId, formResponseId)),
+    listPendingProposalFiles(database, ownerUserId, cfpId, clientDraftId),
+  ]);
+  return [...attached, ...pending];
+}
+
+async function removeUnusedProposalFiles(
+  database: Database,
+  files: R2Bucket,
+  candidates: ProposalFileCleanupCandidate[],
+  retainedIds: Set<string>,
+): Promise<void> {
+  for (const file of candidates) {
+    if (retainedIds.has(file.id)) continue;
+    try {
+      await files.delete(file.objectKey);
+      await database.delete(storedFiles).where(eq(storedFiles.id, file.id));
+    } catch (error: unknown) {
+      console.error(
+        JSON.stringify({
+          event: "proposal_file_cleanup_failed",
+          fileId: file.id,
+          objectKey: file.objectKey,
+          error:
+            error instanceof Error ? error.message : "Unknown cleanup failure",
+        }),
+      );
+    }
+  }
 }
 
 function storedFileValue(file: {
