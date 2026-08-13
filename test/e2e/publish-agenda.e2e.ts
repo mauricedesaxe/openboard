@@ -321,6 +321,53 @@ test("publishes a working placement to every public agenda view", async ({
   await expect(
     page.getByText("Working agenda · revision", { exact: false }),
   ).toBeVisible();
+  const origin = new URL(page.url()).origin;
+  const share = page.getByRole("region", { name: "Share" });
+  await expect(share).toBeVisible();
+  await expect(share.getByText("Published revision 1")).toBeVisible();
+  const publicAgendaUrl = `${origin}/events/${slug}/schedule`;
+  const scheduleJsonUrl = `${origin}/api/v1/events/${slug}/schedule`;
+  const calendarUrl = `${origin}/api/v1/events/${slug}/schedule.ics`;
+  const publishedOutputs = [publicAgendaUrl, scheduleJsonUrl, calendarUrl];
+  for (const output of publishedOutputs) {
+    await expect(
+      share.getByRole("link", { name: output, exact: true }),
+    ).toHaveAttribute("href", output);
+  }
+  const [scheduleResponse, calendarResponse] = await Promise.all([
+    page.request.get(scheduleJsonUrl),
+    page.request.get(calendarUrl),
+  ]);
+  expect(scheduleResponse.ok()).toBe(true);
+  expect(calendarResponse.ok()).toBe(true);
+
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => Promise.resolve() },
+    });
+  });
+  await share
+    .locator(".agenda-share-output", { hasText: "Public agenda" })
+    .getByRole("button", { name: "Copy" })
+    .click();
+  await expect(share.getByText("Copied")).toBeVisible();
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new Error("denied")) },
+    });
+  });
+  await share
+    .locator(".agenda-share-output", { hasText: "Schedule JSON" })
+    .getByRole("button", { name: "Copy" })
+    .click();
+  await expect(
+    share.getByText("Copy failed. Use the link directly."),
+  ).toBeVisible();
+  await expect(
+    share.getByRole("link", { name: scheduleJsonUrl, exact: true }),
+  ).toHaveAttribute("href", scheduleJsonUrl);
 
   await page.getByRole("link", { name: "View public agenda" }).click();
   await expect(
