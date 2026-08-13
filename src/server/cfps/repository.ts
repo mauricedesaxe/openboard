@@ -57,6 +57,9 @@ export async function createDraftCfp(
 ): Promise<CfpWriteResult> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return { ok: false, error: "not_found" };
+  if (new Date(input.deadline) <= new Date()) {
+    return { ok: false, error: "deadline_passed" };
+  }
   if (
     instantFallsAfterLocalDate({
       instant: input.deadline,
@@ -140,6 +143,7 @@ export async function updateDraftCfp(
   const [existing] = await database
     .select({
       customFieldsJson: cfps.customFieldsJson,
+      deadline: cfps.deadline,
       formatsJson: cfps.formatsJson,
       lockedAt: cfps.structureLockedAt,
       status: cfps.status,
@@ -149,6 +153,13 @@ export async function updateDraftCfp(
     .limit(1);
   if (!existing) {
     return { ok: false, error: "not_found" };
+  }
+  if (
+    existing.status === "draft" &&
+    new Date(input.deadline) <= new Date() &&
+    new Date(input.deadline).getTime() !== new Date(existing.deadline).getTime()
+  ) {
+    return { ok: false, error: "deadline_passed" };
   }
   if (
     existing.lockedAt &&

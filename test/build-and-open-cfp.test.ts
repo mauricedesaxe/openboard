@@ -229,6 +229,19 @@ describe("build and open a conditional CFP", () => {
         )
       ).status,
     ).toBe(400);
+    expect(
+      (
+        await callTrpc(
+          "cfps.createDraft",
+          {
+            ...draftInput,
+            deadline: "2020-01-01T09:00:00Z",
+            name: "Expired draft",
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(400);
     const draftResponse = await callTrpc(
       "cfps.createDraft",
       draftInput,
@@ -268,6 +281,19 @@ describe("build and open a conditional CFP", () => {
       owner.cookie,
     );
     expect(invalidCondition.status).toBe(400);
+    expect(
+      (
+        await callTrpc(
+          "cfps.updateDraft",
+          {
+            ...draftInput,
+            cfpId: draft.id,
+            deadline: "2020-01-01T09:00:00Z",
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(400);
     expect(
       (
         await callTrpc(
@@ -431,6 +457,26 @@ describe("build and open a conditional CFP", () => {
       ).body,
       cfpSchema,
     );
+    await testEnvironment.DB.prepare(
+      "UPDATE cfps SET deadline = ? WHERE id = ?",
+    )
+      .bind("2020-01-01T09:00:00Z", secondDraft.id)
+      .run();
+    expect(
+      (
+        await callTrpc(
+          "cfps.updateDraft",
+          {
+            ...secondDraft,
+            cfpId: secondDraft.id,
+            deadline: "2020-01-01T09:00:00Z",
+            slug,
+            name: "Renamed expired draft",
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(200);
     const setup = getResult(
       (await callTrpc("cfps.getSetup", { slug }, owner.cookie, "query")).body,
       z.object({ draft: cfpSchema.nullable(), open: cfpSchema.nullable() }),
