@@ -554,12 +554,6 @@ describe("build and publish an agenda", () => {
     );
     expect(unchangedResponse.status).toBe(304);
 
-    const compressedResponse = await workerFetch(
-      `/api/v1/events/${slug}/schedule`,
-      { headers: { "Accept-Encoding": "gzip" } },
-    );
-    expect(compressedResponse.headers.get("content-encoding")).toBe("gzip");
-
     const openApiResponse = await workerFetch("/api/v1/openapi.json");
     expect(openApiResponse.status).toBe(200);
     const openApi = await openApiResponse.json<{
@@ -571,6 +565,36 @@ describe("build and publish an agenda", () => {
       "/api/v1/events/{eventSlug}/schedule",
       "/api/v1/events/{eventSlug}/schedule.ics",
     ]);
+
+    for (const path of [
+      `/api/v1/events/${slug}/schedule`,
+      `/api/v1/events/${slug}/schedule.ics`,
+      "/api/v1/openapi.json",
+    ]) {
+      const compressedResponse = await workerFetch(path, {
+        headers: { "Accept-Encoding": "gzip" },
+      });
+      expect(compressedResponse.headers.get("content-encoding")).toBe("gzip");
+      if (path.endsWith(".ics")) {
+        const calendar = await compressedResponse.text();
+        expect(calendar).toMatch(/^BEGIN:VCALENDAR\r\n/);
+        expect(calendar).toMatch(/END:VCALENDAR\r\n$/);
+      } else {
+        expect(await compressedResponse.json()).toBeTypeOf("object");
+      }
+
+      const uncompressedResponse = await workerFetch(path, {
+        headers: { "Accept-Encoding": "identity" },
+      });
+      expect(uncompressedResponse.headers.get("content-encoding")).toBeNull();
+      if (path.endsWith(".ics")) {
+        expect(await uncompressedResponse.text()).toMatch(
+          /^BEGIN:VCALENDAR\r\n/,
+        );
+      } else {
+        expect(await uncompressedResponse.json()).toBeTypeOf("object");
+      }
+    }
 
     await expectOk(
       "events.create",
