@@ -151,6 +151,20 @@ test("refreshes the organizer average after saving a review", async ({
     reviewNavigation.getByRole("link", { name: "My reviews" }),
   ).toBeVisible();
   await expect(page.getByText("Reviewing has not opened.")).toBeVisible();
+  await reviewNavigation.getByRole("link", { name: "My reviews" }).click();
+  const draftReviewCard = page
+    .locator(".reviewer-card")
+    .filter({ hasText: "A proposal to review" });
+  await expect(
+    draftReviewCard.getByText(
+      "Score and comment controls are unavailable until an organizer opens this review round.",
+    ),
+  ).toBeVisible();
+  await expect(draftReviewCard.getByLabel("Score")).toBeDisabled();
+  await expect(
+    draftReviewCard.getByLabel("Private reviewer comment"),
+  ).toBeDisabled();
+  await reviewNavigation.getByRole("link", { name: "Overview" }).click();
   await page.getByRole("button", { name: "Open reviewing" }).click();
   await expect(page.getByRole("status")).toHaveText("Reviewing opened");
   const overviewProposal = page
@@ -178,8 +192,14 @@ test("refreshes the organizer average after saving a review", async ({
   await reviewCard
     .getByLabel("Private reviewer comment")
     .fill("Exact browser review comment.");
+  await page.route(/\/api\/trpc\/reviews\.save(?:\?|$)/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await route.continue();
+  });
   await reviewCard.getByRole("button", { name: "Save review" }).click();
+  await expect(reviewCard.getByRole("status")).toHaveText("Saving review…");
   await expect(reviewCard.getByRole("status")).toHaveText("Review saved");
+  await page.unroute(/\/api\/trpc\/reviews\.save(?:\?|$)/);
   const lowerScoredCard = page
     .locator(".reviewer-card")
     .filter({ hasText: "A lower scored proposal" });
@@ -221,7 +241,9 @@ test("refreshes the organizer average after saving a review", async ({
     .getByLabel("Private reviewer comment")
     .fill("Keep this comment after failure.");
   await reviewCard.getByRole("button", { name: "Update review" }).click();
-  await expect(reviewCard.getByRole("alert")).toBeVisible();
+  await expect(reviewCard.getByRole("alert")).toHaveText(
+    "Review could not be saved. Your score and comment are still here. Try again.",
+  );
   await expect(reviewCard.getByLabel("Score")).toHaveValue("4");
   await expect(reviewCard.getByLabel("Private reviewer comment")).toHaveValue(
     "Keep this comment after failure.",
@@ -235,6 +257,16 @@ test("refreshes the organizer average after saving a review", async ({
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Close reviewing" }).click();
   await expect(page.getByText("Reviewing is closed.")).toBeVisible();
+  await reviewNavigation.getByRole("link", { name: "My reviews" }).click();
+  await expect(
+    reviewCard.getByText(
+      "Score and comment controls are unavailable because this review round is closed.",
+    ),
+  ).toBeVisible();
+  await expect(reviewCard.getByLabel("Score")).toBeDisabled();
+  await expect(
+    reviewCard.getByLabel("Private reviewer comment"),
+  ).toBeDisabled();
 
   const pureReviewerEmail = `browser-pure-reviewer-${suffix}@example.com`;
   const pureOrganizerEmail = `browser-pure-organizer-${suffix}@example.com`;
