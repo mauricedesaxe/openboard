@@ -3,6 +3,7 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./test/e2e",
   testMatch: "**/*.e2e.ts",
+  testIgnore: "**/*.preview.e2e.ts",
   workers: 1,
   use: { baseURL: "http://localhost:5173", trace: "retain-on-failure" },
   webServer: {
