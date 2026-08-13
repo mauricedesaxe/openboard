@@ -48,17 +48,6 @@ test("refreshes the organizer average after saving a review", async ({
     formats: cfp.formats,
     customFields: cfp.customFields,
   });
-  await mutate(page.request, "eventTeam.invite", {
-    slug,
-    email: ownerEmail,
-    role: "reviewer",
-  });
-  const secretResponse = await page.request.get(
-    `/api/dev/invitation-secret?email=${encodeURIComponent(ownerEmail)}`,
-  );
-  const { secret } = (await secretResponse.json()) as { secret: string };
-  await mutate(page.request, "invitations.accept", { secret });
-
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.goto("/sign-in");
   await signIn(page, submitterEmail, "Open my board");

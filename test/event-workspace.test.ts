@@ -205,13 +205,6 @@ describe("event workspace", () => {
     await createEvent(owner.cookie, "workspace-decision-event");
     const event = await eventId("workspace-decision-event");
     const now = Date.now();
-    await testEnvironment.DB.prepare(
-      `INSERT INTO event_roles
-       (id, event_id, user_id, role, granted_by_user_id, created_at)
-       VALUES (?, ?, ?, 'reviewer', ?, ?)`,
-    )
-      .bind(crypto.randomUUID(), event, owner.userId, owner.userId, now)
-      .run();
     await insertReviewRound({
       eventId: event,
       ownerUserId: owner.userId,
