@@ -58,6 +58,7 @@ import {
 } from "../shared/submissions";
 
 import {
+  getAgendaPublicationStatus,
   getPublishedAgenda,
   getWorkingAgenda,
   moveAgendaItem,
@@ -284,6 +285,17 @@ export const appRouter = trpc.router({
         );
         if (!agenda) throwEventNotFound();
         return agenda;
+      }),
+    publicationStatus: authenticatedProcedure
+      .input(slugInput)
+      .query(async ({ ctx, input }) => {
+        const publication = await getAgendaPublicationStatus(
+          ctx.database,
+          ctx.userId,
+          input.slug,
+        );
+        if (publication === undefined) throwEventNotFound();
+        return publication;
       }),
     placeProgram: authenticatedProcedure
       .input(placeProgramItemSchema)

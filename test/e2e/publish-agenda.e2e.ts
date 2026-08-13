@@ -342,32 +342,73 @@ test("publishes a working placement to every public agenda view", async ({
   expect(calendarResponse.ok()).toBe(true);
 
   await page.evaluate(() => {
+    Object.assign(window, { copiedUrls: [] });
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
-      value: { writeText: () => Promise.resolve() },
+      value: {
+        writeText: (url: string) => {
+          (
+            window as unknown as Window & { copiedUrls: string[] }
+          ).copiedUrls.push(url);
+          return Promise.resolve();
+        },
+      },
     });
   });
-  await share
-    .locator(".agenda-share-output", { hasText: "Public agenda" })
-    .getByRole("button", { name: "Copy" })
-    .click();
-  await expect(share.getByText("Copied")).toBeVisible();
+  for (const { label, url } of [
+    { label: "Public agenda", url: publicAgendaUrl },
+    { label: "Schedule JSON", url: scheduleJsonUrl },
+    { label: "iCalendar feed", url: calendarUrl },
+  ]) {
+    await share.getByRole("button", { name: `Copy ${label} URL` }).click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as Window & { copiedUrls: string[] }).copiedUrls,
+        ),
+      )
+      .toContain(url);
+  }
+  expect(
+    await page.evaluate(
+      () => (window as unknown as Window & { copiedUrls: string[] }).copiedUrls,
+    ),
+  ).toEqual([publicAgendaUrl, scheduleJsonUrl, calendarUrl]);
   await page.evaluate(() => {
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText: () => Promise.reject(new Error("denied")) },
     });
   });
-  await share
-    .locator(".agenda-share-output", { hasText: "Schedule JSON" })
-    .getByRole("button", { name: "Copy" })
-    .click();
+  await share.getByRole("button", { name: "Copy Schedule JSON URL" }).click();
   await expect(
     share.getByText("Copy failed. Use the link directly."),
   ).toBeVisible();
   await expect(
     share.getByRole("link", { name: scheduleJsonUrl, exact: true }),
   ).toHaveAttribute("href", scheduleJsonUrl);
+
+  const publicationStatusRequest =
+    /\/api\/trpc\/[^?]*agendas\.publicationStatus/;
+  await page.route(publicationStatusRequest, async (route) => {
+    await route.abort("failed");
+  });
+  await page.reload();
+  const unavailableShare = page.getByRole("region", { name: "Share" });
+  await expect(
+    unavailableShare.getByText("Share is unavailable. Try again."),
+  ).toBeVisible();
+  await expect(
+    unavailableShare.getByRole("button", { name: "Retry Share" }),
+  ).toBeVisible();
+  await page.unroute(publicationStatusRequest);
+  await unavailableShare.getByRole("button", { name: "Retry Share" }).click();
+  await expect(
+    page
+      .getByRole("region", { name: "Share" })
+      .getByText("Published revision 1"),
+  ).toBeVisible();
 
   await page.getByRole("link", { name: "View public agenda" }).click();
   await expect(
