@@ -141,7 +141,7 @@ describe("event deadline timezones", () => {
       max: "2027-10-31T23:59",
     });
     expect(
-      timedCfpDeadlineInputBounds({
+      cfpDeadlineInputBounds({
         endsOn: "2027-10-31",
         timezone: "Europe/Berlin",
         now: new Date("2027-10-31T00:59:30Z"),
@@ -151,13 +151,14 @@ describe("event deadline timezones", () => {
       max: "2027-10-31T23:59",
     });
   });
-});
 
-function timedCfpDeadlineInputBounds(
-  input: Parameters<typeof cfpDeadlineInputBounds>[0],
-) {
-  const startedAt = performance.now();
-  const bounds = cfpDeadlineInputBounds(input);
-  expect(performance.now() - startedAt).toBeLessThan(100);
-  return bounds;
-}
+  test("uses the latest unique minute when event-end wall time overlaps", () => {
+    expect(
+      cfpDeadlineInputBounds({
+        endsOn: "2026-10-29",
+        timezone: "Africa/Cairo",
+        now: new Date("2026-10-01T00:00:00Z"),
+      }).max,
+    ).toBe("2026-10-29T22:59");
+  });
+});

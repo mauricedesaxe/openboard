@@ -40,7 +40,6 @@ import type { CommunicationPurpose } from "../shared/communications";
 import {
   cfpDeadlineInputBounds,
   defaultCfpDeadline,
-  eventLocalDateTimeToIso,
   formatEventDateRange,
   instantFallsAfterLocalDate,
   instantFallsBeforeLocalDate,
@@ -5198,11 +5197,16 @@ function CfpBuilder({
         }
       : emptyCfpDefinition(startsOn, endsOn, timezone),
   );
+  const [deadlineLocalDateTime, setDeadlineLocalDateTime] = useState(() =>
+    isoToEventLocalDateTime({
+      instant: cfp?.deadline ?? definition.deadline,
+      timezone,
+    }),
+  );
   const [validationError, setValidationError] = useState<{
     message: string;
     path: (string | number)[];
   }>();
-  const [deadlineChanged, setDeadlineChanged] = useState(false);
   const refresh = async () => {
     await queryClient.invalidateQueries(
       trpc.cfps.getSetup.queryFilter({ slug }),
@@ -5241,16 +5245,41 @@ function CfpBuilder({
     },
   ]);
   const formId = cfp?.id ?? "new";
-  const deadlineBounds = cfpDeadlineInputBounds({ endsOn, timezone });
+  const [deadlineBounds] = useState(() =>
+    cfpDeadlineInputBounds({ endsOn, timezone }),
+  );
   const storedDeadline = cfp
     ? isoToEventLocalDateTime({ instant: cfp.deadline, timezone })
     : undefined;
   const deadlineMin =
-    !deadlineChanged && storedDeadline && storedDeadline < deadlineBounds.min
+    deadlineLocalDateTime === storedDeadline &&
+    storedDeadline < deadlineBounds.min
       ? storedDeadline
       : deadlineBounds.min;
 
-  function parsedDefinition(): CfpDefinitionInput | undefined {
+  function parsedDefinition(input: {
+    allowExpiredStoredDeadline: boolean;
+  }): CfpDefinitionInput | undefined {
+    const currentBounds = cfpDeadlineInputBounds({ endsOn, timezone });
+    const resolution = resolveEventLocalDateTime({
+      localDateTime: deadlineLocalDateTime,
+      timezone,
+    });
+    const deadline =
+      resolution.status === "resolved" ? resolution.iso : undefined;
+    const deadlineError = deadlineInputError({
+      deadline,
+      localDateTime: deadlineLocalDateTime,
+      max: currentBounds.max,
+      min: currentBounds.min,
+      allowExpired:
+        input.allowExpiredStoredDeadline &&
+        deadlineLocalDateTime === storedDeadline,
+    });
+    if (deadlineError) {
+      setValidationError(deadlineError);
+      return undefined;
+    }
     const parsed = cfpDefinitionInputSchema.safeParse(definition);
     if (!parsed.success) {
       setValidationError(cfpValidationError(parsed.error.issues[0]));
@@ -5275,14 +5304,16 @@ function CfpBuilder({
 
   function save(event: FormEvent) {
     event.preventDefault();
-    const parsed = parsedDefinition();
+    const parsed = parsedDefinition({
+      allowExpiredStoredDeadline: Boolean(cfp),
+    });
     if (!parsed) return;
     if (cfp) update.mutate({ slug, cfpId: cfp.id, ...parsed });
     else create.mutate({ slug, ...parsed });
   }
 
   function saveAndOpen() {
-    const parsed = parsedDefinition();
+    const parsed = parsedDefinition({ allowExpiredStoredDeadline: false });
     if (!parsed) return;
     if (!cfp) {
       setValidationError({
@@ -5365,17 +5396,18 @@ function CfpBuilder({
                 max={deadlineBounds.max}
                 min={deadlineMin}
                 type="datetime-local"
-                value={isoToEventLocalDateTime({
-                  instant: definition.deadline,
-                  timezone,
-                })}
+                value={deadlineLocalDateTime}
                 onChange={(event) => {
                   const localDateTime = event.target.value;
-                  setDeadlineChanged(true);
-                  const deadline = eventLocalDateTimeToIso({
+                  setDeadlineLocalDateTime(localDateTime);
+                  const resolution = resolveEventLocalDateTime({
                     localDateTime,
                     timezone,
                   });
+                  const deadline =
+                    resolution.status === "resolved"
+                      ? resolution.iso
+                      : undefined;
                   setDefinition((current) => ({
                     ...current,
                     deadline: deadline ?? "",
@@ -5386,6 +5418,7 @@ function CfpBuilder({
                       localDateTime,
                       max: deadlineBounds.max,
                       min: deadlineBounds.min,
+                      allowExpired: localDateTime === storedDeadline,
                     }),
                   );
                 }}
@@ -5396,6 +5429,8 @@ function CfpBuilder({
                       localDateTime: event.currentTarget.value,
                       max: deadlineBounds.max,
                       min: deadlineBounds.min,
+                      allowExpired:
+                        event.currentTarget.value === storedDeadline,
                     }),
                   )
                 }
@@ -6897,12 +6932,19 @@ function formatDeadline(value: string, timezone: string): string {
 }
 
 function deadlineInputError(input: {
+  allowExpired: boolean;
   deadline: string | undefined;
   localDateTime: string;
   max: string;
   min: string;
 }): { message: string; path: (string | number)[] } | undefined {
-  if (input.localDateTime < input.min) {
+  if (!input.localDateTime) {
+    return {
+      message: "Choose a deadline.",
+      path: ["deadline"],
+    };
+  }
+  if (!input.allowExpired && input.localDateTime < input.min) {
     return {
       message: "Choose a deadline in the future.",
       path: ["deadline"],

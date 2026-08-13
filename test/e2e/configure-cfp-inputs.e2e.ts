@@ -108,6 +108,10 @@ test("bounds and explains the CFP deadline in event time", async ({ page }) => {
     page.getByText("Choose a deadline on or before the event end date."),
   ).toBeVisible();
 
+  await deadline.fill("");
+  await page.getByRole("button", { name: "Create draft" }).click();
+  await expect(page.getByText("Choose a deadline.")).toBeVisible();
+
   await deadline.fill("2028-07-01T09:00");
   await expect(
     page.getByText("The deadline is before the event starts."),

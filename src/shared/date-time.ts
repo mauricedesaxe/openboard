@@ -130,7 +130,7 @@ export function cfpDeadlineInputBounds(input: {
     Math.floor(now.getTime() / millisecondsPerMinute) * millisecondsPerMinute +
       millisecondsPerMinute,
   );
-  const localDateTimes = new Map<string, number>();
+  const localDateTimeOccurrenceCounts = new Map<string, number>();
   for (
     let offsetMinutes = -maximumTimezoneOverlapMinutes;
     offsetMinutes <= maximumTimezoneOverlapMinutes * 2;
@@ -143,34 +143,71 @@ export function cfpDeadlineInputBounds(input: {
       instant: instant.toISOString(),
       timezone: input.timezone,
     });
-    localDateTimes.set(
+    localDateTimeOccurrenceCounts.set(
       localDateTime,
-      (localDateTimes.get(localDateTime) ?? 0) + 1,
+      (localDateTimeOccurrenceCounts.get(localDateTime) ?? 0) + 1,
     );
   }
 
   let min = "";
   for (
-    let attempt = 0;
-    attempt <= maximumTimezoneOverlapMinutes;
-    attempt += 1
+    let offsetMinutes = 0;
+    offsetMinutes <= maximumTimezoneOverlapMinutes;
+    offsetMinutes += 1
   ) {
     const candidate = new Date(
-      nextMinute.getTime() + attempt * millisecondsPerMinute,
+      nextMinute.getTime() + offsetMinutes * millisecondsPerMinute,
     );
     const localDateTime = isoToEventLocalDateTime({
       instant: candidate.toISOString(),
       timezone: input.timezone,
     });
-    if (localDateTimes.get(localDateTime) === 1) {
+    if (localDateTimeOccurrenceCounts.get(localDateTime) === 1) {
       min = localDateTime;
       break;
     }
   }
   return {
     min,
-    max: `${input.endsOn}T23:59`,
+    max: latestUniqueMinuteOnLocalDate(input.endsOn, input.timezone),
   };
+}
+
+function latestUniqueMinuteOnLocalDate(
+  localDate: string,
+  timezone: string,
+): string {
+  const target = `${localDate}T23:59`;
+  const approximateEnd = new Date(`${target}:00Z`).getTime();
+  const localDateTimeOccurrenceCounts = new Map<string, number>();
+  for (
+    let offsetMinutes = -24 * 60;
+    offsetMinutes <= 24 * 60;
+    offsetMinutes += 1
+  ) {
+    const instant = new Date(
+      approximateEnd + offsetMinutes * millisecondsPerMinute,
+    );
+    const localDateTime = isoToEventLocalDateTime({
+      instant: instant.toISOString(),
+      timezone,
+    });
+    if (!localDateTime.startsWith(localDate)) continue;
+    localDateTimeOccurrenceCounts.set(
+      localDateTime,
+      (localDateTimeOccurrenceCounts.get(localDateTime) ?? 0) + 1,
+    );
+  }
+  return [...localDateTimeOccurrenceCounts.entries()]
+    .filter(
+      ([localDateTime, occurrences]) =>
+        localDateTime <= target && occurrences === 1,
+    )
+    .reduce(
+      (latest, [localDateTime]) =>
+        localDateTime > latest ? localDateTime : latest,
+      "",
+    );
 }
 
 export function formatEventDateRange(startsOn: string, endsOn: string): string {
