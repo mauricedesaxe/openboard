@@ -195,7 +195,7 @@ jobs:
             INSERT OR IGNORE INTO events (id, owner_user_id, name, slug, starts_on, ends_on, timezone, revision, created_at, updated_at)
               VALUES ('preview-event', 'preview-user', 'Preview conference', 'preview-schedule', '2028-08-13', '2028-08-13', 'UTC', 1, 0, 0);
             INSERT OR IGNORE INTO agendas (id, event_id, created_at, updated_at, revision)
-              VALUES ('preview-agenda', 'preview-event', 0, 0, 1);
+              VALUES ('preview-agenda', 'preview-event', 0, 0, 0);
             INSERT OR IGNORE INTO agenda_items (id, agenda_id, event_id, kind, service_scope, service_title, starts_at_local, ends_at_local, placed, revision, created_at, updated_at)
               VALUES ('preview-item', 'preview-agenda', 'preview-event', 'service', 'event', 'Preview schedule check', '2028-08-13T09:00', '2028-08-13T10:00', 1, 1, 0, 0);
             INSERT OR IGNORE INTO agenda_publications (id, agenda_id, event_id, revision, working_revision, event_name, timezone, starts_on, ends_on, published_by_user_id, created_at, finalized, requires_finalization)
