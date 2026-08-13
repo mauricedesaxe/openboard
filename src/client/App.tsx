@@ -5488,6 +5488,16 @@ function CfpBuilder({
     storedDeadline < deadlineBounds.min
       ? storedDeadline
       : deadlineBounds.min;
+  const displayStatus =
+    cfp?.status === "open" && new Date(cfp.deadline) <= new Date()
+      ? "closed"
+      : (cfp?.status ?? "draft");
+  const formLabel =
+    displayStatus === "draft"
+      ? "Draft configuration"
+      : displayStatus === "open"
+        ? "Public proposal form"
+        : "Closed proposal form";
 
   function parsedDefinition(input: {
     allowExpiredStoredDeadline: boolean;
@@ -5599,12 +5609,12 @@ function CfpBuilder({
     <section className="cfp-builder">
       <div className="builder-title">
         <div>
-          <div className="eyebrow">Public form</div>
+          <div className="eyebrow">{formLabel}</div>
           <h2>{cfp ? cfp.name : "Draft your CFP"}</h2>
         </div>
         {cfp && (
-          <span className={`status-chip status-${cfp.status}`}>
-            {cfp.status}
+          <span className={`status-chip status-${displayStatus}`}>
+            {displayStatus}
           </span>
         )}
       </div>
@@ -5798,10 +5808,12 @@ function CfpBuilder({
               onClick={saveAndOpen}
               type="button"
             >
-              {open.isPending ? "Opening…" : "Open CFP"}
+              {open.isPending
+                ? "Publishing…"
+                : "Publish CFP and open submissions"}
             </button>
           )}
-          {cfp?.status === "open" && (
+          {displayStatus === "open" && (
             <Link className="arrow-link" to={`/events/${slug}/cfp`}>
               View public form →
             </Link>
@@ -6011,6 +6023,9 @@ function CustomFieldEditor({
     </fieldset>
   );
 }
+
+const ABSTRACT_HINT =
+  "Summarize what you will cover and what attendees will learn.";
 
 type ProposalEditContent = Omit<ProposalContent, "proposedSpeakers">;
 
@@ -6255,7 +6270,11 @@ function SubmissionPage() {
                   </select>
                 </Field>
               </div>
-              <Field label="Abstract" name="submission-abstract">
+              <Field
+                hint={ABSTRACT_HINT}
+                label="Abstract"
+                name="submission-abstract"
+              >
                 <textarea
                   id="submission-abstract"
                   required
@@ -7013,6 +7032,7 @@ function PublicCfpPage() {
                   />
                 </Field>
                 <Field
+                  hint={ABSTRACT_HINT}
                   label="Abstract"
                   name="public-abstract"
                   required={cfp.data.coreFields.abstract.required}

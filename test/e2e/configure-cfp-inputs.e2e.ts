@@ -26,6 +26,9 @@ test("refreshes the public CFP after its definition changes", async ({
   await page.getByRole("button", { name: "Add" }).click();
   await expect(page.getByText("Room created", { exact: true })).toBeVisible();
   await page.goto(`/events/${slug}/cfp/manage`);
+  await expect(
+    page.getByText("Draft configuration", { exact: true }),
+  ).toBeVisible();
   const cfpNavigation = page
     .getByRole("navigation", {
       name: "Browser CFP Input Conference navigation",
@@ -65,8 +68,16 @@ test("refreshes the public CFP after its definition changes", async ({
     "First, Second choice",
   );
 
-  await page.getByRole("button", { name: "Open CFP" }).click();
+  await expect(
+    page.getByRole("button", { name: "Publish CFP and open submissions" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Publish CFP and open submissions" })
+    .click();
   await expect(cfpNavigation.getByLabel(/needs attention/)).toHaveCount(0);
+  await expect(
+    page.getByText("Public proposal form", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("link", { name: "View public form →" }).click();
   await expect(
     page.getByRole("heading", { name: "Browser CFP", exact: true }),
@@ -85,6 +96,47 @@ test("refreshes the public CFP after its definition changes", async ({
   await expect(
     page.getByRole("heading", { name: "Updated Browser CFP" }),
   ).toBeVisible();
+});
+
+test("shows an open CFP as closed after its deadline", async ({ page }) => {
+  const suffix = `${Date.now()}`;
+  const slug = `browser-closed-cfp-${suffix}`;
+  await page.goto("/");
+  await signIn(page, `browser-closed-cfp-owner-${suffix}@example.com`);
+  await createEvent(page, slug);
+  await mutate(page.request, "tracks.create", {
+    slug,
+    name: "Web systems",
+  });
+  const cfp = await mutate(page.request, "cfps.createDraft", {
+    slug,
+    name: "Closed Browser CFP",
+    deadline: "2028-08-01T09:00:00Z",
+    formats: ["Talk"],
+    customFields: [],
+  });
+  await mutate(page.request, "cfps.open", {
+    slug,
+    cfpId: cfp.id,
+    expectedDeadline: cfp.deadline,
+    name: cfp.name,
+    deadline: cfp.deadline,
+    formats: cfp.formats,
+    customFields: cfp.customFields,
+  });
+
+  await page.clock.install({ time: new Date("2028-08-02T09:00:00Z") });
+  await page.goto(`/events/${slug}/cfp/manage`);
+
+  const closedCfp = page.locator(".cfp-builder").filter({
+    has: page.locator(".status-closed"),
+  });
+  await expect(
+    closedCfp.getByText("Closed proposal form", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    closedCfp.getByRole("link", { name: "View public form →" }),
+  ).toHaveCount(0);
 });
 
 test("bounds and explains the CFP deadline in event time", async ({ page }) => {
@@ -165,7 +217,9 @@ test("refreshes the public CFP after its tracks change", async ({ page }) => {
   await page.goto(`/events/${slug}/cfp/manage`);
   await page.getByRole("textbox", { name: "CFP name" }).fill("Browser CFP");
   await page.getByRole("button", { name: "Create draft" }).click();
-  await page.getByRole("button", { name: "Open CFP" }).click();
+  await page
+    .getByRole("button", { name: "Publish CFP and open submissions" })
+    .click();
   await page.getByRole("link", { name: "View public form →" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByLabel("Track")).toContainText("Web systems");
