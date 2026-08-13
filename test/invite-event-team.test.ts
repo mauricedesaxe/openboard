@@ -317,13 +317,39 @@ describe("invite the event team", () => {
       slug: "access-event",
     });
 
-    const ownerList = await callTrpc(
-      "eventTeam.list",
-      { slug: "access-event" },
-      owner.cookie,
-      "query",
-    );
+    const ownerList = await callTrpc<{
+      roles: Array<{ id: string; userId: string; role: string }>;
+    }>("eventTeam.list", { slug: "access-event" }, owner.cookie, "query");
     expect(ownerList.status).toBe(200);
+
+    const ownerRoles = getResult(ownerList.body).roles.filter(
+      (role) => role.userId === owner.userId,
+    );
+    expect(ownerRoles.map((role) => role.role).sort()).toEqual([
+      "organizer",
+      "reviewer",
+    ]);
+    for (const ownerRole of ownerRoles) {
+      const ownerRoleRevocation = await callTrpc(
+        "eventTeam.revokeRole",
+        { slug: "access-event", roleId: ownerRole.id },
+        owner.cookie,
+      );
+      expect(ownerRoleRevocation.status).toBe(404);
+    }
+    const activeOwnerRoles = await testEnvironment.DB.prepare(
+      `SELECT role FROM event_roles
+       WHERE event_id = (SELECT id FROM events WHERE slug = ?)
+         AND user_id = ?
+         AND revoked_at IS NULL
+       ORDER BY role`,
+    )
+      .bind("access-event", owner.userId)
+      .all<{ role: string }>();
+    expect(activeOwnerRoles.results.map(({ role }) => role)).toEqual([
+      "organizer",
+      "reviewer",
+    ]);
 
     for (const actor of [organizer, reviewer, unrelated]) {
       const forbidden = await callTrpc(

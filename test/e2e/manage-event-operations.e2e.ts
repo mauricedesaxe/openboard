@@ -98,7 +98,16 @@ test("moves event operations through focused routes", async ({
       name: "Invite the people who move the program.",
     }),
   ).toBeVisible();
-  await expect(page.getByText("Event owner")).toBeVisible();
+  const ownerRow = page.locator(".team-row", { hasText: "Event owner" });
+  await expect(ownerRow).toBeVisible();
+  await expect(ownerRow.getByRole("button", { name: "Revoke" })).toHaveCount(0);
+  const ownerRoleRows = page.locator(".team-row", {
+    hasText: `browser-operations-owner-${suffix}@example.com`,
+  });
+  await expect(ownerRoleRows).toHaveCount(3);
+  await expect(
+    ownerRoleRows.getByRole("button", { name: "Revoke" }),
+  ).toHaveCount(0);
   await page
     .getByLabel("Email address")
     .fill(`team-member-${suffix}@example.com`);
