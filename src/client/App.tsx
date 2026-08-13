@@ -4066,25 +4066,27 @@ function EventTeamPanel({ slug }: { slug: string }) {
                     <strong>{member.email}</strong>
                     <span>{member.role}</span>
                   </div>
-                  <button
-                    className="text-button"
-                    disabled={revokeStatus.isPendingFor(
-                      revoke,
-                      "roleId",
-                      member.id,
-                    )}
-                    onClick={() =>
-                      revoke.mutate({
-                        slug,
-                        roleId: member.id,
-                      })
-                    }
-                    type="button"
-                  >
-                    {revokeStatus.isPendingFor(revoke, "roleId", member.id)
-                      ? "Revoking…"
-                      : "Revoke"}
-                  </button>
+                  {member.userId !== team.data.owner?.id && (
+                    <button
+                      className="text-button"
+                      disabled={revokeStatus.isPendingFor(
+                        revoke,
+                        "roleId",
+                        member.id,
+                      )}
+                      onClick={() =>
+                        revoke.mutate({
+                          slug,
+                          roleId: member.id,
+                        })
+                      }
+                      type="button"
+                    >
+                      {revokeStatus.isPendingFor(revoke, "roleId", member.id)
+                        ? "Revoking…"
+                        : "Revoke"}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

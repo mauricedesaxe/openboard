@@ -465,6 +465,7 @@ export async function revokeEventRole(
       eventId: eventRoles.eventId,
       userId: eventRoles.userId,
       role: eventRoles.role,
+      ownerUserId: events.ownerUserId,
     })
     .from(eventRoles)
     .innerJoin(events, eq(events.id, eventRoles.eventId))
@@ -478,6 +479,7 @@ export async function revokeEventRole(
     )
     .limit(1);
   if (!role) return false;
+  if (role.userId === role.ownerUserId) return false;
 
   const now = new Date();
   const revokeRole = database
