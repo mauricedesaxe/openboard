@@ -5410,6 +5410,8 @@ function CfpBuilder({
         id: string;
         status: "draft" | "open";
         structureLocked: boolean;
+        publicationStatus: "draft" | "open" | "closed";
+        publicationStatusRefreshMs?: number | null;
       })
     | null;
   endsOn: string;
@@ -5488,16 +5490,25 @@ function CfpBuilder({
     storedDeadline < deadlineBounds.min
       ? storedDeadline
       : deadlineBounds.min;
-  const displayStatus =
-    cfp?.status === "open" && new Date(cfp.deadline) <= new Date()
-      ? "closed"
-      : (cfp?.status ?? "draft");
+  const displayStatus = cfp?.publicationStatus ?? "draft";
   const formLabel =
     displayStatus === "draft"
       ? "Draft configuration"
       : displayStatus === "open"
         ? "Public proposal form"
         : "Closed proposal form";
+
+  useEffect(() => {
+    if (!cfp?.publicationStatusRefreshMs) return;
+    const timeout = window.setTimeout(
+      () =>
+        void queryClient.invalidateQueries(
+          trpc.cfps.getSetup.queryFilter({ slug }),
+        ),
+      Math.min(cfp.publicationStatusRefreshMs + 50, 2_147_483_647),
+    );
+    return () => window.clearTimeout(timeout);
+  }, [cfp?.publicationStatusRefreshMs, queryClient, slug, trpc]);
 
   function parsedDefinition(input: {
     allowExpiredStoredDeadline: boolean;
@@ -6970,7 +6981,14 @@ function PublicCfpPage() {
   if (cfp.isError)
     return (
       <main className="public-cfp">
-        <BoardStatus label="This CFP is not open" detail={cfp.error.message} />
+        <BoardStatus
+          label={
+            cfp.error.message === "This call for proposals is closed."
+              ? "This CFP is closed"
+              : "This CFP is not open"
+          }
+          detail={cfp.error.message}
+        />
       </main>
     );
 

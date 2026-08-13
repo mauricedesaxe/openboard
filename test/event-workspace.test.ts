@@ -22,7 +22,9 @@ const workspaceSchema = z.object({
       cfpDeadline: z.string().nullable(),
     })
     .nullable(),
-  statuses: z.array(z.object({ key: z.string(), href: z.string() })),
+  statuses: z.array(
+    z.object({ key: z.string(), href: z.string(), value: z.string() }),
+  ),
 });
 
 describe("event workspace", () => {
@@ -106,6 +108,38 @@ describe("event workspace", () => {
     const workspace = getResult(workspaceResponse.body, workspaceSchema);
     expect(workspace.reviewer).not.toBeNull();
     expect(workspace.statuses).toHaveLength(5);
+  });
+
+  test("reports an expired open CFP as closed", async () => {
+    const owner = await signIn("workspace-closed-cfp-owner@example.com");
+    await createEvent(owner.cookie, "workspace-closed-cfp-event");
+    const event = await eventId("workspace-closed-cfp-event");
+    const now = Date.now();
+    await testEnvironment.DB.prepare(
+      `INSERT INTO cfps
+       (id, event_id, name, deadline, status, formats_json, custom_fields_json,
+        created_at, updated_at)
+       VALUES (?, ?, 'Closed CFP', '2020-01-01T00:00:00Z', 'open', '["Talk"]',
+               '[]', ?, ?)`,
+    )
+      .bind(crypto.randomUUID(), event, now, now)
+      .run();
+
+    const workspace = getResult(
+      (
+        await callTrpc(
+          "events.workspace",
+          { slug: "workspace-closed-cfp-event" },
+          owner.cookie,
+          "query",
+        )
+      ).body,
+      workspaceSchema,
+    );
+
+    expect(workspace.statuses).toContainEqual(
+      expect.objectContaining({ key: "cfp", value: "Closed" }),
+    );
   });
 
   test("limits pure reviewers to their review state", async () => {

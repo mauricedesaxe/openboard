@@ -58,6 +58,9 @@ test("refreshes the public CFP after its definition changes", async ({
   await page.getByRole("button", { name: "Create draft" }).click();
   await expect(page.getByText("Draft created", { exact: true })).toBeVisible();
   await expect(
+    page.getByText("Draft configuration", { exact: true }),
+  ).toBeVisible();
+  await expect(
     cfpNavigation.getByLabel("1 item needs attention"),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Save form" })).toBeVisible();
@@ -108,10 +111,11 @@ test("shows an open CFP as closed after its deadline", async ({ page }) => {
     slug,
     name: "Web systems",
   });
+  const deadline = new Date(Date.now() + 5_000).toISOString();
   const cfp = await mutate(page.request, "cfps.createDraft", {
     slug,
     name: "Closed Browser CFP",
-    deadline: "2028-08-01T09:00:00Z",
+    deadline,
     formats: ["Talk"],
     customFields: [],
   });
@@ -125,18 +129,29 @@ test("shows an open CFP as closed after its deadline", async ({ page }) => {
     customFields: cfp.customFields,
   });
 
-  await page.clock.install({ time: new Date("2028-08-02T09:00:00Z") });
   await page.goto(`/events/${slug}/cfp/manage`);
 
-  const closedCfp = page.locator(".cfp-builder").filter({
-    has: page.locator(".status-closed"),
+  const openCfp = page.locator(".cfp-builder").filter({
+    has: page.getByRole("heading", { name: "Closed Browser CFP" }),
+  });
+  await expect(openCfp.locator(".status-open")).toBeVisible();
+  await expect(openCfp.locator(".status-closed")).toBeVisible({
+    timeout: 10_000,
   });
   await expect(
-    closedCfp.getByText("Closed proposal form", { exact: true }),
+    openCfp.getByText("Closed proposal form", { exact: true }),
   ).toBeVisible();
   await expect(
-    closedCfp.getByRole("link", { name: "View public form →" }),
+    openCfp.getByRole("link", { name: "View public form →" }),
   ).toHaveCount(0);
+
+  await page.goto(`/events/${slug}/cfp`);
+  await expect(
+    page.getByRole("heading", { name: "This CFP is closed" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("This call for proposals is closed."),
+  ).toBeVisible();
 });
 
 test("bounds and explains the CFP deadline in event time", async ({ page }) => {

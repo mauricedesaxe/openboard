@@ -330,7 +330,13 @@ function cfpStatus(cfp: OrganizerState["cfp"]) {
   return {
     key: "cfp",
     label: "CFP",
-    value: current ? (cfp?.open ? "Open" : "Draft") : "Not configured",
+    value: current
+      ? cfp?.open
+        ? cfp.open.publicationStatus === "closed"
+          ? "Closed"
+          : "Open"
+        : "Draft"
+      : "Not configured",
     detail: current?.deadline
       ? `Deadline ${current.deadline.slice(0, 10)}`
       : "No proposal form",
