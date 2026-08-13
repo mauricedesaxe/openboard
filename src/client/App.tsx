@@ -1169,7 +1169,7 @@ function EventSettingsPage() {
         />
       </div>
     );
-  return <EventSettingsForm event={event.data} />;
+  return <EventSettingsForm event={event.data} key={event.data.slug} />;
 }
 
 function EventSettingsForm({
@@ -1265,6 +1265,7 @@ function EventSettingsForm({
       <form className="form-board settings-form" onSubmit={submit}>
         <Field label="Event name" name="settings-name">
           <input
+            disabled={updateSettings.isPending}
             id="settings-name"
             onChange={(change) => update("name", change.target.value)}
             required
@@ -1274,6 +1275,7 @@ function EventSettingsForm({
         <div className="field-pair">
           <Field label="Starts" name="settings-startsOn">
             <input
+              disabled={updateSettings.isPending}
               id="settings-startsOn"
               onChange={(change) => update("startsOn", change.target.value)}
               required
@@ -1283,6 +1285,7 @@ function EventSettingsForm({
           </Field>
           <Field label="Ends" name="settings-endsOn">
             <input
+              disabled={updateSettings.isPending}
               id="settings-endsOn"
               min={input.startsOn}
               onChange={(change) => update("endsOn", change.target.value)}
@@ -1298,6 +1301,7 @@ function EventSettingsForm({
           name="settings-timezone"
         >
           <select
+            disabled={updateSettings.isPending}
             id="settings-timezone"
             onChange={(change) => update("timezone", change.target.value)}
             value={input.timezone}
