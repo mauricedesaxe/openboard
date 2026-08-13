@@ -806,6 +806,61 @@ a {
 .agenda-publication-summary strong {
   color: #a22d18;
 }
+.agenda-share {
+  margin-top: 16px;
+  border: 1px solid var(--ink);
+  background: rgba(255, 255, 255, 0.2);
+}
+.agenda-share-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--ink);
+}
+.agenda-share-heading h2 {
+  margin: 7px 0 0;
+  font:
+    600 30px/1 "Newsreader",
+    serif;
+}
+.agenda-share-heading p {
+  margin: 0;
+  color: rgba(27, 39, 36, 0.62);
+  font-size: 13px;
+}
+.agenda-share-outputs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.agenda-share-output {
+  min-width: 0;
+  padding: 18px 22px;
+  border-right: 1px solid var(--line);
+  display: grid;
+  gap: 9px;
+}
+.agenda-share-output:last-child {
+  border-right: 0;
+}
+.agenda-share-output strong,
+.agenda-share-output a,
+.agenda-share-action {
+  font: 11px "DM Mono";
+}
+.agenda-share-output a {
+  overflow-wrap: anywhere;
+}
+.agenda-share-action {
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.agenda-share-action span {
+  font-size: 11px;
+}
 .agenda-undo {
   position: sticky;
   z-index: 20;
@@ -1277,9 +1332,20 @@ a {
   }
   .agenda-calendar-header,
   .agenda-header-controls,
+  .agenda-share-heading,
   .public-agenda-controls {
     align-items: stretch;
     flex-direction: column;
+  }
+  .agenda-share-outputs {
+    grid-template-columns: 1fr;
+  }
+  .agenda-share-output {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .agenda-share-output:last-child {
+    border-bottom: 0;
   }
   .agenda-workspace,
   .agenda-workspace.has-inspector,

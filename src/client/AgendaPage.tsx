@@ -44,7 +44,13 @@ export function AgendaPage() {
   const queryClient = useQueryClient();
   const workingQuery = trpc.agendas.working.queryOptions({ slug });
   const workingFilter = trpc.agendas.working.queryFilter({ slug });
+  const publishedQuery = trpc.agendas.published.queryOptions(
+    { slug },
+    { retry: false, refetchOnWindowFocus: false },
+  );
+  const publishedFilter = trpc.agendas.published.queryFilter({ slug });
   const agenda = useQuery(workingQuery);
+  const publishedAgenda = useQuery(publishedQuery);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [track, setTrack] = useState("");
@@ -70,7 +76,10 @@ export function AgendaPage() {
   );
   const publish = useMutation(
     trpc.agendas.publish.mutationOptions({
-      onSuccess: () => void refresh(),
+      onSuccess: () => {
+        void refresh();
+        void queryClient.invalidateQueries(publishedFilter);
+      },
     }),
   );
   const pending =
@@ -543,6 +552,9 @@ export function AgendaPage() {
         <span>{data.unplacedProgramItems.length} unplaced</span>
         {conflicts > 0 && <span>Resolve conflicts before publication.</span>}
       </div>
+      {publishedAgenda.isSuccess && (
+        <AgendaShare slug={slug} revision={publishedAgenda.data.revision} />
+      )}
       {(publish.error || placeProgram.error || placeService.error) && (
         <MutationStatus
           error={
@@ -642,6 +654,85 @@ export function AgendaPage() {
         )}
       </div>
     </div>
+  );
+}
+
+type ShareOutput = "agenda" | "json" | "calendar";
+
+function AgendaShare({ slug, revision }: { slug: string; revision: number }) {
+  const [copyResult, setCopyResult] = useState<{
+    output: ShareOutput;
+    status: "success" | "error";
+  }>();
+  const origin = window.location.origin;
+  const outputs: Array<{ output: ShareOutput; label: string; url: string }> = [
+    {
+      output: "agenda",
+      label: "Public agenda",
+      url: `${origin}/events/${slug}/schedule`,
+    },
+    {
+      output: "json",
+      label: "Schedule JSON",
+      url: `${origin}/api/v1/events/${slug}/schedule`,
+    },
+    {
+      output: "calendar",
+      label: "iCalendar feed",
+      url: `${origin}/api/v1/events/${slug}/schedule.ics`,
+    },
+  ];
+
+  async function copy(output: ShareOutput, url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopyResult({ output, status: "success" });
+    } catch {
+      setCopyResult({ output, status: "error" });
+    }
+  }
+
+  return (
+    <section className="agenda-share" aria-labelledby="agenda-share-title">
+      <div className="agenda-share-heading">
+        <div>
+          <div className="eyebrow">Published revision {revision}</div>
+          <h2 id="agenda-share-title">Share</h2>
+        </div>
+        <p>Use or copy any published output.</p>
+      </div>
+      <div className="agenda-share-outputs">
+        {outputs.map(({ output, label, url }) => {
+          const result =
+            copyResult?.output === output ? copyResult.status : null;
+          return (
+            <div className="agenda-share-output" key={output}>
+              <strong>{label}</strong>
+              <a href={url}>{url}</a>
+              <div className="agenda-share-action">
+                <button
+                  className="text-button"
+                  onClick={() => void copy(output, url)}
+                  type="button"
+                >
+                  Copy
+                </button>
+                {result && (
+                  <span
+                    className={result === "error" ? "form-error" : undefined}
+                    role="status"
+                  >
+                    {result === "success"
+                      ? "Copied"
+                      : "Copy failed. Use the link directly."}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
