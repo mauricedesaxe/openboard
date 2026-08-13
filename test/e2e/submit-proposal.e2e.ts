@@ -21,6 +21,12 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   });
   await page.goto(`/events/${slug}/cfp`);
   await expect(page.getByRole("textbox", { name: "Title" })).toBeVisible();
+  await expect(
+    page.getByText(
+      "Summarize what you will cover and what attendees will learn.",
+      { exact: true },
+    ),
+  ).toBeVisible();
   trpcRequests.length = 0;
 
   await page.getByRole("textbox", { name: "Title" }).fill("A resumed proposal");
@@ -122,6 +128,12 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(
     "A resumed proposal",
   );
+  await expect(
+    page.getByText(
+      "Summarize what you will cover and what attendees will learn.",
+      { exact: true },
+    ),
+  ).toBeVisible();
   await page.getByRole("textbox", { name: "Title" }).fill("An edited proposal");
   await page.getByRole("button", { name: "Save proposal" }).click();
   await expect(page.getByText("Proposal saved")).toBeVisible();
