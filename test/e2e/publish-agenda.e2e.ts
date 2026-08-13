@@ -58,6 +58,7 @@ test("publishes a working placement to every public agenda view", async ({
   await mutate(page.request, "cfps.open", {
     slug,
     cfpId: cfp.id,
+    expectedDeadline: cfp.deadline,
     name: cfp.name,
     deadline: cfp.deadline,
     formats: cfp.formats,

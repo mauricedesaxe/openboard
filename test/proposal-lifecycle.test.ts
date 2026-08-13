@@ -44,6 +44,7 @@ describe("proposal lifecycle boundaries", () => {
       {
         slug: setup.slug,
         cfpId: setup.cfp.id,
+        expectedDeadline: setup.cfp.deadline,
         name: setup.cfp.name,
         deadline: "2020-01-01T00:00:00Z",
         formats: setup.cfp.formats,
@@ -132,6 +133,7 @@ async function createSubmittedProposal(
         {
           slug,
           cfpId: cfp.id,
+          expectedDeadline: cfp.deadline,
           name: cfp.name,
           deadline: cfp.deadline,
           formats: cfp.formats,

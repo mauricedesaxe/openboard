@@ -160,6 +160,7 @@ describe("submit a proposal through the local-first flow", () => {
       {
         slug,
         cfpId: draft.id,
+        expectedDeadline: draft.deadline,
         name: draft.name,
         deadline: draft.deadline,
         formats: draft.formats,
@@ -456,6 +457,7 @@ describe("submit a proposal through the local-first flow", () => {
           {
             slug,
             cfpId: draft.id,
+            expectedDeadline: draft.deadline,
             name: "Extended CFP",
             deadline: "2027-05-15T21:59:00Z",
             formats: draft.formats,
@@ -472,6 +474,7 @@ describe("submit a proposal through the local-first flow", () => {
           {
             slug,
             cfpId: draft.id,
+            expectedDeadline: draft.deadline,
             name: draft.name,
             deadline: draft.deadline,
             formats: ["Panel"],
@@ -663,6 +666,7 @@ describe("submit a proposal through the local-first flow", () => {
       {
         slug,
         cfpId: draft.id,
+        expectedDeadline: "2027-05-15T21:59:00Z",
         name: "Closed CFP",
         deadline: "2020-01-01T00:00:00Z",
         formats: draft.formats,

@@ -223,6 +223,7 @@ async function createAcceptedProgramItem(
   await mutate(page.request, "cfps.open", {
     slug,
     cfpId: cfp.id,
+    expectedDeadline: cfp.deadline,
     name: cfp.name,
     deadline: cfp.deadline,
     formats: cfp.formats,

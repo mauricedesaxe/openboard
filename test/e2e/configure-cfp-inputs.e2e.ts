@@ -244,6 +244,7 @@ test("locks track structure after the first submission", async ({ page }) => {
   await mutate(page.request, "cfps.open", {
     slug,
     cfpId: cfp.id,
+    expectedDeadline: cfp.deadline,
     name: cfp.name,
     deadline: cfp.deadline,
     formats: cfp.formats,

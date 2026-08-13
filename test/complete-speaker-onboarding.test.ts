@@ -695,6 +695,7 @@ async function createAcceptedProgram(input: {
     {
       slug: input.slug,
       cfpId: cfp.id,
+      expectedDeadline: cfp.deadline,
       name: cfp.name,
       deadline: cfp.deadline,
       formats: cfp.formats,
