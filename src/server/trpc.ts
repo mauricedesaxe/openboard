@@ -812,7 +812,13 @@ export const appRouter = trpc.router({
             message: "This call for proposals is not open.",
           });
         }
-        return result;
+        if (result.status === "closed") {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "This call for proposals is closed.",
+          });
+        }
+        return result.value;
       }),
   }),
   submissions: trpc.router({

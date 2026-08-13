@@ -39,7 +39,18 @@ export async function getCfpSetup(
   database: Database,
   userId: UserId,
   slug: string,
-): Promise<{ draft: Cfp | null; open: Cfp | null } | undefined> {
+): Promise<
+  | {
+      draft: (Cfp & { publicationStatus: "draft" }) | null;
+      open:
+        | (Cfp & {
+            publicationStatus: "open" | "closed";
+            publicationStatusRefreshMs: number | null;
+          })
+        | null;
+    }
+  | undefined
+> {
   const event = await findEventForOrganizer(database, userId, slug);
   if (!event) return undefined;
 
@@ -47,9 +58,20 @@ export async function getCfpSetup(
     .select()
     .from(cfps)
     .where(eq(cfps.eventId, event.id));
+  const draft = parseCfpStatus(rows, "draft");
+  const open = parseCfpStatus(rows, "open");
+  const now = Date.now();
+  const openDeadline = open ? Date.parse(open.deadline) : undefined;
   return {
-    draft: parseCfpStatus(rows, "draft"),
-    open: parseCfpStatus(rows, "open"),
+    draft: draft ? { ...draft, publicationStatus: "draft" } : null,
+    open: open
+      ? {
+          ...open,
+          publicationStatus: openDeadline! <= now ? "closed" : "open",
+          publicationStatusRefreshMs:
+            openDeadline! <= now ? null : openDeadline! - now,
+        }
+      : null,
   };
 }
 
@@ -422,7 +444,9 @@ export async function saveAndOpenCfp(
 export async function findPublicCfp(
   database: Database,
   slug: string,
-): Promise<CfpFormContract | undefined> {
+): Promise<
+  { status: "open"; value: CfpFormContract } | { status: "closed" } | undefined
+> {
   const [row] = await database
     .select({
       cfpId: cfps.id,
@@ -442,7 +466,7 @@ export async function findPublicCfp(
     .where(and(eq(events.slug, slug), eq(cfps.status, "open")))
     .limit(1);
   if (!row) return undefined;
-  if (new Date(row.deadline) <= new Date()) return undefined;
+  if (new Date(row.deadline) <= new Date()) return { status: "closed" };
 
   const activeTracks = await database
     .select({ id: tracks.id, name: tracks.name })
@@ -450,28 +474,31 @@ export async function findPublicCfp(
     .where(and(eq(tracks.eventId, row.eventId), isNull(tracks.archivedAt)))
     .orderBy(tracks.position);
 
-  return cfpFormContractSchema.parse({
-    event: {
-      name: row.eventName,
-      slug: row.eventSlug,
-      startsOn: row.startsOn,
-      endsOn: row.endsOn,
-      timezone: row.timezone,
-    },
-    cfpId: row.cfpId,
-    name: row.name,
-    deadline: row.deadline,
-    coreFields: {
-      title: { required: true },
-      abstract: { required: true },
-      format: { required: true },
-      track: { required: true },
-      proposedSpeakers: { required: true },
-    },
-    formats: JSON.parse(row.formatsJson) as unknown,
-    tracks: activeTracks,
-    customFields: JSON.parse(row.customFieldsJson) as unknown,
-  });
+  return {
+    status: "open",
+    value: cfpFormContractSchema.parse({
+      event: {
+        name: row.eventName,
+        slug: row.eventSlug,
+        startsOn: row.startsOn,
+        endsOn: row.endsOn,
+        timezone: row.timezone,
+      },
+      cfpId: row.cfpId,
+      name: row.name,
+      deadline: row.deadline,
+      coreFields: {
+        title: { required: true },
+        abstract: { required: true },
+        format: { required: true },
+        track: { required: true },
+        proposedSpeakers: { required: true },
+      },
+      formats: JSON.parse(row.formatsJson) as unknown,
+      tracks: activeTracks,
+      customFields: JSON.parse(row.customFieldsJson) as unknown,
+    }),
+  };
 }
 
 function parseCfp(row: typeof cfps.$inferSelect): Cfp {
