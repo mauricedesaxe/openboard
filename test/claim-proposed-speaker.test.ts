@@ -751,6 +751,32 @@ describe("claim a proposed-speaker invitation", () => {
       ).toBe(403);
     }
 
+    const headshotPrefix = `speaker-headshots/${recipient.userId}`;
+    expect(
+      (await testEnvironment.FILES.list({ prefix: headshotPrefix })).objects,
+    ).toHaveLength(0);
+    expect(
+      (
+        await callTrpc(
+          "speakerProfile.saveOwn",
+          {
+            displayName: "Stale profile",
+            expectedRevision: 1,
+            headshot: {
+              fileName: "stale.png",
+              contentType: "image/png",
+              contentBase64:
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            },
+          },
+          recipient.cookie,
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (await testEnvironment.FILES.list({ prefix: headshotPrefix })).objects,
+    ).toHaveLength(0);
+
     const created = getResult(
       (
         await callTrpc(

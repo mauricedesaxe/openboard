@@ -1169,12 +1169,7 @@ function EventSettingsPage() {
         />
       </div>
     );
-  return (
-    <EventSettingsForm
-      event={event.data}
-      key={`${event.data.slug}:${event.data.revision}`}
-    />
-  );
+  return <EventSettingsForm event={event.data} />;
 }
 
 function EventSettingsForm({
@@ -1203,7 +1198,15 @@ function EventSettingsForm({
   const [validationError, setValidationError] = useState<string>();
   const updateSettings = useMutation(
     trpc.events.updateSettings.mutationOptions({
-      onSuccess: async () => {
+      onSuccess: async (saved) => {
+        setInput({
+          name: saved.name,
+          slug: saved.slug,
+          startsOn: saved.startsOn,
+          endsOn: saved.endsOn,
+          timezone: saved.timezone,
+          expectedRevision: saved.revision,
+        });
         await Promise.all([
           queryClient.invalidateQueries(
             trpc.events.get.queryFilter({ slug: event.slug }),
@@ -5023,6 +5026,27 @@ function SpeakerProfilePage() {
         );
         await queryClient.invalidateQueries(trpc.agendas.working.queryFilter());
       },
+      onError: async (error) => {
+        if (error.data?.code !== "CONFLICT") return;
+        const latest = await queryClient.fetchQuery(profileQuery);
+        setDraft({
+          values: latest.profile
+            ? {
+                displayName: latest.profile.displayName,
+                bio: latest.profile.bio,
+              }
+            : {
+                displayName: latest.suggestedDisplayName ?? "",
+                bio: "",
+              },
+          expectedRevision: latest.profile?.revision ?? null,
+        });
+        setHeadshotFile(undefined);
+        setHeadshotPreviewUrl((current) => {
+          if (current) URL.revokeObjectURL(current);
+          return undefined;
+        });
+      },
     }),
   );
   const saveStatus = useMutationStatuses([
@@ -5075,7 +5099,7 @@ function SpeakerProfilePage() {
         });
   function updateProfile(values: Partial<SpeakerProfileInput>) {
     setDraft((existing) => ({
-      values: { ...current, ...values },
+      values: { ...(existing?.values ?? current), ...values },
       expectedRevision:
         existing?.expectedRevision ??
         profileState.data?.profile?.revision ??

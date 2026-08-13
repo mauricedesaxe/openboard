@@ -86,6 +86,12 @@ export async function saveOwnSpeakerProfile(
     )
     .where(eq(speakerProfiles.userId, userId))
     .limit(1);
+  if (
+    (existing && input.expectedRevision !== existing.revision) ||
+    (!existing && input.expectedRevision !== null)
+  ) {
+    return { ok: false, error: "profile_conflict" };
+  }
   const stored = input.headshot
     ? await putStoredFile(
         files,
@@ -119,25 +125,13 @@ export async function saveOwnSpeakerProfile(
   let conflict: "profile_conflict" | undefined;
   try {
     if (existing) {
-      if (input.expectedRevision !== existing.revision) {
-        if (stored?.ok) {
-          await removeStoredHeadshot(
-            database,
-            files,
-            stored.value.record.id,
-            stored.value.record.objectKey,
-            "speaker_headshot_conflict_cleanup_failed",
-          );
-        }
-        return { ok: false, error: "profile_conflict" };
-      }
       const update = database
         .update(speakerProfiles)
         .set(profileValues)
         .where(
           and(
             eq(speakerProfiles.id, existing.id),
-            eq(speakerProfiles.revision, input.expectedRevision),
+            eq(speakerProfiles.revision, existing.revision),
             stored?.ok
               ? existing.headshotStoredFileId
                 ? eq(
@@ -159,9 +153,6 @@ export async function saveOwnSpeakerProfile(
         if (updated.meta.changes === 0) conflict = "profile_conflict";
       }
     } else {
-      if (input.expectedRevision !== null) {
-        return { ok: false, error: "profile_conflict" };
-      }
       const insert = database
         .insert(speakerProfiles)
         .values({
