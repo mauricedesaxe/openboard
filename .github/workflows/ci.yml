@@ -183,6 +183,28 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm exec wrangler d1 migrations apply DB --remote --config wrangler.preview.jsonc
+      - name: Seed the deployed schedule smoke check
+        if: steps.current-pr-resources.outputs.current == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          pnpm exec wrangler d1 execute DB --remote --config wrangler.preview.jsonc --command "
+            INSERT OR IGNORE INTO user (id, name, email, email_verified, created_at, updated_at)
+              VALUES ('preview-user', 'Preview user', 'preview@example.com', 1, 0, 0);
+            INSERT OR IGNORE INTO events (id, owner_user_id, name, slug, starts_on, ends_on, timezone, revision, created_at, updated_at)
+              VALUES ('preview-event', 'preview-user', 'Preview conference', 'preview-schedule', '2028-08-13', '2028-08-13', 'UTC', 1, 0, 0);
+            INSERT OR IGNORE INTO agendas (id, event_id, created_at, updated_at, revision)
+              VALUES ('preview-agenda', 'preview-event', 0, 0, 1);
+            INSERT OR IGNORE INTO agenda_items (id, agenda_id, event_id, kind, service_scope, service_title, starts_at_local, ends_at_local, placed, revision, created_at, updated_at)
+              VALUES ('preview-item', 'preview-agenda', 'preview-event', 'service', 'event', 'Preview schedule check', '2028-08-13T09:00', '2028-08-13T10:00', 1, 1, 0, 0);
+            INSERT OR IGNORE INTO agenda_publications (id, agenda_id, event_id, revision, working_revision, event_name, timezone, starts_on, ends_on, published_by_user_id, created_at, finalized, requires_finalization)
+              VALUES ('preview-publication', 'preview-agenda', 'preview-event', 1, 1, 'Preview conference', 'UTC', '2028-08-13', '2028-08-13', 'preview-user', 0, 0, 0);
+            INSERT OR IGNORE INTO published_agenda_items (id, publication_id, agenda_item_id, kind, title, starts_at, ends_at, canceled)
+              VALUES ('preview-published-item', 'preview-publication', 'preview-item', 'service', 'Preview schedule check', '2028-08-13T09:00:00.000Z', '2028-08-13T10:00:00.000Z', 0);
+            UPDATE agenda_publications SET finalized = 1
+              WHERE id = 'preview-publication' AND finalized = 0;
+          "
       - name: Set the preview auth secret
         if: steps.current-pr-resources.outputs.current == 'true'
         env:
@@ -231,6 +253,10 @@ jobs:
           echo "preview did not serve the SPA or boot auth"
           cat /tmp/auth-session.json 2>/dev/null
           exit 1
+      - name: Compare deployed public schedule outputs
+        if: steps.current-pr-deploy.outputs.current == 'true'
+        run: |
+          PREVIEW_URL=$(cat preview-url.txt) pnpm exec playwright test --config playwright.preview.config.ts
       - name: Post the preview URL on the PR
         if: steps.current-pr-deploy.outputs.current == 'true'
         uses: actions/github-script@v7
