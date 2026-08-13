@@ -1640,7 +1640,6 @@ function OrganizerReadinessPage({
     dueAt: "",
   });
   const [assignmentTimeError, setAssignmentTimeError] = useState<string>();
-  const [filterNow] = useState(Date.now);
 
   if (board.isPending)
     return <FullPageStatus label="Opening speaker readiness" />;
@@ -1670,6 +1669,7 @@ function OrganizerReadinessPage({
   const assignmentTargetOptions = onboardingAssignmentTargetOptions(
     board.data.targets,
   );
+  const filterNow = board.dataUpdatedAt;
   const filteredAssignments = board.data.assignments.filter((item) => {
     const target = assignmentTargetValue(item);
     const dueMatches =

@@ -117,10 +117,20 @@ test("manages readiness across overview, definitions, and assignments", async ({
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.goto("/sign-in");
   await signIn(page, ownerEmail, "Open my board");
+  await page.clock.install({ time: new Date("2028-06-01T09:59:50Z") });
   await page.goto(`/events/${slug}/readiness/task-assignments`);
   await expect(page.getByText("Showing 2 of 2 assignments")).toBeVisible();
   await expect(page.getByText(`Target: ${programItem.title}`)).toBeVisible();
   await expect(page.getByText(/Due Jun 1, 2028/)).toBeVisible();
+  await page.getByLabel("Filter by due state").selectOption("upcoming");
+  await expect(page.getByText("Showing 1 of 2 assignments")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Upload slides" }),
+  ).toBeVisible();
+  await page.clock.fastForward(15_000);
+  await expect(page.getByText("Showing 0 of 2 assignments")).toBeVisible();
+  await expect(page.getByText("No assignments match")).toBeVisible();
+  await page.getByLabel("Filter by due state").selectOption("all");
   await page.getByLabel("Filter by completion state").selectOption("complete");
   await expect(page).toHaveURL(/completion=complete/);
   await expect(page.getByText("Showing 1 of 2 assignments")).toBeVisible();
