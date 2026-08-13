@@ -5202,6 +5202,7 @@ function CfpBuilder({
     message: string;
     path: (string | number)[];
   }>();
+  const [deadlineChanged, setDeadlineChanged] = useState(false);
   const refresh = async () => {
     await queryClient.invalidateQueries(
       trpc.cfps.getSetup.queryFilter({ slug }),
@@ -5241,6 +5242,13 @@ function CfpBuilder({
   ]);
   const formId = cfp?.id ?? "new";
   const deadlineBounds = cfpDeadlineInputBounds({ endsOn, timezone });
+  const storedDeadline = cfp
+    ? isoToEventLocalDateTime({ instant: cfp.deadline, timezone })
+    : undefined;
+  const deadlineMin =
+    !deadlineChanged && storedDeadline && storedDeadline < deadlineBounds.min
+      ? storedDeadline
+      : deadlineBounds.min;
 
   function parsedDefinition(): CfpDefinitionInput | undefined {
     const parsed = cfpDefinitionInputSchema.safeParse(definition);
@@ -5355,7 +5363,7 @@ function CfpBuilder({
               <input
                 id={`cfp-deadline-${formId}`}
                 max={deadlineBounds.max}
-                min={deadlineBounds.min}
+                min={deadlineMin}
                 type="datetime-local"
                 value={isoToEventLocalDateTime({
                   instant: definition.deadline,
@@ -5363,6 +5371,7 @@ function CfpBuilder({
                 })}
                 onChange={(event) => {
                   const localDateTime = event.target.value;
+                  setDeadlineChanged(true);
                   const deadline = eventLocalDateTimeToIso({
                     localDateTime,
                     timezone,

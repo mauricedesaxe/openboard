@@ -2,6 +2,7 @@ const timezoneCorrectionAttempts = 3;
 const maximumTimezoneOverlapMinutes = 180;
 const millisecondsPerMinute = 60_000;
 const preferredCfpDeadlineTime = "17:00";
+const dateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
 
 export type EventLocalDateTimeResolution =
   | { status: "resolved"; iso: string }
@@ -125,32 +126,46 @@ export function cfpDeadlineInputBounds(input: {
   now?: Date;
 }): { min: string; max: string } {
   const now = input.now ?? new Date();
-  let nextMinute = new Date(
+  const nextMinute = new Date(
     Math.floor(now.getTime() / millisecondsPerMinute) * millisecondsPerMinute +
       millisecondsPerMinute,
   );
+  const localDateTimes = new Map<string, number>();
+  for (
+    let offsetMinutes = -maximumTimezoneOverlapMinutes;
+    offsetMinutes <= maximumTimezoneOverlapMinutes * 2;
+    offsetMinutes += 1
+  ) {
+    const instant = new Date(
+      nextMinute.getTime() + offsetMinutes * millisecondsPerMinute,
+    );
+    const localDateTime = isoToEventLocalDateTime({
+      instant: instant.toISOString(),
+      timezone: input.timezone,
+    });
+    localDateTimes.set(
+      localDateTime,
+      (localDateTimes.get(localDateTime) ?? 0) + 1,
+    );
+  }
+
   let min = "";
   for (
     let attempt = 0;
     attempt <= maximumTimezoneOverlapMinutes;
     attempt += 1
   ) {
+    const candidate = new Date(
+      nextMinute.getTime() + attempt * millisecondsPerMinute,
+    );
     const localDateTime = isoToEventLocalDateTime({
-      instant: nextMinute.toISOString(),
+      instant: candidate.toISOString(),
       timezone: input.timezone,
     });
-    const resolution = resolveEventLocalDateTime({
-      localDateTime,
-      timezone: input.timezone,
-    });
-    if (
-      resolution.status === "resolved" &&
-      resolution.iso === nextMinute.toISOString()
-    ) {
+    if (localDateTimes.get(localDateTime) === 1) {
       min = localDateTime;
       break;
     }
-    nextMinute = new Date(nextMinute.getTime() + millisecondsPerMinute);
   }
   return {
     min,
@@ -182,15 +197,20 @@ function datePartsAsUtc(date: Date, timezone: string): number {
 }
 
 function dateTimeParts(date: Date, timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    day: "2-digit",
-    hour: "2-digit",
-    hourCycle: "h23",
-    minute: "2-digit",
-    month: "2-digit",
-    timeZone: timezone,
-    year: "numeric",
-  }).formatToParts(date);
+  let formatter = dateTimeFormatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-CA", {
+      day: "2-digit",
+      hour: "2-digit",
+      hourCycle: "h23",
+      minute: "2-digit",
+      month: "2-digit",
+      timeZone: timezone,
+      year: "numeric",
+    });
+    dateTimeFormatters.set(timezone, formatter);
+  }
+  const parts = formatter.formatToParts(date);
   const value = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value ?? "";
   return {

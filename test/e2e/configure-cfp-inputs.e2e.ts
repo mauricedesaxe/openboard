@@ -114,6 +114,33 @@ test("bounds and explains the CFP deadline in event time", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("saves unrelated changes after a stored CFP deadline passes", async ({
+  page,
+}) => {
+  const suffix = `${Date.now()}`;
+  const slug = `browser-passed-cfp-deadline-${suffix}`;
+  await page.goto("/");
+  await signIn(page, `browser-passed-deadline-owner-${suffix}@example.com`);
+  await createEvent(page, slug);
+  await mutate(page.request, "cfps.createDraft", {
+    slug,
+    name: "Past deadline CFP",
+    deadline: "2020-01-01T09:00:00Z",
+    formats: ["Talk"],
+    customFields: [],
+  });
+
+  await page.goto(`/events/${slug}/cfp/manage`);
+  const draft = page.locator(".cfp-builder").filter({
+    has: page.locator(".status-draft"),
+  });
+  await draft
+    .getByRole("textbox", { name: "CFP name" })
+    .fill("Renamed past deadline CFP");
+  await draft.getByRole("button", { name: "Save form" }).click();
+  await expect(page.getByText("CFP saved", { exact: true })).toBeVisible();
+});
+
 test("refreshes the public CFP after its tracks change", async ({ page }) => {
   const suffix = `${Date.now()}`;
   const slug = `browser-cfp-tracks-${suffix}`;

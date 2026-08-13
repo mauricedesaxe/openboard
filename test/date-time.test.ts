@@ -141,7 +141,7 @@ describe("event deadline timezones", () => {
       max: "2027-10-31T23:59",
     });
     expect(
-      cfpDeadlineInputBounds({
+      timedCfpDeadlineInputBounds({
         endsOn: "2027-10-31",
         timezone: "Europe/Berlin",
         now: new Date("2027-10-31T00:59:30Z"),
@@ -152,3 +152,12 @@ describe("event deadline timezones", () => {
     });
   });
 });
+
+function timedCfpDeadlineInputBounds(
+  input: Parameters<typeof cfpDeadlineInputBounds>[0],
+) {
+  const startedAt = performance.now();
+  const bounds = cfpDeadlineInputBounds(input);
+  expect(performance.now() - startedAt).toBeLessThan(100);
+  return bounds;
+}
