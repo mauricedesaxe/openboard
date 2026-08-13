@@ -1,11 +1,4 @@
-import { gunzipSync } from "node:zlib";
-
-import {
-  expect,
-  test,
-  type APIRequestContext,
-  type APIResponse,
-} from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 
 import { signIn } from "./support";
 
@@ -351,13 +344,11 @@ test("publishes a working placement to every public agenda view", async ({
   ]);
   expect(scheduleResponse.ok()).toBe(true);
   expect(calendarResponse.ok()).toBe(true);
-  const scheduleOutput = JSON.parse(
-    await decodedResponseText(scheduleResponse),
-  ) as {
+  const scheduleOutput = (await scheduleResponse.json()) as {
     revision: number;
     items: Array<{ title: string }>;
   };
-  const calendarOutput = await decodedResponseText(calendarResponse);
+  const calendarOutput = await calendarResponse.text();
   expect(scheduleOutput.revision).toBe(1);
   expect(calendarOutput).toContain("X-OPENBOARD-REVISION:1\r\n");
   expect(await query(page.request, "agendas.published", { slug })).toEqual(
@@ -644,13 +635,6 @@ test("publishes a working placement to every public agenda view", async ({
   expect(pageErrors).toEqual([]);
   expect(firstPlacement.id).toBeTruthy();
 });
-
-async function decodedResponseText(response: APIResponse): Promise<string> {
-  const body = await response.body();
-  return new TextDecoder().decode(
-    body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body,
-  );
-}
 
 async function mutate(
   request: APIRequestContext,
