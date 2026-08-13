@@ -1,3 +1,5 @@
+import ICAL from "ical.js";
+
 const [baseUrl, eventSlug] = process.argv.slice(2);
 
 if (!baseUrl || !eventSlug) {
@@ -55,19 +57,9 @@ function parseJson(body) {
 }
 
 function parseCalendar(body) {
-  if (!body.startsWith("BEGIN:VCALENDAR\r\n")) {
-    throw new Error("iCalendar feed has no VCALENDAR start");
-  }
-  if (!body.endsWith("END:VCALENDAR\r\n")) {
-    throw new Error("iCalendar feed has no VCALENDAR end");
-  }
-  if (!body.includes("VERSION:2.0\r\n")) {
-    throw new Error("iCalendar feed has no supported version");
-  }
-  if (
-    (body.match(/BEGIN:VEVENT\r\n/g) ?? []).length !==
-    (body.match(/END:VEVENT\r\n/g) ?? []).length
-  ) {
-    throw new Error("iCalendar feed has unmatched VEVENT components");
+  const calendar = new ICAL.Component(ICAL.parse(body));
+  if (calendar.name !== "vcalendar") throw new Error("Expected VCALENDAR");
+  if (calendar.getFirstPropertyValue("version") !== "2.0") {
+    throw new Error("Expected iCalendar version 2.0");
   }
 }

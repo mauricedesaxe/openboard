@@ -74,7 +74,7 @@ async function publicResponse(
   if (request.headers.get("if-none-match") === etag) {
     return new Response(null, { status: 304, headers });
   }
-  if (/\bgzip\b/.test(request.headers.get("accept-encoding") ?? "")) {
+  if (acceptsGzip(request.headers.get("accept-encoding"))) {
     headers.set("Content-Encoding", "gzip");
     return new Response(
       new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip")),
@@ -82,6 +82,16 @@ async function publicResponse(
     );
   }
   return new Response(bytes, { headers });
+}
+
+function acceptsGzip(header: string | null): boolean {
+  return (header ?? "").split(",").some((entry) => {
+    const [encoding, ...parameters] = entry.trim().toLowerCase().split(";");
+    if (encoding !== "gzip") return false;
+    return !parameters.some((parameter) =>
+      /^q=0(?:\.0*)?$/.test(parameter.trim()),
+    );
+  });
 }
 
 function publicHeaders(initial?: HeadersInit): Headers {
