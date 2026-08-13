@@ -101,12 +101,12 @@ test("moves event operations through focused routes", async ({
   const ownerRow = page.locator(".team-row", { hasText: "Event owner" });
   await expect(ownerRow).toBeVisible();
   await expect(ownerRow.getByRole("button", { name: "Revoke" })).toHaveCount(0);
-  const ownerRoleRows = page.locator(".team-row", {
+  const ownerAccessRows = page.locator(".team-row", {
     hasText: `browser-operations-owner-${suffix}@example.com`,
   });
-  await expect(ownerRoleRows).toHaveCount(3);
+  await expect(ownerAccessRows).toHaveCount(3);
   await expect(
-    ownerRoleRows.getByRole("button", { name: "Revoke" }),
+    ownerAccessRows.getByRole("button", { name: "Revoke" }),
   ).toHaveCount(0);
   await page
     .getByLabel("Email address")

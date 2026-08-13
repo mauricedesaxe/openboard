@@ -337,7 +337,57 @@ describe("sign in and create an event", () => {
       expect(session.status).toBe(200);
     }
   });
+
+  test("rolls back event creation when an owner role cannot be granted", async () => {
+    const owner = await signIn("rollback-owner@example.com");
+    const tables = [
+      "events",
+      "agendas",
+      "event_roles",
+      "communication_templates",
+    ];
+    const countsBefore = await tableCounts(tables);
+    await testEnvironment.DB.prepare(
+      `CREATE TRIGGER reject_owner_reviewer_role
+       BEFORE INSERT ON event_roles
+       WHEN NEW.role = 'reviewer'
+       BEGIN
+         SELECT RAISE(ABORT, 'reviewer role rejected');
+       END`,
+    ).run();
+
+    try {
+      const response = await callTrpc(
+        "events.create",
+        {
+          name: "Rollback Conference",
+          slug: "rollback-conference",
+          startsOn: "2027-06-01",
+          endsOn: "2027-06-02",
+          timezone: "UTC",
+        },
+        owner.cookie,
+      );
+      expect(response.status).toBe(500);
+      expect(await tableCounts(tables)).toEqual(countsBefore);
+    } finally {
+      await testEnvironment.DB.prepare(
+        "DROP TRIGGER reject_owner_reviewer_role",
+      ).run();
+    }
+  });
 });
+
+async function tableCounts(tables: string[]): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {};
+  for (const table of tables) {
+    const row = await testEnvironment.DB.prepare(
+      `SELECT COUNT(*) AS count FROM ${table}`,
+    ).first<{ count: number }>();
+    counts[table] = row?.count ?? 0;
+  }
+  return counts;
+}
 
 test("reports a failed authentication code delivery", async () => {
   const config: AppConfig = {

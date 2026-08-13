@@ -267,7 +267,7 @@ export async function listEventTeam(
     .from(eventRoles)
     .innerJoin(user, eq(user.id, eventRoles.userId))
     .where(and(eq(eventRoles.eventId, event.id), isNull(eventRoles.revokedAt)))
-    .orderBy(eventRoles.createdAt);
+    .orderBy(eventRoles.createdAt, eventRoles.role);
   const invitationHistory = await database
     .select({
       id: invitations.id,
