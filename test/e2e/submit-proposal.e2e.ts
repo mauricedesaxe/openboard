@@ -94,23 +94,29 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   await expect(
     eventNavigation.getByRole("link", { name: "Proposal" }),
   ).toBeVisible();
-  await expect(
-    eventNavigation.getByRole("link", { name: "Review" }),
-  ).toHaveCount(0);
-  await expect(eventNavigation.getByRole("link", { name: "CFP" })).toHaveCount(
-    0,
-  );
+  await expect(eventNavigation.getByRole("link")).toHaveText(["Proposal"]);
 
   await page.goto("/");
   await page.goto(proposalUrl);
   await expect(eventNavigation).toBeVisible();
   await page.getByRole("link", { name: "My events" }).click();
+  await expect(page).toHaveURL("/");
+  await expect(
+    page.getByRole("heading", { name: "The program starts here." }),
+  ).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL(proposalUrl);
   await expect(eventNavigation).toBeVisible();
   await page.reload();
   await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(
     "A resumed proposal",
+  );
+  await page.getByRole("textbox", { name: "Title" }).fill("An edited proposal");
+  await page.getByRole("button", { name: "Save proposal" }).click();
+  await expect(page.getByText("Proposal saved")).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(
+    "An edited proposal",
   );
   const onlyRemoveButton = page.getByRole("button", { name: "Remove" });
   await expect(onlyRemoveButton).toBeDisabled();
@@ -199,6 +205,11 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   ).toBeVisible();
   await expect(secondSpeakerRow).toBeHidden();
   await expect(page.getByText("Third Browser Speaker")).toBeVisible();
+
+  await page.getByRole("button", { name: "Withdraw proposal" }).click();
+  await expect(page.getByText("Proposal withdrawn")).toBeVisible();
+  await expect(page.getByText("withdrawn", { exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Title" })).toBeDisabled();
 });
 
 async function measureLocalTransition(
