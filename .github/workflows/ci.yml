@@ -70,7 +70,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm exec wrangler deploy --config wrangler.production.jsonc
-      - name: Verify production serves the app and boots auth
+      - name: Verify production serves the app and public API
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           URL=https://openboard.sweet-mouse-22c9.workers.dev
           for attempt in 1 2 3 4 5; do
@@ -78,6 +81,12 @@ jobs:
             AUTH_STATUS=$(curl -sS --max-time 60 -o /tmp/production-auth.json -w "%{http_code}" "$URL/api/auth/get-session") || AUTH_STATUS=000
             if [ "$STATUS" = "200" ] && grep -q 'id="root"' /tmp/production-body.html \
               && [ "$AUTH_STATUS" = "200" ]; then
+              EVENT_SLUG=$(pnpm exec wrangler d1 execute DB --remote --config wrangler.production.jsonc --json --command "SELECT events.slug FROM agenda_publications INNER JOIN events ON events.id = agenda_publications.event_id WHERE agenda_publications.finalized = 1 ORDER BY agenda_publications.published_at DESC LIMIT 1" | jq -r '.[0].results[0].slug // empty')
+              if [ -z "$EVENT_SLUG" ]; then
+                echo "production has no published schedule for the public API smoke check"
+                exit 1
+              fi
+              node scripts/smoke-public-api.mjs "$URL" "$EVENT_SLUG"
               echo "Production OK: $URL"
               exit 0
             fi

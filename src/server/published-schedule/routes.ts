@@ -78,7 +78,7 @@ async function publicResponse(
     headers.set("Content-Encoding", "gzip");
     return new Response(
       new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip")),
-      { headers },
+      { headers, encodeBody: "manual" },
     );
   }
   return new Response(bytes, { headers });
