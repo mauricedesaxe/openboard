@@ -55,6 +55,7 @@ import {
   replaceSubmissionSpeakerInvitationSchema,
   submissionIdSchema,
   submitProposalSchema,
+  uploadProposalFileSchema,
 } from "../shared/submissions";
 
 import {
@@ -165,6 +166,7 @@ import {
 } from "./submission-speakers/repository";
 import {
   findAccessibleSubmission,
+  uploadProposalFile,
   listAccessibleSubmissions,
   submitProposal,
   updateOwnSubmission,
@@ -838,6 +840,18 @@ export const appRouter = trpc.router({
           invitationDeliveryFailed: deliveries.includes("failed"),
         };
       }),
+    uploadFile: authenticatedProcedure
+      .input(uploadProposalFileSchema)
+      .mutation(async ({ ctx, input }) => {
+        const result = await uploadProposalFile(
+          ctx.database,
+          ctx.files,
+          ctx.userId,
+          input,
+        );
+        if (!result.ok) throwProposalWriteError(result.error);
+        return result.value;
+      }),
     get: authenticatedProcedure
       .input(z.object({ submissionId: submissionIdSchema }))
       .query(async ({ ctx, input }) => {
@@ -1398,7 +1412,6 @@ function throwCfpWriteError(
     | "already_open"
     | "deadline_after_event"
     | "deadline_passed"
-    | "file_fields_unsupported"
     | "missing_track"
     | "not_found"
     | "persistence_failed"
@@ -1435,12 +1448,6 @@ function throwCfpWriteError(
       message: "Choose a deadline on or before the event end date.",
     });
   }
-  if (error === "file_fields_unsupported") {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: "File questions need stored-file support before this CFP opens.",
-    });
-  }
   if (error === "structure_locked") {
     throw new TRPCError({
       code: "CONFLICT",
@@ -1459,6 +1466,7 @@ function throwProposalWriteError(
     | "cfp_changed"
     | "deadline_passed"
     | "invalid_answers"
+    | "invalid_file"
     | "invalid_format"
     | "invalid_track"
     | "not_found"
@@ -1507,6 +1515,13 @@ function throwProposalWriteError(
     throw new TRPCError({
       code: "BAD_REQUEST",
       message: "Check the answers required by the current proposal form.",
+    });
+  }
+  if (error === "invalid_file") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "Choose a file that matches this question's type and size limit.",
     });
   }
   throw new TRPCError({

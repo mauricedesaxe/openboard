@@ -15,6 +15,7 @@ import { routePublishedSchedule } from "./server/published-schedule/routes";
 import { sendAgendaCalendarDelivery } from "./server/published-schedule/transport";
 import { repairDecisionCommunicationRecords } from "./server/reviews/repository";
 import { findSpeakerHeadshot } from "./server/speaker-profiles/repository";
+import { findAccessibleSubmissionFile } from "./server/submissions/repository";
 import { appRouter, createTrpcContext } from "./server/trpc";
 import type { UserId } from "./shared/events";
 import { storedFileIdSchema } from "./shared/files";
@@ -94,6 +95,33 @@ export default {
         ETag: object.httpEtag,
       });
       return new Response(object.body, { headers });
+    }
+
+    const submissionFileMatch = url.pathname.match(
+      /^\/api\/submission-files\/([^/]+)$/,
+    );
+    if (submissionFileMatch) {
+      const session = await auth.api.getSession({ headers: request.headers });
+      const fileId = storedFileIdSchema.safeParse(submissionFileMatch[1]);
+      if (!session || !fileId.success) {
+        return new Response("Not found", { status: 404 });
+      }
+      const file = await findAccessibleSubmissionFile(
+        database,
+        session.user.id as UserId,
+        fileId.data,
+      );
+      if (!file) return new Response("Not found", { status: 404 });
+      const object = await environment.FILES.get(file.objectKey);
+      if (!object) return new Response("Not found", { status: 404 });
+      return new Response(object.body, {
+        headers: {
+          "Cache-Control": "private, no-store",
+          "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+          "Content-Type": file.contentType,
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
     }
 
     const headshotMatch = url.pathname.match(

@@ -56,7 +56,11 @@ import {
   type EventInput,
   type EventSettingsInput,
 } from "../shared/events";
-import { MAX_STORED_FILE_BYTES } from "../shared/files";
+import {
+  MAX_STORED_FILE_BYTES,
+  type StoredFile,
+  type StoredFileId,
+} from "../shared/files";
 import {
   speakerHeadshotUploadSchema,
   type SpeakerHeadshotUpload,
@@ -2871,6 +2875,121 @@ async function browserFileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
+type LocalProposalFile = { file: File; uploadId: string };
+
+const PROPOSAL_FILE_DATABASE = "openboard-proposal-files";
+const PROPOSAL_FILE_STORE = "files";
+
+async function saveLocalProposalFile(
+  draftId: string,
+  fieldKey: string,
+  value: LocalProposalFile,
+) {
+  const database = await openProposalFileDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(PROPOSAL_FILE_STORE, "readwrite");
+    transaction
+      .objectStore(PROPOSAL_FILE_STORE)
+      .put(value, `${draftId}:${fieldKey}`);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () =>
+      reject(
+        transaction.error ?? new Error("The local file could not be saved."),
+      );
+  });
+  database.close();
+}
+
+async function loadLocalProposalFiles(draftId: string) {
+  const database = await openProposalFileDatabase();
+  const entries = await new Promise<Array<[string, LocalProposalFile]>>(
+    (resolve, reject) => {
+      const request = database
+        .transaction(PROPOSAL_FILE_STORE)
+        .objectStore(PROPOSAL_FILE_STORE)
+        .openCursor();
+      const files: Array<[string, LocalProposalFile]> = [];
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          resolve(files);
+          return;
+        }
+        if (typeof cursor.key !== "string") {
+          cursor.continue();
+          return;
+        }
+        const key = cursor.key;
+        if (key.startsWith(`${draftId}:`)) {
+          files.push([
+            key.slice(draftId.length + 1),
+            cursor.value as LocalProposalFile,
+          ]);
+        }
+        cursor.continue();
+      };
+      request.onerror = () =>
+        reject(
+          request.error ?? new Error("The local files could not be read."),
+        );
+    },
+  );
+  database.close();
+  return Object.fromEntries(entries);
+}
+
+async function deleteLocalProposalFiles(draftId: string) {
+  const database = await openProposalFileDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(PROPOSAL_FILE_STORE, "readwrite");
+    const request = transaction.objectStore(PROPOSAL_FILE_STORE).openCursor();
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) return;
+      if (
+        typeof cursor.key === "string" &&
+        cursor.key.startsWith(`${draftId}:`)
+      ) {
+        cursor.delete();
+      }
+      cursor.continue();
+    };
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () =>
+      reject(
+        transaction.error ?? new Error("The local files could not be cleared."),
+      );
+  });
+  database.close();
+}
+
+function openProposalFileDatabase() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(PROPOSAL_FILE_DATABASE, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(PROPOSAL_FILE_STORE);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () =>
+      reject(
+        request.error ?? new Error("The local file database could not open."),
+      );
+  });
+}
+
+function acceptedBrowserFile(acceptedTypes: string[], contentType: string) {
+  const normalized = contentType.toLowerCase();
+  return acceptedTypes.some(
+    (accepted) =>
+      accepted === normalized ||
+      (accepted.endsWith("/*") && normalized.startsWith(accepted.slice(0, -1))),
+  );
+}
+
+function formatAcceptedTypes(acceptedTypes: string[]) {
+  return acceptedTypes.join(", ");
+}
+
 type ReviewPageMode = "overview" | "assignments" | "decisions" | "my-reviews";
 type ReviewSort = "original" | "average-desc" | "average-asc";
 
@@ -3358,6 +3477,7 @@ function OrganizerReviewBoard({
                 </div>
                 <h2>{submission.title}</h2>
                 <p>{submission.abstract}</p>
+                <SubmissionFileLinks files={submission.fileAnswers} />
                 <div className="review-metrics">
                   <span>
                     {submission.review.completed}/{submission.review.assigned}{" "}
@@ -3676,6 +3796,12 @@ function ReviewAssignmentCard({
       abstract: string;
       format: string;
       track: string;
+      fileAnswers: Array<
+        Pick<StoredFile, "contentType" | "fileName" | "sizeBytes" | "url"> & {
+          id: string;
+          fieldKey: string;
+        }
+      >;
     };
     review: { score: number; comment: string | null } | null;
   };
@@ -3725,6 +3851,7 @@ function ReviewAssignmentCard({
         </div>
         <h2>{assignment.submission.title}</h2>
         <p>{assignment.submission.abstract}</p>
+        <SubmissionFileLinks files={assignment.submission.fileAnswers} />
       </div>
       <form
         className="review-controls"
@@ -3802,6 +3929,26 @@ function ReviewAssignmentCard({
         ) : null}
       </form>
     </article>
+  );
+}
+
+function SubmissionFileLinks({
+  files,
+}: {
+  files: Array<
+    Pick<StoredFile, "fileName" | "url"> & { id: string; fieldKey: string }
+  >;
+}) {
+  if (files.length === 0) return null;
+  return (
+    <div className="submission-files">
+      <div className="eyebrow">Files</div>
+      {files.map((file) => (
+        <a href={file.url} key={file.id}>
+          {file.fileName}
+        </a>
+      ))}
+    </div>
   );
 }
 
@@ -5576,6 +5723,13 @@ function CfpBuilder({
               >
                 + Single select
               </button>
+              <button
+                disabled={cfp?.structureLocked}
+                type="button"
+                onClick={() => addField("file")}
+              >
+                + File
+              </button>
             </div>
           </div>
           {definition.customFields.map((field, index) => (
@@ -5742,7 +5896,11 @@ function CustomFieldEditor({
       )}
       {field.type === "file" && (
         <div className="field-pair">
-          <Field label="Accepted MIME types" name={fieldId("field-types")}>
+          <Field
+            hint="Separate types with commas, for example application/pdf or image/*"
+            label="Accepted MIME types"
+            name={fieldId("field-types")}
+          >
             <input
               id={fieldId("field-types")}
               value={field.acceptedTypes.join(", ")}
@@ -5761,7 +5919,7 @@ function CustomFieldEditor({
             <input
               id={fieldId("field-size")}
               min="1"
-              max="100"
+              max="10"
               type="number"
               value={field.maxSizeMb}
               onChange={(event) =>
@@ -5859,6 +6017,11 @@ function SubmissionPage() {
     content: ProposalEditContent;
     revision: number;
   }>();
+  const [selectedFiles, setSelectedFiles] = useState<
+    Record<string, LocalProposalFile>
+  >({});
+  const [fileError, setFileError] = useState<string>();
+  const uploadFile = useMutation(trpc.submissions.uploadFile.mutationOptions());
   const update = useMutation(
     trpc.submissions.updateOwn.mutationOptions({
       onSuccess: async (saved) => {
@@ -5959,8 +6122,39 @@ function SubmissionPage() {
     }));
   }
 
-  function save(event: FormEvent) {
+  async function save(event: FormEvent) {
     event.preventDefault();
+    setFileError(undefined);
+    const nextFileAnswers = { ...currentContent.fileAnswers };
+    try {
+      for (const field of visibleCustomFields(
+        loadedSubmission.form.customFields,
+        currentContent.customAnswers,
+      )) {
+        if (field.type !== "file") continue;
+        const selected = selectedFiles[field.key];
+        if (!selected) continue;
+        const saved = await uploadFile.mutateAsync({
+          slug: loadedSubmission.event.slug,
+          cfpId: loadedSubmission.cfp.id,
+          clientDraftId: loadedSubmission.id,
+          uploadId: selected.uploadId,
+          fieldKey: field.key,
+          customAnswers: currentContent.customAnswers,
+          fileName: selected.file.name,
+          contentType: selected.file.type || "application/octet-stream",
+          contentBase64: await browserFileToBase64(selected.file),
+        });
+        nextFileAnswers[field.key] = saved.id;
+      }
+    } catch (error) {
+      setFileError(
+        error instanceof Error
+          ? error.message
+          : "The file could not be uploaded.",
+      );
+      return;
+    }
     update.mutate({
       submissionId: submissionInput.submissionId,
       expectedRevision:
@@ -5968,6 +6162,7 @@ function SubmissionPage() {
           ? editState.revision
           : loadedSubmission.revision,
       ...currentContent,
+      fileAnswers: nextFileAnswers,
     });
   }
 
@@ -6006,7 +6201,7 @@ function SubmissionPage() {
       )}
       {currentContent && (
         <section className="form-board submission-form">
-          <form onSubmit={save}>
+          <form onSubmit={(event) => void save(event)}>
             <div className="eyebrow">Your proposal</div>
             <fieldset
               className="submission-fields"
@@ -6087,6 +6282,11 @@ function SubmissionPage() {
                   field={field}
                   key={field.key}
                   value={currentContent.customAnswers[field.key] ?? ""}
+                  file={
+                    selectedFiles[field.key]?.file
+                      ? { fileName: selectedFiles[field.key]!.file.name }
+                      : loadedSubmission.fileAnswers[field.key]
+                  }
                   onChange={(value) =>
                     changeContent((current) => ({
                       ...current,
@@ -6096,12 +6296,30 @@ function SubmissionPage() {
                       },
                     }))
                   }
+                  onFileChange={(file) => {
+                    if (field.type !== "file" || !file) return;
+                    if (
+                      file.size > field.maxSizeMb * 1_000_000 ||
+                      !acceptedBrowserFile(field.acceptedTypes, file.type)
+                    ) {
+                      setFileError(
+                        `Choose ${formatAcceptedTypes(field.acceptedTypes)} up to ${field.maxSizeMb} MB.`,
+                      );
+                      return;
+                    }
+                    setFileError(undefined);
+                    setSelectedFiles((current) => ({
+                      ...current,
+                      [field.key]: { file, uploadId: crypto.randomUUID() },
+                    }));
+                  }}
                 />
               ))}
             </fieldset>
             {submissionStatus.error && (
               <MutationStatus error={submissionStatus.error} />
             )}
+            {fileError && <MutationStatus error={fileError} />}
             {submissionStatus.success && (
               <MutationStatus success={submissionStatus.success} />
             )}
@@ -6109,7 +6327,9 @@ function SubmissionPage() {
               <div className="submission-actions">
                 <button
                   className="primary-button"
-                  disabled={!editable || update.isPending}
+                  disabled={
+                    !editable || update.isPending || uploadFile.isPending
+                  }
                   type="submit"
                 >
                   {update.isPending ? "Saving…" : "Save proposal"}
@@ -6470,12 +6690,17 @@ function PublicCfpPage() {
   );
   const [proposalError, setProposalError] = useState<string>();
   const [signInPending, setSignInPending] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<
+    Record<string, LocalProposalFile>
+  >({});
+  const [fileError, setFileError] = useState<string>();
   const pendingSubmissionStarted = useRef(false);
   const draftKey = proposalDraftKey(slug);
   const submit = useMutation(
     trpc.submissions.submit.mutationOptions({
       onSuccess: async (submission) => {
         if (draftKey) window.localStorage.removeItem(draftKey);
+        await deleteLocalProposalFiles(draft.clientDraftId);
         await queryClient.invalidateQueries(
           trpc.submissions.list.queryFilter(),
         );
@@ -6494,11 +6719,16 @@ function PublicCfpPage() {
       },
     }),
   );
+  const uploadFile = useMutation(trpc.submissions.uploadFile.mutationOptions());
   const { coreAnswers, customAnswers, step } = draft;
 
   useEffect(() => {
     window.localStorage.setItem(draftKey, JSON.stringify(draft));
   }, [draft, draftKey]);
+
+  useEffect(() => {
+    void loadLocalProposalFiles(draft.clientDraftId).then(setSelectedFiles);
+  }, [draft.clientDraftId]);
 
   function proposalInput() {
     if (!cfp.data) {
@@ -6516,6 +6746,7 @@ function PublicCfpPage() {
         { name: coreAnswers.speakerName, email: coreAnswers.speakerEmail },
       ],
       customAnswers,
+      fileAnswers: draft.fileAnswers,
     });
     if (!parsed.success) {
       return {
@@ -6537,8 +6768,7 @@ function PublicCfpPage() {
   }
 
   const finishPendingSubmission = useEffectEvent(() => {
-    const parsed = proposalInput();
-    if (parsed.ok) submit.mutate(parsed.value);
+    void submitWithFiles();
   });
 
   useEffect(() => {
@@ -6583,6 +6813,90 @@ function PublicCfpPage() {
     }));
   }
 
+  async function selectProposalFile(
+    field: Extract<CustomField, { type: "file" }>,
+    file?: File,
+  ) {
+    setFileError(undefined);
+    if (!file) return;
+    if (
+      file.size > field.maxSizeMb * 1_000_000 ||
+      !acceptedBrowserFile(field.acceptedTypes, file.type)
+    ) {
+      setFileError(
+        `Choose ${formatAcceptedTypes(field.acceptedTypes)} up to ${field.maxSizeMb} MB.`,
+      );
+      return;
+    }
+    const selected = { file, uploadId: crypto.randomUUID() };
+    setSelectedFiles((current) => ({ ...current, [field.key]: selected }));
+    setDraft((current) => ({
+      ...current,
+      fileAnswers: { ...current.fileAnswers, [field.key]: undefined } as Record<
+        string,
+        StoredFileId
+      >,
+    }));
+    await saveLocalProposalFile(draft.clientDraftId, field.key, selected);
+  }
+
+  async function submitWithFiles() {
+    if (!cfp.data || !session.data) return;
+    setFileError(undefined);
+    const visible = visibleCustomFields(cfp.data.customFields, customAnswers);
+    const nextFileAnswers = { ...draft.fileAnswers };
+    try {
+      for (const field of visible) {
+        if (field.type !== "file") continue;
+        const selected = selectedFiles[field.key];
+        if (!selected) continue;
+        const saved = await uploadFile.mutateAsync({
+          slug,
+          cfpId: cfp.data.cfpId,
+          clientDraftId: draft.clientDraftId,
+          uploadId: selected.uploadId,
+          fieldKey: field.key,
+          customAnswers,
+          fileName: selected.file.name,
+          contentType: selected.file.type || "application/octet-stream",
+          contentBase64: await browserFileToBase64(selected.file),
+        });
+        nextFileAnswers[field.key] = saved.id;
+      }
+      const parsed = proposalContentSchema.safeParse({
+        title: coreAnswers.title,
+        abstract: coreAnswers.abstract,
+        format: coreAnswers.format,
+        trackId: coreAnswers.track,
+        proposedSpeakers: [
+          { name: coreAnswers.speakerName, email: coreAnswers.speakerEmail },
+        ],
+        customAnswers,
+        fileAnswers: nextFileAnswers,
+      });
+      if (!parsed.success) {
+        setProposalError(
+          parsed.error.issues[0]?.message ??
+            "Check the proposal before submitting.",
+        );
+        return;
+      }
+      setDraft((current) => ({ ...current, fileAnswers: nextFileAnswers }));
+      submit.mutate({
+        slug,
+        cfpId: cfp.data.cfpId,
+        clientDraftId: draft.clientDraftId,
+        ...parsed.data,
+      });
+    } catch (error) {
+      setFileError(
+        error instanceof Error
+          ? error.message
+          : "The file could not be uploaded. Try again.",
+      );
+    }
+  }
+
   async function advance(event: FormEvent) {
     event.preventDefault();
     if (step < publicCfpSteps.length - 1) {
@@ -6614,7 +6928,7 @@ function PublicCfpPage() {
       return;
     }
 
-    submit.mutate(parsed.value);
+    await submitWithFiles();
   }
 
   if (cfp.isPending)
@@ -6802,11 +7116,27 @@ function PublicCfpPage() {
                       field={field}
                       key={field.key}
                       value={customAnswers[field.key] ?? ""}
+                      file={
+                        selectedFiles[field.key]?.file
+                          ? { fileName: selectedFiles[field.key]!.file.name }
+                          : draft.fileAnswers[field.key]
+                            ? ({
+                                id: draft.fileAnswers[field.key],
+                                fileName: "Uploaded file",
+                              } as StoredFile)
+                            : undefined
+                      }
                       onChange={(value) =>
                         setCustomAnswers((current) => ({
                           ...current,
                           [field.key]: value,
                         }))
+                      }
+                      onFileChange={(file) =>
+                        void selectProposalFile(
+                          field as Extract<CustomField, { type: "file" }>,
+                          file,
+                        )
                       }
                     />
                   ),
@@ -6837,13 +7167,16 @@ function PublicCfpPage() {
                 <button
                   className="primary-button"
                   disabled={
-                    submit.isPending || session.isPending || signInPending
+                    submit.isPending ||
+                    uploadFile.isPending ||
+                    session.isPending ||
+                    signInPending
                   }
                   type="submit"
                 >
                   {signInPending
                     ? "Sending code…"
-                    : submit.isPending
+                    : submit.isPending || uploadFile.isPending
                       ? "Submitting…"
                       : session.data
                         ? "Submit proposal"
@@ -6851,9 +7184,9 @@ function PublicCfpPage() {
                 </button>
               )}
             </div>
-            {(proposalError || submit.error) && (
+            {(proposalError || fileError || submit.error) && (
               <p className="form-error" role="alert">
-                {proposalError ?? submit.error?.message}
+                {proposalError ?? fileError ?? submit.error?.message}
               </p>
             )}
           </form>
@@ -6867,12 +7200,16 @@ function PublicCustomField({
   disabled,
   field,
   value,
+  file,
   onChange,
+  onFileChange,
 }: {
   disabled: boolean;
   field: CustomField;
   value: string;
+  file: (Pick<StoredFile, "fileName"> & { url?: string }) | undefined;
   onChange: (value: string) => void;
+  onFileChange?: (file: File | undefined) => void;
 }) {
   if (field.type === "long_text")
     return (
@@ -6906,18 +7243,25 @@ function PublicCustomField({
   if (field.type === "file")
     return (
       <Field
-        hint={`Up to ${field.maxSizeMb} MB`}
+        hint={`${formatAcceptedTypes(field.acceptedTypes)} · Up to ${field.maxSizeMb} MB`}
         label={field.label}
         name={field.key}
         required={field.required}
       >
         <input
           accept={field.acceptedTypes.join(",")}
-          disabled
+          disabled={disabled}
           id={field.key}
-          required={field.required}
+          required={field.required && !file}
           type="file"
+          onChange={(event) => onFileChange?.(event.target.files?.[0])}
         />
+        {file &&
+          (file.url ? (
+            <a href={file.url}>{file.fileName}</a>
+          ) : (
+            <span>{file.fileName}</span>
+          ))}
       </Field>
     );
   return (
@@ -6960,6 +7304,7 @@ function emptyProposalDraft(): ProposalDraft {
       track: "",
     },
     customAnswers: {},
+    fileAnswers: {},
   };
 }
 
@@ -6988,6 +7333,12 @@ function submissionContent(submission: Submission): ProposalEditContent {
     format: submission.format,
     trackId: submission.track.id,
     customAnswers: submission.customAnswers,
+    fileAnswers: Object.fromEntries(
+      Object.entries(submission.fileAnswers).map(([key, file]) => [
+        key,
+        file.id,
+      ]),
+    ),
   };
 }
 

@@ -24,7 +24,6 @@ type CfpWriteResult =
         | "already_draft"
         | "deadline_after_event"
         | "deadline_passed"
-        | "file_fields_unsupported"
         | "missing_track"
         | "not_found"
         | "persistence_failed"
@@ -264,10 +263,6 @@ export async function saveAndOpenCfp(
   if (new Date(input.deadline) <= new Date()) {
     return { ok: false, error: "deadline_passed" };
   }
-  if (input.customFields.some((field) => field.type === "file")) {
-    return { ok: false, error: "file_fields_unsupported" };
-  }
-
   const [currentOpen] = await database
     .select()
     .from(cfps)

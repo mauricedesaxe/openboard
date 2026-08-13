@@ -48,9 +48,13 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
     ),
   ).toBeLessThan(400);
   await page.getByLabel("Audience").selectOption("Experienced");
+  await expect(page.getByText("application/pdf · Up to 1 MB")).toBeVisible();
   await page
     .getByRole("textbox", { name: "Workshop requirements" })
     .fill("Keep this answer while hidden.");
+  await page
+    .getByLabel("Session outline")
+    .setInputFiles("test/fixtures/outline.pdf");
   await page.getByLabel("Audience").selectOption("Beginner");
   expect(trpcRequests).toEqual([]);
 
@@ -60,6 +64,7 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   await expect(
     page.getByRole("textbox", { name: "Workshop requirements" }),
   ).toHaveValue("Keep this answer while hidden.");
+  await expect(page.getByText("outline.pdf")).toBeVisible();
   await page.getByLabel("Audience").selectOption("Beginner");
   trpcRequests.length = 0;
 
@@ -283,6 +288,15 @@ async function createOpenCfp(page: Page, slug: string) {
         label: "Workshop requirements",
         type: "long_text",
         required: true,
+        condition: { fieldKey: "audience", equals: "Experienced" },
+      },
+      {
+        key: "outline",
+        label: "Session outline",
+        type: "file",
+        required: false,
+        acceptedTypes: ["application/pdf"],
+        maxSizeMb: 1,
         condition: { fieldKey: "audience", equals: "Experienced" },
       },
     ],

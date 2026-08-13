@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { customFieldsSchema, type CfpId, type TrackId } from "./cfps";
 import type { InvitationId } from "./event-team";
+import { storedFileIdSchema, storedFileSchema } from "./files";
 
 export type SubmissionId = string & { readonly __brand: "SubmissionId" };
 export type SubmissionSpeakerId = string & {
@@ -26,6 +27,11 @@ export const proposalAnswersSchema = z.record(
   z.string().max(20_000),
 );
 
+export const proposalFileAnswersSchema = z.record(
+  z.string().regex(/^[a-z][a-z0-9_]*$/),
+  storedFileIdSchema,
+);
+
 export const proposalContentSchema = z.object({
   title: z.string().trim().min(2).max(200),
   abstract: z.string().trim().min(10).max(10_000),
@@ -41,6 +47,7 @@ export const proposalContentSchema = z.object({
       "Use each proposed-speaker email once.",
     ),
   customAnswers: proposalAnswersSchema,
+  fileAnswers: proposalFileAnswersSchema.default({}),
 });
 
 export const submitProposalSchema = proposalContentSchema.extend({
@@ -88,6 +95,7 @@ export const proposalDraftSchema = z.object({
     track: z.string(),
   }),
   customAnswers: z.record(z.string(), z.string()),
+  fileAnswers: proposalFileAnswersSchema.default({}),
 });
 
 export type ProposalDraft = z.infer<typeof proposalDraftSchema>;
@@ -137,6 +145,7 @@ export const submissionSchema = z.object({
     }),
   ),
   customAnswers: proposalAnswersSchema,
+  fileAnswers: z.record(z.string(), storedFileSchema),
   decision: z.object({
     status: z.enum(["pending", "accepted", "declined"]),
   }),
@@ -149,3 +158,17 @@ export const submissionSchema = z.object({
 });
 
 export type Submission = z.infer<typeof submissionSchema>;
+
+export const uploadProposalFileSchema = z.object({
+  slug: z.string().min(1),
+  cfpId: z.string().transform((value) => value as CfpId),
+  clientDraftId: z.uuid(),
+  uploadId: z.uuid(),
+  fieldKey: z.string().regex(/^[a-z][a-z0-9_]*$/),
+  customAnswers: proposalAnswersSchema,
+  fileName: z.string().trim().min(1).max(255),
+  contentType: z.string().trim().min(1).max(255),
+  contentBase64: z.string().min(1),
+});
+
+export type UploadProposalFileInput = z.infer<typeof uploadProposalFileSchema>;

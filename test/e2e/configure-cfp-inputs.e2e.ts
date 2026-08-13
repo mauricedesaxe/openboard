@@ -45,6 +45,11 @@ test("refreshes the public CFP after its definition changes", async ({
   await options.fill("");
   await options.pressSequentially("First, Second choice");
   await expect(options).toHaveValue("First, Second choice");
+  await page.getByRole("button", { name: "+ File" }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Accepted MIME types" }),
+  ).toHaveValue("application/pdf");
+  await expect(page.getByLabel("Maximum MB")).toHaveValue("10");
 
   await page.getByRole("textbox", { name: "CFP name" }).fill("Browser CFP");
   await page.getByRole("button", { name: "Create draft" }).click();

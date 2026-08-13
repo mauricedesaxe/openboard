@@ -16,6 +16,7 @@ import {
   type CustomField,
 } from "../../shared/cfps";
 import type { UserId } from "../../shared/events";
+import type { StoredFileId } from "../../shared/files";
 import {
   proposalAnswersSchema,
   submissionSchema,
@@ -25,6 +26,7 @@ import {
   type SubmissionId,
   type SubmissionSpeakerId,
   type SubmitProposalInput,
+  type UploadProposalFileInput,
 } from "../../shared/submissions";
 import {
   communicationInsertStatements,
@@ -38,12 +40,16 @@ import {
   eventRoles,
   events,
   formResponses,
+  formResponseAttachments,
   reviewerAssignments,
   submissions,
   submissionSpeakerInvitations,
   submissionSpeakers,
+  submissionFileUploads,
+  storedFiles,
   tracks,
 } from "../database/schema";
+import { compensateStoredFile, putStoredFile } from "../files/repository";
 import {
   prepareSubmissionSpeakerInvitation,
   type SubmissionSpeakerInvitationDelivery,
@@ -54,6 +60,7 @@ type ProposalWriteError =
   | "cfp_changed"
   | "deadline_passed"
   | "invalid_answers"
+  | "invalid_file"
   | "invalid_format"
   | "invalid_track"
   | "not_found"
@@ -66,8 +73,8 @@ type ProposalWriteResult =
 
 type ValidatedProposalInput = Pick<
   ProposalContent,
-  "abstract" | "customAnswers" | "format" | "title" | "trackId"
->;
+  "abstract" | "customAnswers" | "fileAnswers" | "format" | "title" | "trackId"
+> & { ownerUserId: UserId; clientDraftId: string };
 
 type SubmitProposalResult =
   | {
@@ -105,15 +112,15 @@ export async function submitProposal(
       : { ok: false, error: "persistence_failed" };
   }
 
-  const validated = await validateProposal(
-    database,
-    input.slug,
-    input.cfpId,
-    input,
-  );
+  const validated = await validateProposal(database, input.slug, input.cfpId, {
+    ...input,
+    ownerUserId,
+    clientDraftId: input.clientDraftId,
+  });
   if (!validated.ok) return validated;
 
   const submissionId = crypto.randomUUID() as SubmissionId;
+  const formResponseId = crypto.randomUUID();
   const writeToken = crypto.randomUUID();
   const now = new Date();
   const speakerRows = input.proposedSpeakers.map((speaker, position) => ({
@@ -204,7 +211,7 @@ export async function submitProposal(
           ]
         : []),
       database.insert(formResponses).values({
-        id: crypto.randomUUID(),
+        id: formResponseId,
         cfpId: input.cfpId,
         submissionId,
         answersJson: JSON.stringify(validated.answers),
@@ -212,6 +219,31 @@ export async function submitProposal(
         createdAt: now,
         updatedAt: now,
       }),
+      ...(validated.attachments.length > 0
+        ? [
+            database.insert(formResponseAttachments).values(
+              validated.attachments.map((attachment) => ({
+                id: crypto.randomUUID(),
+                formResponseId,
+                fieldKey: attachment.fieldKey,
+                storedFileId: attachment.storedFileId,
+                createdAt: now,
+              })),
+            ),
+          ]
+        : []),
+      ...(validated.attachments.length > 0
+        ? [
+            database.delete(submissionFileUploads).where(
+              inArray(
+                submissionFileUploads.id,
+                validated.attachments.flatMap((attachment) =>
+                  attachment.uploadId ? [attachment.uploadId] : [],
+                ),
+              ),
+            ),
+          ]
+        : []),
       ...communicationInsertStatements(database, confirmation),
       database
         .update(cfps)
@@ -290,6 +322,7 @@ export async function findAccessibleSubmission(
       trackName: tracks.name,
       answersJson: formResponses.answersJson,
       decisionStatus: decisions.status,
+      formResponseId: formResponses.id,
       communicationId: communications.id,
       submissionOwnerUserId: submissions.ownerUserId,
       eventOwnerUserId: events.ownerUserId,
@@ -328,6 +361,7 @@ export async function findAccessibleSubmission(
       ),
     )
     .limit(1);
+  const fileAnswers = await listFormResponseFiles(database, submissionId);
 
   const speakers = await database
     .select({
@@ -441,6 +475,7 @@ export async function findAccessibleSubmission(
       };
     }),
     customAnswers: JSON.parse(row.answersJson) as unknown,
+    fileAnswers,
     decision: { status: publicDecisionStatus(row.decisionStatus) },
     confirmation: { status: row.communicationId ? "recorded" : undefined },
     permissions: {
@@ -514,10 +549,12 @@ export async function updateOwnSubmission(
       slug: events.slug,
       cfpId: submissions.cfpId,
       decisionStatus: decisions.status,
+      formResponseId: formResponses.id,
     })
     .from(submissions)
     .innerJoin(events, eq(events.id, submissions.eventId))
     .innerJoin(decisions, eq(decisions.submissionId, submissions.id))
+    .innerJoin(formResponses, eq(formResponses.submissionId, submissions.id))
     .where(
       and(
         eq(submissions.id, submissionId),
@@ -533,7 +570,7 @@ export async function updateOwnSubmission(
     database,
     current.slug,
     current.cfpId,
-    input,
+    { ...input, ownerUserId, clientDraftId: submissionId },
   );
   if (!validated.ok) return validated;
 
@@ -600,6 +637,42 @@ export async function updateOwnSubmission(
           updatedAt: now,
         })
         .where(eq(formResponses.submissionId, submissionId)),
+      database
+        .delete(formResponseAttachments)
+        .where(
+          inArray(
+            formResponseAttachments.formResponseId,
+            database
+              .select({ id: formResponses.id })
+              .from(formResponses)
+              .where(eq(formResponses.submissionId, submissionId)),
+          ),
+        ),
+      ...(validated.attachments.length > 0
+        ? [
+            database.insert(formResponseAttachments).values(
+              validated.attachments.map((attachment) => ({
+                id: crypto.randomUUID(),
+                formResponseId: current.formResponseId,
+                fieldKey: attachment.fieldKey,
+                storedFileId: attachment.storedFileId,
+                createdAt: now,
+              })),
+            ),
+          ]
+        : []),
+      ...(validated.attachments.some(({ uploadId }) => uploadId)
+        ? [
+            database.delete(submissionFileUploads).where(
+              inArray(
+                submissionFileUploads.id,
+                validated.attachments.flatMap((attachment) =>
+                  attachment.uploadId ? [attachment.uploadId] : [],
+                ),
+              ),
+            ),
+          ]
+        : []),
     ]);
     if (submissionUpdateResult.meta.changes === 0) {
       return { ok: false, error: "submission_closed" };
@@ -763,6 +836,11 @@ async function validateProposal(
       eventName: string;
       revision: Date;
       answers: Record<string, string>;
+      attachments: Array<{
+        fieldKey: string;
+        storedFileId: string;
+        uploadId: string | null;
+      }>;
     }
   | { ok: false; error: ProposalWriteError }
 > {
@@ -818,22 +896,348 @@ async function validateProposal(
       .map(([key, value]) => [key, value.trim()]),
   );
   const visible = visibleCustomFields(fields.data, currentAnswers);
-  if (visible.some((field) => !validAnswer(field, currentAnswers[field.key]))) {
+  const attachments = await resolveFileAnswers(
+    database,
+    input.ownerUserId,
+    cfpId,
+    input.clientDraftId,
+    input.fileAnswers,
+  );
+  if (
+    !attachments ||
+    visible.some((field) =>
+      field.type === "file"
+        ? !validFileAnswer(
+            field,
+            attachments.find(({ fieldKey }) => fieldKey === field.key),
+          )
+        : !validAnswer(field, currentAnswers[field.key]),
+    )
+  ) {
     return { ok: false, error: "invalid_answers" };
   }
+  const visibleKeys = new Set(visible.map((field) => field.key));
 
   return {
     ok: true,
     eventId: definition.eventId,
     eventName: definition.eventName,
     revision: definition.updatedAt,
+    attachments: attachments.filter(({ fieldKey }) =>
+      visibleKeys.has(fieldKey),
+    ),
     answers: Object.fromEntries(
       visible.flatMap((field) => {
+        if (field.type === "file") return [];
         const value = currentAnswers[field.key];
         return value ? [[field.key, value]] : [];
       }),
     ),
   };
+}
+
+export async function uploadProposalFile(
+  database: Database,
+  files: R2Bucket,
+  ownerUserId: UserId,
+  input: UploadProposalFileInput,
+): Promise<
+  | {
+      ok: true;
+      value: {
+        id: StoredFileId;
+        fileName: string;
+        contentType: string;
+        sizeBytes: number;
+        url: string;
+      };
+    }
+  | { ok: false; error: ProposalWriteError }
+> {
+  const existing = await findProposalUpload(
+    database,
+    ownerUserId,
+    input.uploadId,
+  );
+  if (existing) return { ok: true, value: existing };
+
+  const [definition] = await database
+    .select({
+      deadline: cfps.deadline,
+      customFieldsJson: cfps.customFieldsJson,
+    })
+    .from(cfps)
+    .innerJoin(events, eq(events.id, cfps.eventId))
+    .where(
+      and(
+        eq(cfps.id, input.cfpId),
+        eq(events.slug, input.slug),
+        eq(cfps.status, "open"),
+      ),
+    )
+    .limit(1);
+  if (!definition || new Date(definition.deadline) <= new Date()) {
+    return { ok: false, error: "cfp_unavailable" };
+  }
+  const fields = customFieldsSchema.safeParse(
+    JSON.parse(definition.customFieldsJson) as unknown,
+  );
+  const answers = proposalAnswersSchema.safeParse(input.customAnswers);
+  if (!fields.success || !answers.success) {
+    return { ok: false, error: "invalid_answers" };
+  }
+  const field = visibleCustomFields(fields.data, answers.data).find(
+    (candidate) =>
+      candidate.key === input.fieldKey && candidate.type === "file",
+  );
+  if (
+    field?.type !== "file" ||
+    !acceptedContentType(field.acceptedTypes, input.contentType)
+  ) {
+    return { ok: false, error: "invalid_file" };
+  }
+
+  const stored = await putStoredFile(
+    files,
+    ownerUserId,
+    `proposal-files/${input.cfpId}`,
+    input,
+    (bytes, contentType) =>
+      bytes.byteLength <= field.maxSizeMb * 1_000_000 &&
+      acceptedContentType(field.acceptedTypes, contentType),
+  );
+  if (!stored.ok) return { ok: false, error: "invalid_file" };
+
+  try {
+    await database.batch([
+      database.insert(storedFiles).values(stored.value.record),
+      database.insert(submissionFileUploads).values({
+        id: input.uploadId,
+        cfpId: input.cfpId,
+        clientDraftId: input.clientDraftId,
+        fieldKey: input.fieldKey,
+        ownerUserId,
+        storedFileId: stored.value.record.id,
+        createdAt: stored.value.record.createdAt,
+      }),
+    ]);
+  } catch {
+    await compensateStoredFile(
+      files,
+      stored.value.record.objectKey,
+      "proposal_file_upload_compensation_failed",
+    );
+    const raced = await findProposalUpload(
+      database,
+      ownerUserId,
+      input.uploadId,
+    );
+    return raced
+      ? { ok: true, value: raced }
+      : { ok: false, error: "persistence_failed" };
+  }
+  return {
+    ok: true,
+    value: storedFileValue(stored.value.record),
+  };
+}
+
+export async function findAccessibleSubmissionFile(
+  database: Database,
+  viewerUserId: UserId,
+  fileId: StoredFileId,
+) {
+  const [file] = await database
+    .select({
+      objectKey: storedFiles.objectKey,
+      fileName: storedFiles.fileName,
+      contentType: storedFiles.contentType,
+    })
+    .from(storedFiles)
+    .innerJoin(
+      formResponseAttachments,
+      eq(formResponseAttachments.storedFileId, storedFiles.id),
+    )
+    .innerJoin(
+      formResponses,
+      eq(formResponses.id, formResponseAttachments.formResponseId),
+    )
+    .innerJoin(submissions, eq(submissions.id, formResponses.submissionId))
+    .innerJoin(events, eq(events.id, submissions.eventId))
+    .where(
+      and(
+        eq(storedFiles.id, fileId),
+        or(
+          accessibleSubmissionWhere(database, viewerUserId),
+          exists(
+            database
+              .select({ id: reviewerAssignments.id })
+              .from(reviewerAssignments)
+              .where(
+                and(
+                  eq(reviewerAssignments.submissionId, submissions.id),
+                  eq(reviewerAssignments.reviewerUserId, viewerUserId),
+                  isNull(reviewerAssignments.revokedAt),
+                ),
+              ),
+          ),
+        ),
+      ),
+    )
+    .limit(1);
+  return file;
+}
+
+async function resolveFileAnswers(
+  database: Database,
+  ownerUserId: UserId,
+  cfpId: string,
+  clientDraftId: string,
+  answers: Record<string, StoredFileId>,
+) {
+  const entries = Object.entries(answers);
+  if (entries.length === 0) return [];
+  const ids = entries.map(([, id]) => id);
+  const uploads = await database
+    .select({
+      uploadId: submissionFileUploads.id,
+      fieldKey: submissionFileUploads.fieldKey,
+      storedFileId: submissionFileUploads.storedFileId,
+      contentType: storedFiles.contentType,
+      sizeBytes: storedFiles.sizeBytes,
+    })
+    .from(submissionFileUploads)
+    .innerJoin(
+      storedFiles,
+      eq(storedFiles.id, submissionFileUploads.storedFileId),
+    )
+    .where(
+      and(
+        eq(submissionFileUploads.ownerUserId, ownerUserId),
+        eq(submissionFileUploads.cfpId, cfpId),
+        eq(submissionFileUploads.clientDraftId, clientDraftId),
+        inArray(submissionFileUploads.storedFileId, ids),
+      ),
+    );
+  const attached = await database
+    .select({
+      uploadId: sql<null>`NULL`,
+      fieldKey: formResponseAttachments.fieldKey,
+      storedFileId: formResponseAttachments.storedFileId,
+      contentType: storedFiles.contentType,
+      sizeBytes: storedFiles.sizeBytes,
+    })
+    .from(formResponseAttachments)
+    .innerJoin(
+      formResponses,
+      eq(formResponses.id, formResponseAttachments.formResponseId),
+    )
+    .innerJoin(submissions, eq(submissions.id, formResponses.submissionId))
+    .innerJoin(
+      storedFiles,
+      eq(storedFiles.id, formResponseAttachments.storedFileId),
+    )
+    .where(
+      and(
+        eq(submissions.id, clientDraftId),
+        eq(submissions.ownerUserId, ownerUserId),
+        eq(submissions.cfpId, cfpId),
+        inArray(formResponseAttachments.storedFileId, ids),
+      ),
+    );
+  const resolved = entries.flatMap(([fieldKey, storedFileId]) => {
+    const match = [...uploads, ...attached].find(
+      (candidate) =>
+        candidate.fieldKey === fieldKey &&
+        candidate.storedFileId === storedFileId,
+    );
+    return match ? [match] : [];
+  });
+  return resolved.length === entries.length ? resolved : undefined;
+}
+
+function validFileAnswer(
+  field: Extract<CustomField, { type: "file" }>,
+  file: { contentType: string; sizeBytes: number } | undefined,
+) {
+  if (!file) return !field.required;
+  return (
+    file.sizeBytes <= field.maxSizeMb * 1_000_000 &&
+    acceptedContentType(field.acceptedTypes, file.contentType)
+  );
+}
+
+async function listFormResponseFiles(database: Database, submissionId: string) {
+  const rows = await database
+    .select({
+      fieldKey: formResponseAttachments.fieldKey,
+      id: storedFiles.id,
+      fileName: storedFiles.fileName,
+      contentType: storedFiles.contentType,
+      sizeBytes: storedFiles.sizeBytes,
+    })
+    .from(formResponseAttachments)
+    .innerJoin(
+      formResponses,
+      eq(formResponses.id, formResponseAttachments.formResponseId),
+    )
+    .innerJoin(
+      storedFiles,
+      eq(storedFiles.id, formResponseAttachments.storedFileId),
+    )
+    .where(eq(formResponses.submissionId, submissionId));
+  return Object.fromEntries(
+    rows.map((row) => [row.fieldKey, storedFileValue(row)]),
+  );
+}
+
+async function findProposalUpload(
+  database: Database,
+  ownerUserId: UserId,
+  uploadId: string,
+) {
+  const [row] = await database
+    .select({
+      id: storedFiles.id,
+      fileName: storedFiles.fileName,
+      contentType: storedFiles.contentType,
+      sizeBytes: storedFiles.sizeBytes,
+    })
+    .from(submissionFileUploads)
+    .innerJoin(
+      storedFiles,
+      eq(storedFiles.id, submissionFileUploads.storedFileId),
+    )
+    .where(
+      and(
+        eq(submissionFileUploads.id, uploadId),
+        eq(submissionFileUploads.ownerUserId, ownerUserId),
+      ),
+    )
+    .limit(1);
+  return row ? storedFileValue(row) : undefined;
+}
+
+function storedFileValue(file: {
+  id: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+}) {
+  return {
+    ...file,
+    id: file.id as StoredFileId,
+    url: `/api/submission-files/${file.id}`,
+  };
+}
+
+function acceptedContentType(acceptedTypes: string[], contentType: string) {
+  const normalized = contentType.toLowerCase();
+  return acceptedTypes.some(
+    (accepted) =>
+      accepted === normalized ||
+      (accepted.endsWith("/*") && normalized.startsWith(accepted.slice(0, -1))),
+  );
 }
 
 function isPublished(status: typeof decisions.$inferSelect.status): boolean {

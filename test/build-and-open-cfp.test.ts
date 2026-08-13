@@ -324,6 +324,17 @@ describe("build and open a conditional CFP", () => {
         )
       ).status,
     ).toBe(200);
+    const fieldsWithFile = [
+      ...draftInput.customFields,
+      {
+        key: "outline",
+        label: "Session outline",
+        type: "file",
+        required: false,
+        acceptedTypes: ["application/pdf"],
+        maxSizeMb: 10,
+      },
+    ];
     expect(
       (
         await callTrpc(
@@ -331,27 +342,9 @@ describe("build and open a conditional CFP", () => {
           {
             ...draftInput,
             cfpId: draft.id,
-            customFields: [
-              ...draftInput.customFields,
-              {
-                key: "outline",
-                label: "Session outline",
-                type: "file",
-                required: false,
-                acceptedTypes: ["application/pdf"],
-                maxSizeMb: 10,
-              },
-            ],
+            name: "Speak with us",
+            customFields: fieldsWithFile,
           },
-          owner.cookie,
-        )
-      ).status,
-    ).toBe(400);
-    expect(
-      (
-        await callTrpc(
-          "cfps.open",
-          { ...draftInput, cfpId: draft.id, name: "Speak with us" },
           unrelated.cookie,
         )
       ).status,
@@ -360,7 +353,12 @@ describe("build and open a conditional CFP", () => {
       (
         await callTrpc(
           "cfps.open",
-          { ...draftInput, cfpId: draft.id, name: "Speak with us" },
+          {
+            ...draftInput,
+            cfpId: draft.id,
+            name: "Speak with us",
+            customFields: fieldsWithFile,
+          },
           owner.cookie,
         )
       ).status,
@@ -369,7 +367,12 @@ describe("build and open a conditional CFP", () => {
       (
         await callTrpc(
           "cfps.open",
-          { ...draftInput, cfpId: draft.id, name: "Ignored repeat" },
+          {
+            ...draftInput,
+            cfpId: draft.id,
+            name: "Ignored repeat",
+            customFields: fieldsWithFile,
+          },
           owner.cookie,
         )
       ).status,
@@ -404,7 +407,7 @@ describe("build and open a conditional CFP", () => {
         { id: web.id, name: "Web platform" },
       ],
     });
-    expect(publicForm.customFields).toEqual(draftInput.customFields);
+    expect(publicForm.customFields).toEqual(fieldsWithFile);
     const selectedTrack = publicForm.tracks.find(
       (track) => track.id === data.id,
     );
@@ -413,7 +416,7 @@ describe("build and open a conditional CFP", () => {
       visibleCustomFields(publicForm.customFields, {
         audience: "Beginner",
       }).map((field) => field.key),
-    ).toEqual(["audience"]);
+    ).toEqual(["audience", "outline"]);
     expect(
       visibleCustomFields(publicForm.customFields, {
         audience: "Experienced",

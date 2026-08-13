@@ -30,6 +30,8 @@ import {
   decisions,
   eventRoles,
   events,
+  formResponseAttachments,
+  formResponses,
   programItems,
   reviewAuditEvents,
   reviewerAssignments,
@@ -39,6 +41,7 @@ import {
   submissionSpeakerInvitations,
   submissionSpeakers,
   tracks,
+  storedFiles,
   user,
 } from "../database/schema";
 import { findEventForOrganizer } from "../events/repository";
@@ -119,6 +122,10 @@ export async function getOrganizerReviewBoard(
       ),
     )
     .orderBy(asc(user.name));
+  const fileRows = await listSubmissionFiles(
+    database,
+    submissionRows.map(({ id }) => id),
+  );
 
   return {
     round: { id: round.id, name: round.name, status: round.status },
@@ -147,6 +154,9 @@ export async function getOrganizerReviewBoard(
         format: submission.format,
         track: submission.track,
         status: submission.status,
+        fileAnswers: fileRows.filter(
+          (file) => file.submissionId === submission.id,
+        ),
         decision: {
           status: submission.decisionStatus,
           revision: submission.decisionRevision,
@@ -178,7 +188,7 @@ export async function listOwnReviewAssignments(
   slug: string,
   reviewRoundId?: string,
 ) {
-  return database
+  const rows = await database
     .select({
       assignmentId: reviewerAssignments.id,
       roundStatus: reviewRounds.status,
@@ -222,22 +232,59 @@ export async function listOwnReviewAssignments(
         eq(submissions.status, "active"),
       ),
     )
-    .orderBy(asc(submissions.title))
+    .orderBy(asc(submissions.title));
+  const files = await listSubmissionFiles(
+    database,
+    rows.map(({ submissionId }) => submissionId),
+  );
+  return rows.map((row) => ({
+    assignmentId: row.assignmentId,
+    roundStatus: row.roundStatus,
+    submission: {
+      id: row.submissionId,
+      title: row.title,
+      abstract: row.abstract,
+      format: row.format,
+      track: row.track,
+      fileAnswers: files.filter(
+        (file) => file.submissionId === row.submissionId,
+      ),
+    },
+    review:
+      row.score === null
+        ? null
+        : { score: row.score, comment: row.comment ?? null },
+  }));
+}
+
+async function listSubmissionFiles(
+  database: Database,
+  submissionIds: string[],
+) {
+  if (submissionIds.length === 0) return [];
+  return database
+    .select({
+      submissionId: formResponses.submissionId,
+      fieldKey: formResponseAttachments.fieldKey,
+      id: storedFiles.id,
+      fileName: storedFiles.fileName,
+      contentType: storedFiles.contentType,
+      sizeBytes: storedFiles.sizeBytes,
+    })
+    .from(formResponseAttachments)
+    .innerJoin(
+      formResponses,
+      eq(formResponses.id, formResponseAttachments.formResponseId),
+    )
+    .innerJoin(
+      storedFiles,
+      eq(storedFiles.id, formResponseAttachments.storedFileId),
+    )
+    .where(inArray(formResponses.submissionId, submissionIds))
     .then((rows) =>
       rows.map((row) => ({
-        assignmentId: row.assignmentId,
-        roundStatus: row.roundStatus,
-        submission: {
-          id: row.submissionId,
-          title: row.title,
-          abstract: row.abstract,
-          format: row.format,
-          track: row.track,
-        },
-        review:
-          row.score === null
-            ? null
-            : { score: row.score, comment: row.comment ?? null },
+        ...row,
+        url: `/api/submission-files/${row.id}`,
       })),
     );
 }
