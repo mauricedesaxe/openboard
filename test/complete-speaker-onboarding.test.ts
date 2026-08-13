@@ -347,6 +347,7 @@ describe("complete speaker onboarding tasks", () => {
       {
         displayName: "Maya Speaker",
         bio: "A reusable profile shared across accepted program work.",
+        expectedRevision: null,
         headshot: {
           fileName: "maya.png",
           contentType: "image/png",
@@ -382,6 +383,7 @@ describe("complete speaker onboarding tasks", () => {
       {
         displayName: "Maya Speaker",
         bio: "A corrected reusable profile shared across accepted program work.",
+        expectedRevision: 1,
       },
       maya.cookie,
     );

@@ -467,6 +467,7 @@ export async function publishAgenda(
 
   const publicationStateRows = await database
     .select({
+      publicationId: agendaPublications.id,
       revision: agendaPublications.revision,
       agendaItemId: calendarSyncStates.agendaItemId,
       uid: calendarSyncStates.uid,
@@ -533,9 +534,52 @@ export async function publishAgenda(
   const publicationId = crypto.randomUUID();
   const revision = (publicationStateRows[0]?.revision ?? 0) + 1;
   const now = new Date();
-  const snapshots = working.items.map((item) =>
+  const currentSnapshots = working.items.map((item) =>
     snapshotItem(item, validation.times.get(item.id)),
   );
+  const currentAgendaItemIds = new Set(
+    currentSnapshots.map((snapshot) => snapshot.agendaItemId),
+  );
+  const removedPublishedItems = publicationStateRows[0]?.publicationId
+    ? await database
+        .select()
+        .from(publishedAgendaItems)
+        .where(
+          and(
+            eq(
+              publishedAgendaItems.publicationId,
+              publicationStateRows[0].publicationId,
+            ),
+            eq(publishedAgendaItems.kind, "program"),
+          ),
+        )
+    : [];
+  const removedSnapshots = removedPublishedItems.flatMap((item) =>
+    currentAgendaItemIds.has(item.agendaItemId) || item.canceled
+      ? []
+      : [
+          {
+            id: crypto.randomUUID(),
+            agendaItemId: item.agendaItemId,
+            kind: "program" as const,
+            programItemId: item.programItemId,
+            title: item.title,
+            abstract: item.abstract,
+            format: item.format,
+            trackId: item.trackId,
+            trackName: item.trackName,
+            trackPosition: item.trackPosition,
+            roomId: item.roomId,
+            roomName: item.roomName,
+            roomPosition: item.roomPosition,
+            startsAt: item.startsAt,
+            endsAt: item.endsAt,
+            canceled: true,
+            speakers: [],
+          },
+        ],
+  );
+  const snapshots = currentSnapshots;
   const agendaTemplates = await database
     .select()
     .from(communicationTemplates)
@@ -549,42 +593,44 @@ export async function publishAgenda(
         ]),
       ),
     );
-  const calendarChanges = snapshots.flatMap((snapshot) => {
-    if (snapshot.kind !== "program") return [];
-    const recipients = snapshotRecipients(snapshot);
-    const previous = previousStates.find(
-      (state) => state.agendaItemId === snapshot.agendaItemId,
-    );
-    if (!previous && snapshot.canceled) return [];
-    const fingerprint = JSON.stringify({
-      title: snapshot.title,
-      room: snapshot.roomName,
-      startsAt: snapshot.startsAt,
-      endsAt: snapshot.endsAt,
-      canceled: snapshot.canceled,
-      abstract: snapshot.abstract,
-      format: snapshot.format,
-      track: snapshot.trackName,
-      speakers: snapshot.speakers.map((speaker) => speaker.displayName),
-      recipients: recipients.map(({ destination, name }) => ({
-        destination,
-        name,
-      })),
-    });
-    if (previous?.fingerprint === fingerprint) return [];
-    const sequence = (previous?.sequence ?? -1) + 1;
-    const uid = previous?.uid ?? `${snapshot.agendaItemId}@openboard`;
-    const action = !previous
-      ? "publish"
-      : snapshot.canceled
-        ? "cancel"
-        : previous.canceled
-          ? "restore"
-          : "update";
-    return [
-      { snapshot, recipients, fingerprint, sequence, uid, action } as const,
-    ];
-  });
+  const calendarChanges = [...snapshots, ...removedSnapshots].flatMap(
+    (snapshot) => {
+      if (snapshot.kind !== "program") return [];
+      const recipients = snapshotRecipients(snapshot);
+      const previous = previousStates.find(
+        (state) => state.agendaItemId === snapshot.agendaItemId,
+      );
+      if (!previous && snapshot.canceled) return [];
+      const fingerprint = JSON.stringify({
+        title: snapshot.title,
+        room: snapshot.roomName,
+        startsAt: snapshot.startsAt,
+        endsAt: snapshot.endsAt,
+        canceled: snapshot.canceled,
+        abstract: snapshot.abstract,
+        format: snapshot.format,
+        track: snapshot.trackName,
+        speakers: snapshot.speakers.map((speaker) => speaker.displayName),
+        recipients: recipients.map(({ destination, name }) => ({
+          destination,
+          name,
+        })),
+      });
+      if (previous?.fingerprint === fingerprint) return [];
+      const sequence = (previous?.sequence ?? -1) + 1;
+      const uid = previous?.uid ?? `${snapshot.agendaItemId}@openboard`;
+      const action = !previous
+        ? "publish"
+        : snapshot.canceled
+          ? "cancel"
+          : previous.canceled
+            ? "restore"
+            : "update";
+      return [
+        { snapshot, recipients, fingerprint, sequence, uid, action } as const,
+      ];
+    },
+  );
   const calendarMetadata = new Map(
     snapshots.flatMap((snapshot) => {
       if (snapshot.kind !== "program") return [];

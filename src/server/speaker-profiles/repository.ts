@@ -119,22 +119,34 @@ export async function saveOwnSpeakerProfile(
   let conflict: "profile_conflict" | undefined;
   try {
     if (existing) {
+      if (input.expectedRevision !== existing.revision) {
+        if (stored?.ok) {
+          await removeStoredHeadshot(
+            database,
+            files,
+            stored.value.record.id,
+            stored.value.record.objectKey,
+            "speaker_headshot_conflict_cleanup_failed",
+          );
+        }
+        return { ok: false, error: "profile_conflict" };
+      }
       const update = database
         .update(speakerProfiles)
         .set(profileValues)
         .where(
-          stored?.ok
-            ? and(
-                eq(speakerProfiles.id, existing.id),
-                existing.headshotStoredFileId
-                  ? eq(
-                      speakerProfiles.headshotStoredFileId,
-                      existing.headshotStoredFileId,
-                    )
-                  : isNull(speakerProfiles.headshotStoredFileId),
-                eq(speakerProfiles.revision, existing.revision),
-              )
-            : eq(speakerProfiles.id, existing.id),
+          and(
+            eq(speakerProfiles.id, existing.id),
+            eq(speakerProfiles.revision, input.expectedRevision),
+            stored?.ok
+              ? existing.headshotStoredFileId
+                ? eq(
+                    speakerProfiles.headshotStoredFileId,
+                    existing.headshotStoredFileId,
+                  )
+                : isNull(speakerProfiles.headshotStoredFileId)
+              : undefined,
+          ),
         );
       if (stored?.ok) {
         const [, updated] = await database.batch([
@@ -143,9 +155,13 @@ export async function saveOwnSpeakerProfile(
         ]);
         if (updated.meta.changes === 0) conflict = "profile_conflict";
       } else {
-        await update;
+        const updated = await update;
+        if (updated.meta.changes === 0) conflict = "profile_conflict";
       }
     } else {
+      if (input.expectedRevision !== null) {
+        return { ok: false, error: "profile_conflict" };
+      }
       const insert = database
         .insert(speakerProfiles)
         .values({

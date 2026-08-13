@@ -12,6 +12,7 @@ export const speakerProfileInputSchema = z.object({
 });
 
 export const saveSpeakerProfileSchema = speakerProfileInputSchema.extend({
+  expectedRevision: z.number().int().positive().nullable(),
   headshot: speakerHeadshotUploadSchema.optional(),
 });
 
@@ -23,6 +24,7 @@ export const speakerHeadshotUrlSchema = z.union([
 export const speakerProfileSchema = speakerProfileInputSchema.extend({
   id: z.uuid(),
   headshotUrl: speakerHeadshotUrlSchema.nullable(),
+  revision: z.number().int().positive(),
   updatedAt: z.iso.datetime({ offset: true }),
 });
 
