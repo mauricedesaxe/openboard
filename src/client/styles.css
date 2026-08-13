@@ -861,6 +861,14 @@ a {
 .agenda-share-action span {
   font-size: 11px;
 }
+.agenda-share-unavailable {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 22px;
+  font: 11px "DM Mono";
+}
 .agenda-undo {
   position: sticky;
   z-index: 20;

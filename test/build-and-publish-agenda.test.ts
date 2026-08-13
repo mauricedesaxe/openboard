@@ -58,6 +58,9 @@ const publishedAgendaSchema = z.object({
     }),
   ),
 });
+const publicationStatusSchema = z
+  .object({ revision: z.number(), publishedAt: z.string() })
+  .nullable();
 
 describe("build and publish an agenda", () => {
   test("corrects conflicts and publishes immutable public revisions", async () => {
@@ -178,6 +181,29 @@ describe("build and publish an agenda", () => {
     expect(
       (await callTrpc("agendas.published", { slug }, undefined, "query"))
         .status,
+    ).toBe(404);
+    expect(
+      getResult(
+        (
+          await callTrpc(
+            "agendas.publicationStatus",
+            { slug },
+            owner.cookie,
+            "query",
+          )
+        ).body,
+        publicationStatusSchema,
+      ),
+    ).toBeNull();
+    expect(
+      (
+        await callTrpc(
+          "agendas.publicationStatus",
+          { slug },
+          outsider.cookie,
+          "query",
+        )
+      ).status,
     ).toBe(404);
 
     const firstPlacement = getResult(
@@ -890,6 +916,26 @@ describe("build and publish an agenda", () => {
     )
       .bind(crypto.randomUUID(), owner.userId, Date.now(), slug)
       .run();
+    expect(
+      getResult(
+        (
+          await callTrpc(
+            "agendas.publicationStatus",
+            { slug },
+            owner.cookie,
+            "query",
+          )
+        ).body,
+        publicationStatusSchema,
+      )?.revision,
+    ).toBe(1);
+    expect(
+      await testEnvironment.DB.prepare(
+        "SELECT finalized FROM agenda_publications INNER JOIN events ON events.id = agenda_publications.event_id WHERE events.slug = ? AND agenda_publications.revision = 2",
+      )
+        .bind(slug)
+        .first<{ finalized: number }>(),
+    ).toEqual({ finalized: 0 });
     expect((await getPublished(slug)).revision).toBe(1);
 
     const firstPublication = await testEnvironment.DB.prepare(

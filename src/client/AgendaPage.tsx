@@ -44,13 +44,15 @@ export function AgendaPage() {
   const queryClient = useQueryClient();
   const workingQuery = trpc.agendas.working.queryOptions({ slug });
   const workingFilter = trpc.agendas.working.queryFilter({ slug });
-  const publishedQuery = trpc.agendas.published.queryOptions(
+  const publicationStatusQuery = trpc.agendas.publicationStatus.queryOptions(
     { slug },
     { retry: false, refetchOnWindowFocus: false },
   );
-  const publishedFilter = trpc.agendas.published.queryFilter({ slug });
+  const publicationStatusFilter = trpc.agendas.publicationStatus.queryFilter({
+    slug,
+  });
   const agenda = useQuery(workingQuery);
-  const publishedAgenda = useQuery(publishedQuery);
+  const publicationStatus = useQuery(publicationStatusQuery);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [track, setTrack] = useState("");
@@ -78,7 +80,7 @@ export function AgendaPage() {
     trpc.agendas.publish.mutationOptions({
       onSuccess: () => {
         void refresh();
-        void queryClient.invalidateQueries(publishedFilter);
+        void queryClient.invalidateQueries(publicationStatusFilter);
       },
     }),
   );
@@ -552,8 +554,13 @@ export function AgendaPage() {
         <span>{data.unplacedProgramItems.length} unplaced</span>
         {conflicts > 0 && <span>Resolve conflicts before publication.</span>}
       </div>
-      {publishedAgenda.isSuccess && (
-        <AgendaShare slug={slug} revision={publishedAgenda.data.revision} />
+      {publicationStatus.isSuccess && publicationStatus.data && (
+        <AgendaShare slug={slug} revision={publicationStatus.data.revision} />
+      )}
+      {publicationStatus.isError && (
+        <AgendaShareUnavailable
+          onRetry={() => void publicationStatus.refetch()}
+        />
       )}
       {(publish.error || placeProgram.error || placeService.error) && (
         <MutationStatus
@@ -659,6 +666,26 @@ export function AgendaPage() {
 
 type ShareOutput = "agenda" | "json" | "calendar";
 
+function AgendaShareUnavailable({ onRetry }: { onRetry: () => void }) {
+  return (
+    <section className="agenda-share" aria-labelledby="agenda-share-title">
+      <div className="agenda-share-heading">
+        <div>
+          <div className="eyebrow">Published outputs unavailable</div>
+          <h2 id="agenda-share-title">Share</h2>
+        </div>
+        <p>Published links could not be loaded.</p>
+      </div>
+      <div className="agenda-share-unavailable">
+        <span role="status">Share is unavailable. Try again.</span>
+        <button className="text-button" onClick={onRetry} type="button">
+          Retry Share
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function AgendaShare({ slug, revision }: { slug: string; revision: number }) {
   const [copyResult, setCopyResult] = useState<{
     output: ShareOutput;
@@ -711,6 +738,7 @@ function AgendaShare({ slug, revision }: { slug: string; revision: number }) {
               <a href={url}>{url}</a>
               <div className="agenda-share-action">
                 <button
+                  aria-label={`Copy ${label} URL`}
                   className="text-button"
                   onClick={() => void copy(output, url)}
                   type="button"

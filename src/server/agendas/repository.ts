@@ -94,6 +94,35 @@ export async function getWorkingAgenda(
   return loadWorkingAgenda(database, event);
 }
 
+export async function getAgendaPublicationStatus(
+  database: Database,
+  actorUserId: UserId,
+  slug: string,
+) {
+  const event = await findEventForOrganizer(database, actorUserId, slug);
+  if (!event) return undefined;
+  const [publication] = await database
+    .select({
+      revision: agendaPublications.revision,
+      publishedAt: agendaPublications.createdAt,
+    })
+    .from(agendaPublications)
+    .where(
+      and(
+        eq(agendaPublications.eventId, event.id),
+        eq(agendaPublications.finalized, true),
+      ),
+    )
+    .orderBy(desc(agendaPublications.revision))
+    .limit(1);
+  return publication
+    ? {
+        revision: publication.revision,
+        publishedAt: publication.publishedAt.toISOString(),
+      }
+    : null;
+}
+
 export async function placeProgramItem(
   database: Database,
   actorUserId: UserId,
