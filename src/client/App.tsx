@@ -1169,7 +1169,12 @@ function EventSettingsPage() {
         />
       </div>
     );
-  return <EventSettingsForm event={event.data} key={event.data.slug} />;
+  return (
+    <EventSettingsForm
+      event={event.data}
+      key={`${event.data.slug}:${event.data.revision}`}
+    />
+  );
 }
 
 function EventSettingsForm({
@@ -4984,7 +4989,10 @@ function SpeakerProfilePage() {
   const queryClient = useQueryClient();
   const profileQuery = trpc.speakerProfile.getOwn.queryOptions();
   const profileState = useQuery(profileQuery);
-  const [draft, setDraft] = useState<SpeakerProfileInput>();
+  const [draft, setDraft] = useState<{
+    values: SpeakerProfileInput;
+    expectedRevision: number | null;
+  }>();
   const [headshotFile, setHeadshotFile] = useState<{
     file: File;
     contentType: SpeakerHeadshotUpload["contentType"];
@@ -4995,7 +5003,10 @@ function SpeakerProfilePage() {
   const save = useMutation(
     trpc.speakerProfile.saveOwn.mutationOptions({
       onSuccess: async (saved) => {
-        setDraft({ displayName: saved.displayName, bio: saved.bio });
+        setDraft({
+          values: { displayName: saved.displayName, bio: saved.bio },
+          expectedRevision: saved.revision,
+        });
         setHeadshotFile(undefined);
         setHeadshotPreviewUrl(undefined);
         queryClient.setQueryData(profileQuery.queryKey, (current) =>
@@ -5052,7 +5063,7 @@ function SpeakerProfilePage() {
   }
 
   const current =
-    draft ??
+    draft?.values ??
     (profileState.data.profile
       ? {
           displayName: profileState.data.profile.displayName,
@@ -5063,7 +5074,13 @@ function SpeakerProfilePage() {
           bio: "",
         });
   function updateProfile(values: Partial<SpeakerProfileInput>) {
-    setDraft({ ...current, ...values });
+    setDraft((existing) => ({
+      values: { ...current, ...values },
+      expectedRevision:
+        existing?.expectedRevision ??
+        profileState.data?.profile?.revision ??
+        null,
+    }));
   }
   function selectHeadshot(file?: File) {
     const contentType = speakerHeadshotUploadSchema.shape.contentType.safeParse(
@@ -5085,6 +5102,8 @@ function SpeakerProfilePage() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (headshotError) return;
+    const expectedRevision =
+      draft?.expectedRevision ?? profileState.data?.profile?.revision ?? null;
     setIsSubmitting(true);
     let contentBase64: string | undefined;
     if (headshotFile) {
@@ -5100,6 +5119,7 @@ function SpeakerProfilePage() {
     try {
       await save.mutateAsync({
         ...current,
+        expectedRevision,
         ...(headshotFile && contentBase64
           ? {
               headshot: {

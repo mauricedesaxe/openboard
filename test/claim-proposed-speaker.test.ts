@@ -25,6 +25,7 @@ const profileSchema = z.object({
   displayName: z.string(),
   bio: z.string(),
   headshotUrl: z.string().nullable(),
+  revision: z.number(),
 });
 const profileStateSchema = z.object({
   eligible: z.boolean(),
@@ -742,6 +743,7 @@ describe("claim a proposed-speaker invitation", () => {
             {
               displayName: "Not a speaker",
               bio: "This user has no claimed speaker relationship.",
+              expectedRevision: null,
             },
             user.cookie,
           )
@@ -755,6 +757,7 @@ describe("claim a proposed-speaker invitation", () => {
           "speakerProfile.saveOwn",
           {
             displayName: "Profile Recipient",
+            expectedRevision: null,
             headshot: {
               fileName: "profile.png",
               contentType: "image/png",
@@ -792,6 +795,7 @@ describe("claim a proposed-speaker invitation", () => {
           {
             displayName: "Profile Recipient",
             bio: "",
+            expectedRevision: created.revision,
             headshot: {
               fileName: "profile.png",
               contentType: "image/png",
@@ -809,6 +813,7 @@ describe("claim a proposed-speaker invitation", () => {
           {
             displayName: "Riley Profile",
             bio: "An updated biography that keeps the same global profile.",
+            expectedRevision: created.revision,
           },
           recipient.cookie,
         )
@@ -820,6 +825,35 @@ describe("claim a proposed-speaker invitation", () => {
       displayName: "Riley Profile",
       headshotUrl: created.headshotUrl,
     });
+    expect(
+      (
+        await callTrpc(
+          "speakerProfile.saveOwn",
+          {
+            displayName: "Stale Profile",
+            bio: "This stale edit must not overwrite the newer profile.",
+            expectedRevision: created.revision,
+          },
+          recipient.cookie,
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      getResult(
+        (
+          await callTrpc(
+            "speakerProfile.getOwn",
+            undefined,
+            recipient.cookie,
+            "query",
+          )
+        ).body,
+        profileStateSchema,
+      ).profile,
+    ).toMatchObject({
+      displayName: "Riley Profile",
+      revision: updated.revision,
+    });
     const replaced = getResult(
       (
         await callTrpc(
@@ -827,6 +861,7 @@ describe("claim a proposed-speaker invitation", () => {
           {
             displayName: "Riley Profile",
             bio: "An updated biography that keeps the same global profile.",
+            expectedRevision: updated.revision,
             headshot: {
               fileName: "replacement.png",
               contentType: "image/png",

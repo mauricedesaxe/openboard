@@ -360,6 +360,7 @@ describe("build and publish an agenda", () => {
           {
             displayName: "Shared Speaker",
             bio: "Shared bio",
+            expectedRevision: 1,
             headshot: {
               fileName: "replacement.png",
               contentType: "image/png",
@@ -422,6 +423,7 @@ describe("build and publish an agenda", () => {
       {
         displayName: "Stale Speaker",
         bio: "This edit started before the concurrent save.",
+        expectedRevision: profileBeforeConflict?.revision ?? 0,
         headshot: {
           fileName: "racing.png",
           contentType: "image/png",
@@ -1249,6 +1251,42 @@ describe("build and publish an agenda", () => {
       owner.cookie,
     );
     expect((await getPublished(slug)).items).toEqual([]);
+    expect(
+      await testEnvironment.DB.prepare(
+        "SELECT sequence, canceled FROM calendar_sync_states WHERE agenda_item_id = ?",
+      )
+        .bind(placement.id)
+        .first(),
+    ).toEqual({ sequence: 1, canceled: 1 });
+    expect(
+      await testEnvironment.DB.prepare(
+        "SELECT action, calendar_sequence AS sequence FROM agenda_delivery_work WHERE agenda_item_id = ? ORDER BY calendar_sequence DESC",
+      )
+        .bind(placement.id)
+        .first(),
+    ).toEqual({ action: "cancel", sequence: 1 });
+    const deliveries: Array<{
+      agendaItemId: string;
+      method: string;
+      sequence: number;
+    }> = [];
+    expect(
+      await processAgendaDeliveryWork(
+        createDatabase(testEnvironment.DB),
+        (delivery) => {
+          deliveries.push({
+            agendaItemId: delivery.agendaItemId,
+            method: delivery.method,
+            sequence: delivery.sequence,
+          });
+          return Promise.resolve();
+        },
+        { organizerEmail: "calendar@example.com", limit: 10_000 },
+      ),
+    ).toMatchObject({ failed: 0 });
+    expect(
+      deliveries.filter((delivery) => delivery.agendaItemId === placement.id),
+    ).toEqual([{ agendaItemId: placement.id, method: "CANCEL", sequence: 1 }]);
   });
 
   test("does not place a program item through another event", async () => {

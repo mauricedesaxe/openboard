@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 
 import type { AgendaItemId } from "../../shared/agendas";
 import type { Database } from "../database/client";
@@ -214,7 +214,7 @@ async function createAgendaCalendarDelivery(
   ) {
     return undefined;
   }
-  const [snapshot] = await database
+  let [snapshot] = await database
     .select({
       publishedAt: agendaPublications.createdAt,
       eventName: agendaPublications.eventName,
@@ -239,6 +239,29 @@ async function createAgendaCalendarDelivery(
       ),
     )
     .limit(1);
+  if (!snapshot && candidate.action === "cancel") {
+    [snapshot] = await database
+      .select({
+        publishedAt: agendaPublications.createdAt,
+        eventName: agendaPublications.eventName,
+        timezone: agendaPublications.timezone,
+        publishedAgendaItemId: publishedAgendaItems.id,
+        title: publishedAgendaItems.title,
+        abstract: publishedAgendaItems.abstract,
+        trackName: publishedAgendaItems.trackName,
+        roomName: publishedAgendaItems.roomName,
+        startsAt: publishedAgendaItems.startsAt,
+        endsAt: publishedAgendaItems.endsAt,
+      })
+      .from(publishedAgendaItems)
+      .innerJoin(
+        agendaPublications,
+        eq(agendaPublications.id, publishedAgendaItems.publicationId),
+      )
+      .where(eq(publishedAgendaItems.agendaItemId, candidate.agendaItemId))
+      .orderBy(desc(agendaPublications.revision))
+      .limit(1);
+  }
   if (!snapshot) return undefined;
   const speakers = await database
     .select({ displayName: publishedAgendaSpeakers.displayName })
