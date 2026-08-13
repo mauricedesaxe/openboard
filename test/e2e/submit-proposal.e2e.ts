@@ -86,6 +86,28 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   ).toHaveLength(1);
   await expect(page.getByText("Decision: pending")).toBeVisible();
   await expect(page.getByText("Confirmation: recorded")).toBeVisible();
+  const proposalUrl = page.url();
+  const eventNavigation = page.getByRole("navigation", {
+    name: "Browser Proposal Conference navigation",
+  });
+  await expect(eventNavigation).toBeVisible();
+  await expect(
+    eventNavigation.getByRole("link", { name: "Proposal" }),
+  ).toBeVisible();
+  await expect(
+    eventNavigation.getByRole("link", { name: "Review" }),
+  ).toHaveCount(0);
+  await expect(eventNavigation.getByRole("link", { name: "CFP" })).toHaveCount(
+    0,
+  );
+
+  await page.goto("/");
+  await page.goto(proposalUrl);
+  await expect(eventNavigation).toBeVisible();
+  await page.getByRole("link", { name: "My events" }).click();
+  await page.goBack();
+  await expect(page).toHaveURL(proposalUrl);
+  await expect(eventNavigation).toBeVisible();
   await page.reload();
   await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(
     "A resumed proposal",
