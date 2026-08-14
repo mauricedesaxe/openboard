@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, KeyboardEvent } from "react";
 import { useLocation } from "react-router";
 
 import {
@@ -19,6 +19,8 @@ export function ProblemReportAction({ signedIn }: { signedIn: boolean }) {
   const [description, setDescription] = useState("");
   const [contactAllowed, setContactAllowed] = useState(false);
   const openedAt = useRef(0);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const dialog = useRef<HTMLElement>(null);
   const submit = useMutation(
     trpc.problemReports.submit.mutationOptions({
       onSuccess: () => trackBrowserEvent("problem_reported"),
@@ -34,6 +36,7 @@ export function ProblemReportAction({ signedIn }: { signedIn: boolean }) {
     setDescription("");
     setContactAllowed(false);
     submit.reset();
+    trigger.current?.focus();
   }
   function sendReport(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -47,12 +50,40 @@ export function ProblemReportAction({ signedIn }: { signedIn: boolean }) {
       website: typeof website === "string" ? website : "",
     });
   }
+  function keepFocusInside(event: KeyboardEvent<HTMLElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeForm();
+      return;
+    }
+    if (event.key !== "Tab" || !dialog.current) return;
+
+    const controls = Array.from(
+      dialog.current.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), input:not([tabindex="-1"]), textarea',
+      ),
+    );
+    const first = controls[0];
+    const last = controls.at(-1);
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  const rateLimited =
+    submit.error?.message === "Too many reports were sent. Try again later.";
 
   return (
     <>
       <button
         className="problem-report-trigger"
         onClick={openForm}
+        ref={trigger}
         type="button"
       >
         Report a problem
@@ -63,6 +94,8 @@ export function ProblemReportAction({ signedIn }: { signedIn: boolean }) {
             aria-labelledby="problem-report-title"
             aria-modal="true"
             className="problem-report-dialog"
+            onKeyDown={keepFocusInside}
+            ref={dialog}
             role="dialog"
           >
             {submit.isSuccess ? (
@@ -137,13 +170,16 @@ export function ProblemReportAction({ signedIn }: { signedIn: boolean }) {
                 <button
                   className="primary-button"
                   disabled={submit.isPending}
-                  type="submit"
+                  onClick={rateLimited ? closeForm : undefined}
+                  type={rateLimited ? "button" : "submit"}
                 >
-                  {submit.isPending
-                    ? "Sending…"
-                    : submit.isError
-                      ? "Try again"
-                      : "Send report"}
+                  {rateLimited
+                    ? "Close"
+                    : submit.isPending
+                      ? "Sending…"
+                      : submit.isError
+                        ? "Try again"
+                        : "Send report"}
                 </button>
               </form>
             )}

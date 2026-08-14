@@ -2,14 +2,19 @@ import { describe, expect, test } from "vitest";
 import { z } from "zod";
 
 import type { AppConfig } from "../src/server/config";
+import { createDatabase } from "../src/server/database/client";
 import {
   deliverProblemReport,
   getCapturedProblemReports,
   type ProblemReport,
 } from "../src/server/problem-reports/delivery";
+import {
+  releaseProblemReportReservation,
+  reserveProblemReport,
+} from "../src/server/problem-reports/repository";
 import type { UserId } from "../src/shared/events";
 
-import { callTrpc, getResult, signIn } from "./support";
+import { callTrpc, getResult, signIn, testEnvironment } from "./support";
 
 const acceptedSchema = z.object({ accepted: z.literal(true) });
 const reportInput = {
@@ -137,6 +142,7 @@ describe("problem reports", () => {
         ].join("\n"),
         email: true,
         name: "OpenBoard user report",
+        policy_id: "owner-policy",
         requester_email: "owner@example.com",
         summary: "User reported a problem on /events/:slug/agenda",
       }),
@@ -151,6 +157,32 @@ describe("problem reports", () => {
     );
     expect(result).toEqual({ ok: false, reason: "delivery" });
   });
+
+  test("keeps accepted-report capacity after delivery failures", async () => {
+    const database = createDatabase(testEnvironment.DB);
+    const identity = { type: "ip" as const, ipAddress: "192.0.2.245" };
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const reservation = await reserveProblemReport(
+        database,
+        identity,
+        "rate-limit-secret",
+        new Date(),
+      );
+      expect(reservation).toBeDefined();
+      if (reservation) {
+        await releaseProblemReportReservation(database, reservation);
+      }
+    }
+
+    expect(
+      await reserveProblemReport(
+        database,
+        identity,
+        "rate-limit-secret",
+        new Date(),
+      ),
+    ).toBeDefined();
+  });
 });
 
 const betterStackConfig: AppConfig = {
@@ -161,6 +193,7 @@ const betterStackConfig: AppConfig = {
   problemReports: {
     type: "betterstack",
     apiToken: "server-only-token",
+    policyId: "owner-policy",
     requesterEmail: "owner@example.com",
   },
   release: "release-123",

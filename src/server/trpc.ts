@@ -129,7 +129,10 @@ import {
   type OnboardingWriteError,
 } from "./onboarding/repository";
 import { deliverProblemReport } from "./problem-reports/delivery";
-import { acceptProblemReport } from "./problem-reports/repository";
+import {
+  releaseProblemReportReservation,
+  reserveProblemReport,
+} from "./problem-reports/repository";
 import {
   archiveRoom,
   archiveTrack,
@@ -246,12 +249,13 @@ export const appRouter = trpc.router({
         const userId = ctx.session?.user.id as UserId | undefined;
         const ipAddress =
           ctx.request.headers.get("CF-Connecting-IP") ?? "unknown";
-        const accepted = await acceptProblemReport(
+        const reservation = await reserveProblemReport(
           ctx.database,
           userId ? { type: "user", userId } : { type: "ip", ipAddress },
+          ctx.config.authSecret,
           new Date(),
         );
-        if (!accepted) {
+        if (!reservation) {
           throw new TRPCError({
             code: "TOO_MANY_REQUESTS",
             message: "Too many reports were sent. Try again later.",
@@ -270,6 +274,7 @@ export const appRouter = trpc.router({
         };
         const delivery = await deliverProblemReport(ctx.config, report);
         if (!delivery.ok) {
+          await releaseProblemReportReservation(ctx.database, reservation);
           console.error(
             JSON.stringify({
               event: "problem_report_delivery_failed",

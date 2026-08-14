@@ -5,6 +5,7 @@ const commonConfigShape = {
   APP_URL: z.url(),
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTERSTACK_INCIDENT_API_TOKEN: z.string().min(1).optional(),
+  BETTERSTACK_INCIDENT_POLICY_ID: z.string().min(1).optional(),
   BETTERSTACK_INCIDENT_REQUESTER_EMAIL: z.email().optional(),
   VERSION: z.object({ id: z.string().min(1) }).optional(),
 };
@@ -70,7 +71,12 @@ export type AppConfig = {
   problemReports:
     | { type: "capture" }
     | { type: "unavailable" }
-    | { type: "betterstack"; apiToken: string; requesterEmail: string };
+    | {
+        type: "betterstack";
+        apiToken: string;
+        policyId: string;
+        requesterEmail: string;
+      };
   release: string;
 };
 
@@ -113,10 +119,12 @@ export function parseConfig(
         config.APP_ENV !== "production"
           ? { type: "capture" }
           : config.BETTERSTACK_INCIDENT_API_TOKEN &&
+              config.BETTERSTACK_INCIDENT_POLICY_ID &&
               config.BETTERSTACK_INCIDENT_REQUESTER_EMAIL
             ? {
                 type: "betterstack",
                 apiToken: config.BETTERSTACK_INCIDENT_API_TOKEN,
+                policyId: config.BETTERSTACK_INCIDENT_POLICY_ID,
                 requesterEmail: config.BETTERSTACK_INCIDENT_REQUESTER_EMAIL,
               }
             : { type: "unavailable" },
