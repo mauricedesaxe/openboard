@@ -41,13 +41,14 @@ export function ProblemReportAction({ signedIn }: { signedIn: boolean }) {
   function sendReport(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const website = form.get("website");
+    const honeypotWebsite = form.get("website");
     submit.mutate({
       contactAllowed,
       description,
-      elapsedMs: Date.now() - openedAt.current,
+      formOpenDurationMs: Date.now() - openedAt.current,
+      honeypotWebsite:
+        typeof honeypotWebsite === "string" ? honeypotWebsite : "",
       route: reportRoute(location.pathname),
-      website: typeof website === "string" ? website : "",
     });
   }
   function keepFocusInside(event: KeyboardEvent<HTMLElement>) {
