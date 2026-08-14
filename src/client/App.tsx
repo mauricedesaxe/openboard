@@ -77,6 +77,7 @@ import {
 
 import { MutationStatus } from "./MutationStatus";
 import { authClient } from "./auth";
+import { identifyBrowserUser, trackBrowserEvent } from "./browser-telemetry";
 import {
   eventSlugFromPath,
   eventSwitchPath,
@@ -90,6 +91,7 @@ import { useTRPC } from "./trpc";
 
 const ONBOARDING_REFETCH_INTERVAL_MS = 15_000;
 const FILE_ENCODING_CHUNK_BYTES = 32_768;
+const SIGN_IN_COMPLETED_KEY = "openboard:sign-in-completed";
 const AgendaPage = lazy(() =>
   import("./AgendaPage").then((module) => ({ default: module.AgendaPage })),
 );
@@ -123,6 +125,7 @@ export function App() {
 function SessionApp() {
   const session = authClient.useSession();
   const location = useLocation();
+  useBrowserUser(session.data?.user.id);
 
   if (session.isPending) {
     return <FullPageStatus label="Opening your board" />;
@@ -177,6 +180,20 @@ function SignInRoute({ signedIn }: { signedIn: boolean }) {
   const [searchParams] = useSearchParams();
   const returnTo = safeReturnTo(searchParams.get("returnTo"));
   return signedIn ? <Navigate to={returnTo} replace /> : <SignInPage />;
+}
+
+function useBrowserUser(userId: string | undefined) {
+  useEffect(() => {
+    identifyBrowserUser(userId);
+    if (
+      !userId ||
+      window.sessionStorage.getItem(SIGN_IN_COMPLETED_KEY) !== "true"
+    ) {
+      return;
+    }
+    window.sessionStorage.removeItem(SIGN_IN_COMPLETED_KEY);
+    trackBrowserEvent("sign_in_completed");
+  }, [userId]);
 }
 
 function AuthenticatedApp({ email }: { email: string }) {
@@ -580,6 +597,7 @@ function SignInPage() {
       return;
     }
 
+    window.sessionStorage.setItem(SIGN_IN_COMPLETED_KEY, "true");
     window.sessionStorage.removeItem(pendingSignInKey(returnTo));
   }
 
@@ -843,6 +861,7 @@ function CreateEventPage() {
   const createEvent = useMutation(
     trpc.events.create.mutationOptions({
       onSuccess: async (event) => {
+        trackBrowserEvent("event_created");
         await queryClient.invalidateQueries(trpc.events.list.queryFilter());
         void navigate(`/events/${event.slug}`);
       },
@@ -2570,17 +2589,30 @@ function SpeakerTasksPage() {
   const refresh = () =>
     queryClient.invalidateQueries(trpc.onboarding.mine.queryFilter());
   const confirm = useMutation(
-    trpc.onboarding.confirmManual.mutationOptions({ onSuccess: refresh }),
+    trpc.onboarding.confirmManual.mutationOptions({
+      onSuccess: async () => {
+        trackBrowserEvent("onboarding_completed");
+        await refresh();
+      },
+    }),
   );
   const saveDraft = useMutation(
     trpc.onboarding.saveFormDraft.mutationOptions(),
   );
   const submitForm = useMutation(
-    trpc.onboarding.submitForm.mutationOptions({ onSuccess: refresh }),
+    trpc.onboarding.submitForm.mutationOptions({
+      onSuccess: async () => {
+        trackBrowserEvent("onboarding_completed");
+        await refresh();
+      },
+    }),
   );
   const upload = useMutation(
     trpc.onboarding.uploadFile.mutationOptions({
-      onSuccess: refresh,
+      onSuccess: async () => {
+        trackBrowserEvent("onboarding_completed");
+        await refresh();
+      },
       onSettled: () => setUploadingFor(undefined),
     }),
   );
@@ -3217,6 +3249,7 @@ function OrganizerReviewBoard({
   const publish = useMutation(
     trpc.decisions.publish.mutationOptions({
       onSuccess: async (_result, input) => {
+        trackBrowserEvent("decision_published");
         setSelectedForPublication({});
         await refresh();
         await queryClient.invalidateQueries(
@@ -3820,6 +3853,7 @@ function ReviewAssignmentCard({
   const save = useMutation(
     trpc.reviews.save.mutationOptions({
       onSuccess: async () => {
+        trackBrowserEvent("review_completed");
         await queryClient.invalidateQueries(
           trpc.reviews.mine.queryFilter({ slug }),
         );
@@ -5480,7 +5514,12 @@ function CfpBuilder({
     }),
   );
   const open = useMutation(
-    trpc.cfps.open.mutationOptions({ onSuccess: refresh }),
+    trpc.cfps.open.mutationOptions({
+      onSuccess: async () => {
+        trackBrowserEvent("cfp_published");
+        await refresh();
+      },
+    }),
   );
   const cfpStatus = useMutationStatuses([
     {
@@ -6745,6 +6784,7 @@ function PublicCfpPage() {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const session = authClient.useSession();
+  useBrowserUser(session.data?.user.id);
   const cfp = useQuery(
     trpc.cfps.publicByEventSlug.queryOptions(
       { slug },
@@ -6766,6 +6806,7 @@ function PublicCfpPage() {
   const submit = useMutation(
     trpc.submissions.submit.mutationOptions({
       onSuccess: async (submission) => {
+        trackBrowserEvent("proposal_submitted");
         if (draftKey) window.localStorage.removeItem(draftKey);
         await deleteLocalProposalFiles(draft.clientDraftId);
         await queryClient.invalidateQueries(

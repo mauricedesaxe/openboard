@@ -7,6 +7,7 @@ import { BrowserRouter } from "react-router";
 import type { AppRouter } from "../server/trpc";
 
 import { App } from "./App";
+import { initializeBrowserTelemetry } from "./browser-telemetry";
 import { TRPCProvider } from "./trpc";
 import "./styles.css";
 
@@ -43,6 +44,7 @@ if (!root) {
   throw new Error("The application root is missing.");
 }
 
+initializeBrowserTelemetry();
 createRoot(root).render(<Root />);
 
 function shouldRetryQuery(failureCount: number, error: Error): boolean {
