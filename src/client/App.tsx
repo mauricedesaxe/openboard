@@ -773,7 +773,7 @@ function EventIndex() {
           detail={submissions.error.message}
         />
       )}
-      {events.data?.length === 0 && submissions.data?.length === 0 && (
+      {events.data?.length === 0 && (
         <section className="empty-board">
           <span className="empty-number">00</span>
           <h2>No events yet</h2>
@@ -5321,16 +5321,18 @@ function SpeakerProfilePage() {
         ← My events
       </Link>
       <section className="page-heading compact-heading">
-        <div className="eyebrow">Reusable speaker profile</div>
-        <h1>
-          {profileState.data.profile
-            ? "Your public details"
-            : "Create your profile"}
-        </h1>
-        <p>
-          Your bio and headshot stay with you across events and accepted
-          proposals.
-        </p>
+        <div>
+          <div className="eyebrow">Reusable speaker profile</div>
+          <h1>
+            {profileState.data.profile
+              ? "Your public details"
+              : "Create your profile"}
+          </h1>
+          <p>
+            Your bio and headshot stay with you across events and accepted
+            proposals.
+          </p>
+        </div>
       </section>
       <section className="form-board submission-form">
         <form onSubmit={(event) => void submit(event)}>

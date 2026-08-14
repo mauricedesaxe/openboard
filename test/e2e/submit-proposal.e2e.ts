@@ -114,6 +114,18 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   await expect(eventNavigation.getByRole("link")).toHaveText(["Proposal"]);
 
   await page.goto("/");
+  const emptyEvents = page.locator(".empty-board");
+  const proposals = page.locator(".owned-submissions");
+  await expect(emptyEvents).toContainText("No events yet");
+  await expect(proposals).toContainText("Your proposals");
+  await expect(proposals).toContainText("A resumed proposal");
+  await expectSectionsToBeDistinct(emptyEvents, proposals);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(emptyEvents).toBeVisible();
+  await expect(proposals).toBeVisible();
+  await expectSectionsToBeDistinct(emptyEvents, proposals);
+
   await page.goto(proposalUrl);
   await expect(eventNavigation).toBeVisible();
   await page.getByRole("link", { name: "My events" }).click();
@@ -264,6 +276,17 @@ async function measureLocalTransition(
   await transition();
   await page.waitForSelector(selector);
   return page.evaluate(() => Number(document.body.dataset.transitionDuration));
+}
+
+async function expectSectionsToBeDistinct(
+  first: ReturnType<Page["locator"]>,
+  second: ReturnType<Page["locator"]>,
+) {
+  const firstBox = await first.boundingBox();
+  const secondBox = await second.boundingBox();
+  expect(firstBox).not.toBeNull();
+  expect(secondBox).not.toBeNull();
+  expect(secondBox!.y).toBeGreaterThan(firstBox!.y + firstBox!.height);
 }
 
 async function createOpenCfp(page: Page, slug: string) {
