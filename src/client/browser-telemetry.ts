@@ -1,9 +1,12 @@
+import { reportRoute } from "../shared/problem-reports";
+
 export type BrowserTelemetryEvent =
   | "agenda_published"
   | "cfp_published"
   | "decision_published"
   | "event_created"
   | "onboarding_completed"
+  | "problem_reported"
   | "proposal_submitted"
   | "review_completed"
   | "sign_in_completed";
@@ -45,7 +48,7 @@ export function createBrowserTelemetry(input: {
       });
       currentPathname = input.pathname();
       input.command("track", "page-load", {
-        url: browserRoute(currentPathname),
+        url: reportRoute(currentPathname),
       });
     },
     identify(userId) {
@@ -56,12 +59,12 @@ export function createBrowserTelemetry(input: {
       if (pathname === currentPathname) return;
       currentPathname = pathname;
       input.command("track", "page-change", {
-        url: browserRoute(pathname),
+        url: reportRoute(pathname),
       });
     },
     track(event) {
       input.command("track", event, {
-        route: browserRoute(input.pathname()),
+        route: reportRoute(input.pathname()),
       });
     },
   };
@@ -113,7 +116,7 @@ export function sanitizeBrowserError(
   event: BrowserError,
   pathname: string,
 ): BrowserError {
-  const route = browserRoute(pathname);
+  const route = reportRoute(pathname);
   const user = recordValue(event.user);
   const request = recordValue(event.request);
   const requestUrl = typeof request.url === "string" ? request.url : undefined;
@@ -147,22 +150,7 @@ export function didCompleteOnboarding(
   );
 }
 
-export function browserRoute(pathname: string): string {
-  const segments = pathname.split("/").filter(Boolean);
-  if (segments[0] === "invitations" && segments.length >= 2) {
-    return "/invitations/:secret";
-  }
-  if (segments[0] === "speaker-invitations" && segments.length >= 2) {
-    return "/speaker-invitations/:secret";
-  }
-  if (segments[0] === "submissions" && segments.length >= 2) {
-    return "/submissions/:submissionId";
-  }
-  if (segments[0] === "events" && segments.length >= 2) {
-    return ["", "events", ":slug", ...segments.slice(2)].join("/");
-  }
-  return pathname || "/";
-}
+export { reportRoute as browserRoute } from "../shared/problem-reports";
 
 let browserTelemetry: BrowserTelemetry | undefined;
 
@@ -212,7 +200,7 @@ function withSafeBrowserLocation(run: () => void): void {
     window.history.replaceState(
       state,
       "",
-      browserRoute(window.location.pathname),
+      reportRoute(window.location.pathname),
     );
     run();
   } finally {

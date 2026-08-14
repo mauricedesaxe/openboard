@@ -45,6 +45,8 @@ describe("configuration", () => {
           from: validConfig.EMAIL_FROM,
           sender: validConfig.EMAIL,
         },
+        problemReports: { type: "unavailable" },
+        release: "production",
       },
     });
     expect(
@@ -65,6 +67,8 @@ describe("configuration", () => {
           from: validConfig.EMAIL_FROM,
           apiKey: "resend-key",
         },
+        problemReports: { type: "unavailable" },
+        release: "production",
       },
     });
     expect(
@@ -75,5 +79,26 @@ describe("configuration", () => {
         RESEND_API_KEY: undefined,
       }),
     ).toMatchObject({ ok: false });
+  });
+
+  test("keeps incident credentials in production configuration", () => {
+    expect(
+      parseConfig({
+        ...validConfig,
+        BETTERSTACK_INCIDENT_API_TOKEN: "incident-token",
+        BETTERSTACK_INCIDENT_REQUESTER_EMAIL: "owner@example.com",
+        VERSION: { id: "release-123" },
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        problemReports: {
+          type: "betterstack",
+          apiToken: "incident-token",
+          requesterEmail: "owner@example.com",
+        },
+        release: "release-123",
+      },
+    });
   });
 });

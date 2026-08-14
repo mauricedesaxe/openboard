@@ -21,6 +21,7 @@ describe("browser telemetry", () => {
     expect(browserRoute("/speaker-invitations/private-secret")).toBe(
       "/speaker-invitations/:secret",
     );
+    expect(browserRoute("/unknown/private-value")).toBe("/other");
   });
 
   test("removes private browser context before an error is sent", () => {

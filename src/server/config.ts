@@ -4,6 +4,9 @@ const commonConfigShape = {
   APP_ENV: z.enum(["local", "test", "preview", "production"]),
   APP_URL: z.url(),
   BETTER_AUTH_SECRET: z.string().min(32),
+  BETTERSTACK_INCIDENT_API_TOKEN: z.string().min(1).optional(),
+  BETTERSTACK_INCIDENT_REQUESTER_EMAIL: z.email().optional(),
+  VERSION: z.object({ id: z.string().min(1) }).optional(),
 };
 
 const rawConfigSchema = z.discriminatedUnion("EMAIL_TRANSPORT", [
@@ -64,6 +67,11 @@ export type AppConfig = {
     | { type: "capture" }
     | { type: "cloudflare"; from: string; sender: SendEmail }
     | { type: "resend"; from: string; apiKey: string };
+  problemReports?:
+    | { type: "capture" }
+    | { type: "unavailable" }
+    | { type: "betterstack"; apiToken: string; requesterEmail: string };
+  release?: string;
 };
 
 export type ConfigResult =
@@ -101,6 +109,18 @@ export function parseConfig(
                 from: config.EMAIL_FROM,
                 apiKey: config.RESEND_API_KEY,
               },
+      problemReports:
+        config.APP_ENV !== "production"
+          ? { type: "capture" }
+          : config.BETTERSTACK_INCIDENT_API_TOKEN &&
+              config.BETTERSTACK_INCIDENT_REQUESTER_EMAIL
+            ? {
+                type: "betterstack",
+                apiToken: config.BETTERSTACK_INCIDENT_API_TOKEN,
+                requesterEmail: config.BETTERSTACK_INCIDENT_REQUESTER_EMAIL,
+              }
+            : { type: "unavailable" },
+      release: config.VERSION?.id ?? config.APP_ENV,
     },
   };
 }

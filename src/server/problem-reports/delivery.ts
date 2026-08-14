@@ -1,0 +1,92 @@
+import { z } from "zod";
+
+import type { AppConfig } from "../config";
+
+export type ProblemReport = {
+  contactAllowed: boolean;
+  description: string;
+  environment: string;
+  release: string;
+  reportedAt: string;
+  route: string;
+  userId?: string;
+};
+
+type DeliveryResult =
+  | { ok: true; incidentId: string }
+  | { ok: false; reason: "configuration" | "delivery" };
+
+const incidentResponseSchema = z.object({
+  data: z.object({ id: z.string().min(1) }),
+});
+const capturedReports: ProblemReport[] = [];
+
+export async function deliverProblemReport(
+  config: AppConfig,
+  report: ProblemReport,
+  request: typeof fetch = fetch,
+): Promise<DeliveryResult> {
+  if (config.problemReports?.type === "capture") {
+    capturedReports.push(structuredClone(report));
+    return { ok: true, incidentId: `capture:${capturedReports.length}` };
+  }
+  if (!config.problemReports || config.problemReports.type === "unavailable") {
+    return { ok: false, reason: "configuration" };
+  }
+
+  try {
+    const response = await request(
+      "https://uptime.betterstack.com/api/v3/incidents",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.problemReports.apiToken}`,
+          "Content-Type": "application/json",
+        },
+        signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({
+          description: formatIncidentDescription(report),
+          email: true,
+          name: "OpenBoard user report",
+          requester_email: config.problemReports.requesterEmail,
+          summary: `User reported a problem on ${report.route}`,
+        }),
+      },
+    );
+    if (!response.ok) return { ok: false, reason: "delivery" };
+    const parsed = incidentResponseSchema.safeParse(await response.json());
+    return parsed.success
+      ? { ok: true, incidentId: parsed.data.data.id }
+      : { ok: false, reason: "delivery" };
+  } catch {
+    return { ok: false, reason: "delivery" };
+  }
+}
+
+export function getCapturedProblemReports(): readonly ProblemReport[] {
+  return capturedReports;
+}
+
+function formatIncidentDescription(report: ProblemReport): string {
+  return [
+    "A user reported a production problem.",
+    "",
+    `Description: ${redactSensitiveText(report.description)}`,
+    `Route: ${report.route}`,
+    `Release: ${report.release}`,
+    `Timestamp: ${report.reportedAt}`,
+    `Environment: ${report.environment}`,
+    `User ID: ${report.userId ?? "signed out"}`,
+    `Contact allowed: ${report.contactAllowed && report.userId ? "yes" : "no"}`,
+  ].join("\n");
+}
+
+function redactSensitiveText(value: string): string {
+  const redacted = value
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[redacted email]")
+    .replace(/\b\d{6}\b/g, "[redacted code]");
+  return Array.from(redacted, (character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 && ![9, 10, 13].includes(code) ? " " : character;
+  }).join("");
+}

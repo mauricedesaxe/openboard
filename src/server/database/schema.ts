@@ -87,6 +87,15 @@ export const rateLimit = sqliteTable(
   (table) => [uniqueIndex("rate_limit_key_idx").on(table.key)],
 );
 
+export const problemReportRateLimits = sqliteTable(
+  "problem_report_rate_limits",
+  {
+    key: text("key").primaryKey(),
+    windowStartedAt: integer("window_started_at").notNull(),
+    reportCount: integer("report_count").notNull(),
+  },
+);
+
 export const events = sqliteTable(
   "events",
   {
@@ -1163,6 +1172,7 @@ export const schema = {
   programItems,
   publishedAgendaItems,
   publishedAgendaSpeakers,
+  problemReportRateLimits,
   rateLimit,
   reviewAuditEvents,
   reviewerAssignments,
