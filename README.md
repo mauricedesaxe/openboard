@@ -64,7 +64,7 @@ uses `EMAIL_TRANSPORT=resend`, the same `EMAIL_FROM`, and `RESEND_API_KEY`. The 
 
 ## Production monitoring
 
-Better Stack checks `https://openboard.alexlazar.dev/api/health` every minute from outside
-Cloudflare. The endpoint returns `status: ok` only after the Worker validates its production
-configuration and completes a data-free D1 query. Monitor incidents notify the named app owner by
-email and resolve when the endpoint recovers.
+The [Better Stack monitor](https://uptime.betterstack.com/team/t499570/monitors/4814977) checks
+`https://openboard.alexlazar.dev/api/health` every minute. The endpoint returns `{"status":"ok"}`
+only when production configuration is valid and D1 is available. Incidents notify the named app
+owner by email and resolve when the endpoint recovers.
