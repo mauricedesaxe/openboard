@@ -15,6 +15,7 @@ const boardSchema = z.object({
   round: z.object({
     id: z.string(),
     status: z.enum(["draft", "open", "closed"]),
+    lockedByPublishedOutcomes: z.boolean(),
   }),
   reviewers: z.array(
     z.object({
@@ -62,6 +63,7 @@ const mineSchema = z.array(
   z.object({
     assignmentId: z.string(),
     roundStatus: z.enum(["draft", "open", "closed"]),
+    lockedByPublishedOutcomes: z.boolean(),
     submission: z.object({
       id: z.string(),
       title: z.string(),
@@ -230,6 +232,7 @@ describe("review submissions and publish decisions", () => {
       boardSchema,
     );
     expect(board.round.status).toBe("draft");
+    expect(board.round.lockedByPublishedOutcomes).toBe(false);
     expect(board.reviewers.map((candidate) => candidate.email)).toEqual([
       "review-owner@example.com",
       reviewerEmail,
@@ -316,6 +319,7 @@ describe("review submissions and publish decisions", () => {
     expect(mine[0]).toMatchObject({
       assignmentId: firstAssignment.id,
       roundStatus: "open",
+      lockedByPublishedOutcomes: false,
       submission: {
         id: first.id,
         title: "A calm review system",
@@ -706,6 +710,28 @@ describe("review submissions and publish decisions", () => {
       organizer.cookie,
     );
     expect(published.status).toBe(200);
+    board = getResult(
+      (
+        await callTrpc(
+          "reviews.organizerBoard",
+          { slug },
+          owner.cookie,
+          "query",
+        )
+      ).body,
+      boardSchema,
+    );
+    expect(board.round).toMatchObject({
+      status: "closed",
+      lockedByPublishedOutcomes: true,
+    });
+    expect(
+      getResult(
+        (await callTrpc("reviews.mine", { slug }, reviewer.cookie, "query"))
+          .body,
+        mineSchema,
+      )[0]?.lockedByPublishedOutcomes,
+    ).toBe(true);
     expect(
       (
         await callTrpc(

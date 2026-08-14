@@ -1698,6 +1698,10 @@ a {
   color: var(--paper);
   background: var(--ink);
 }
+.status-published-lock {
+  color: var(--paper);
+  background: #a22d18;
+}
 .review-list {
   display: grid;
   gap: 18px;
