@@ -2,8 +2,8 @@ import { z } from "zod";
 
 export const MIN_PROBLEM_REPORT_DESCRIPTION_LENGTH = 10;
 export const MAX_PROBLEM_REPORT_DESCRIPTION_LENGTH = 500;
-export const MIN_PROBLEM_REPORT_COMPLETION_MS = 1_000;
-const MAX_PROBLEM_REPORT_COMPLETION_MS = 3_600_000;
+export const MINIMUM_PROBLEM_REPORT_FORM_OPEN_DURATION_MS = 1_000;
+const MAXIMUM_PROBLEM_REPORT_FORM_OPEN_DURATION_MS = 3_600_000;
 
 export const problemReportInputSchema = z.object({
   contactAllowed: z.boolean(),
@@ -12,9 +12,13 @@ export const problemReportInputSchema = z.object({
     .trim()
     .min(MIN_PROBLEM_REPORT_DESCRIPTION_LENGTH)
     .max(MAX_PROBLEM_REPORT_DESCRIPTION_LENGTH),
-  elapsedMs: z.number().int().min(0).max(MAX_PROBLEM_REPORT_COMPLETION_MS),
+  formOpenDurationMs: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAXIMUM_PROBLEM_REPORT_FORM_OPEN_DURATION_MS),
   route: z.string().max(300),
-  website: z.string().max(200),
+  honeypotWebsite: z.string().max(200),
 });
 
 export function reportRoute(pathname: string): string {

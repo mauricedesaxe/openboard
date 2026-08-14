@@ -42,7 +42,7 @@ import {
   taskFileUploadSchema,
 } from "../shared/onboarding";
 import {
-  MIN_PROBLEM_REPORT_COMPLETION_MS,
+  MINIMUM_PROBLEM_REPORT_FORM_OPEN_DURATION_MS,
   problemReportInputSchema,
   reportRoute,
 } from "../shared/problem-reports";
@@ -236,10 +236,7 @@ export const appRouter = trpc.router({
     submit: trpc.procedure
       .input(problemReportInputSchema)
       .mutation(async ({ ctx, input }) => {
-        if (
-          input.website ||
-          input.elapsedMs < MIN_PROBLEM_REPORT_COMPLETION_MS
-        ) {
+        if (looksAutomated(input)) {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: "The report could not be accepted.",
@@ -1838,3 +1835,13 @@ function throwReviewWriteError(error: ReviewWriteError): never {
 }
 
 export type AppRouter = typeof appRouter;
+
+function looksAutomated(input: {
+  formOpenDurationMs: number;
+  honeypotWebsite: string;
+}): boolean {
+  return (
+    Boolean(input.honeypotWebsite) ||
+    input.formOpenDurationMs < MINIMUM_PROBLEM_REPORT_FORM_OPEN_DURATION_MS
+  );
+}

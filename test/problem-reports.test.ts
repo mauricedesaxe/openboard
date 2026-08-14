@@ -20,9 +20,9 @@ const acceptedSchema = z.object({ accepted: z.literal(true) });
 const reportInput = {
   contactAllowed: true,
   description: "The page stopped responding after I opened the agenda.",
-  elapsedMs: 2_000,
+  formOpenDurationMs: 2_000,
+  honeypotWebsite: "",
   route: "/events/private-event/agenda",
-  website: "",
 };
 
 describe("problem reports", () => {
@@ -71,7 +71,7 @@ describe("problem reports", () => {
   test("rejects automation and limits repeated reports", async () => {
     const automated = await callTrpc(
       "problemReports.submit",
-      { ...reportInput, website: "https://spam.example" },
+      { ...reportInput, honeypotWebsite: "https://spam.example" },
       undefined,
       "mutation",
       { "CF-Connecting-IP": "192.0.2.243" },
