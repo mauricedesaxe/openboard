@@ -2,7 +2,11 @@ import { z } from "zod";
 
 import { customFieldsSchema, type CfpId, type TrackId } from "./cfps";
 import type { InvitationId } from "./event-team";
-import { storedFileIdSchema, storedFileSchema } from "./files";
+import {
+  storedFileIdSchema,
+  storedFileSchema,
+  storedFileUploadSchema,
+} from "./files";
 
 export type SubmissionId = string & { readonly __brand: "SubmissionId" };
 export type SubmissionSpeakerId = string & {
@@ -159,16 +163,13 @@ export const submissionSchema = z.object({
 
 export type Submission = z.infer<typeof submissionSchema>;
 
-export const uploadProposalFileSchema = z.object({
+export const uploadProposalFileSchema = storedFileUploadSchema.extend({
   slug: z.string().min(1),
   cfpId: z.string().transform((value) => value as CfpId),
   clientDraftId: z.uuid(),
   uploadId: z.uuid(),
   fieldKey: z.string().regex(/^[a-z][a-z0-9_]*$/),
   customAnswers: proposalAnswersSchema,
-  fileName: z.string().trim().min(1).max(255),
-  contentType: z.string().trim().min(1).max(255),
-  contentBase64: z.string().min(1),
 });
 
 export type UploadProposalFileInput = z.infer<typeof uploadProposalFileSchema>;
