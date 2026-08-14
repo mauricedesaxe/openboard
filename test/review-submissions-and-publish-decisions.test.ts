@@ -94,6 +94,7 @@ describe("review submissions and publish decisions", () => {
   test("limits proposal attachments to organizers and assigned reviewers", async () => {
     const slug = "review-attachments-2027";
     const owner = await signIn("review-file-owner@example.com");
+    const organizer = await signIn("review-file-organizer@example.com");
     const reviewer = await signIn("review-file-assigned@example.com");
     const unassignedReviewer = await signIn(
       "review-file-unassigned@example.com",
@@ -101,6 +102,13 @@ describe("review submissions and publish decisions", () => {
     const submissionOwner = await signIn("review-file-submit@example.com");
 
     await createEvent(owner.cookie, slug);
+    await inviteAndAccept(
+      owner.cookie,
+      organizer.cookie,
+      slug,
+      "review-file-organizer@example.com",
+      "organizer",
+    );
     await inviteAndAccept(
       owner.cookie,
       reviewer.cookie,
@@ -265,14 +273,14 @@ describe("review submissions and publish decisions", () => {
         })
       ).status,
     ).toBe(404);
-    const ownerDownload = await workerFetch(
+    const organizerDownload = await workerFetch(
       file?.url ?? "/api/submission-files/missing",
-      { headers: { Cookie: owner.cookie } },
+      { headers: { Cookie: organizer.cookie } },
     );
-    expect(ownerDownload.status).toBe(200);
-    expect(new TextDecoder().decode(await ownerDownload.arrayBuffer())).toBe(
-      fileContents,
-    );
+    expect(organizerDownload.status).toBe(200);
+    expect(
+      new TextDecoder().decode(await organizerDownload.arrayBuffer()),
+    ).toBe(fileContents);
 
     expect(
       (await callTrpc("reviews.openRound", { slug }, owner.cookie)).status,
