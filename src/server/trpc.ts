@@ -41,11 +41,7 @@ import {
   saveOnboardingFormSchema,
   taskFileUploadSchema,
 } from "../shared/onboarding";
-import {
-  MINIMUM_PROBLEM_REPORT_FORM_OPEN_DURATION_MS,
-  problemReportInputSchema,
-  reportRoute,
-} from "../shared/problem-reports";
+import { problemReportInputSchema } from "../shared/problem-reports";
 import {
   decisionPublicationSchema,
   decisionQueueStatusSchema,
@@ -128,11 +124,7 @@ import {
   waiveTask,
   type OnboardingWriteError,
 } from "./onboarding/repository";
-import { deliverProblemReport } from "./problem-reports/delivery";
-import {
-  releaseProblemReportReservation,
-  reserveProblemReport,
-} from "./problem-reports/repository";
+import { submitProblemReport } from "./problem-reports/submit";
 import {
   archiveRoom,
   archiveTrack,
@@ -236,65 +228,38 @@ export const appRouter = trpc.router({
     submit: trpc.procedure
       .input(problemReportInputSchema)
       .mutation(async ({ ctx, input }) => {
-        if (looksAutomated(input)) {
+        const userId = ctx.session?.user.id as UserId | undefined;
+        const result = await submitProblemReport({
+          config: ctx.config,
+          database: ctx.database,
+          identity: userId
+            ? { type: "user", userId }
+            : {
+                type: "ip",
+                ipAddress:
+                  ctx.request.headers.get("CF-Connecting-IP") ?? "unknown",
+              },
+          now: new Date(),
+          report: input,
+        });
+        if (result.status === "automated") {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: "The report could not be accepted.",
           });
         }
-
-        const userId = ctx.session?.user.id as UserId | undefined;
-        const ipAddress =
-          ctx.request.headers.get("CF-Connecting-IP") ?? "unknown";
-        const reservation = await reserveProblemReport(
-          ctx.database,
-          userId ? { type: "user", userId } : { type: "ip", ipAddress },
-          ctx.config.authSecret,
-          new Date(),
-        );
-        if (!reservation) {
+        if (result.status === "rate_limited") {
           throw new TRPCError({
             code: "TOO_MANY_REQUESTS",
             message: "Too many reports were sent. Try again later.",
           });
         }
-
-        const route = reportRoute(input.route);
-        const report = {
-          contactAllowed: input.contactAllowed && Boolean(userId),
-          description: input.description,
-          environment: ctx.config.appEnv,
-          release: ctx.config.release,
-          reportedAt: new Date().toISOString(),
-          route,
-          ...(userId ? { userId } : {}),
-        };
-        const delivery = await deliverProblemReport(ctx.config, report);
-        if (!delivery.ok) {
-          await releaseProblemReportReservation(ctx.database, reservation);
-          console.error(
-            JSON.stringify({
-              event: "problem_report_delivery_failed",
-              environment: report.environment,
-              release: report.release,
-              route,
-            }),
-          );
+        if (result.status === "delivery_failed") {
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
             message: "The report could not be delivered. Try again.",
           });
         }
-
-        console.log(
-          JSON.stringify({
-            event: "problem_reported",
-            environment: report.environment,
-            release: report.release,
-            route,
-            signedIn: Boolean(userId),
-          }),
-        );
         return { accepted: true };
       }),
   }),
@@ -1835,13 +1800,3 @@ function throwReviewWriteError(error: ReviewWriteError): never {
 }
 
 export type AppRouter = typeof appRouter;
-
-function looksAutomated(input: {
-  formOpenDurationMs: number;
-  honeypotWebsite: string;
-}): boolean {
-  return (
-    Boolean(input.honeypotWebsite) ||
-    input.formOpenDurationMs < MINIMUM_PROBLEM_REPORT_FORM_OPEN_DURATION_MS
-  );
-}

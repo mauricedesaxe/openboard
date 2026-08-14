@@ -21,6 +21,8 @@ export const problemReportInputSchema = z.object({
   honeypotWebsite: z.string().max(200),
 });
 
+export type ProblemReportInput = z.infer<typeof problemReportInputSchema>;
+
 export function reportRoute(pathname: string): string {
   const segments = pathname.split("/").filter(Boolean);
   if (segments[0] === "invitations" && segments.length >= 2) {
