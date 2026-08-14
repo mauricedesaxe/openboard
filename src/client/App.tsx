@@ -2589,7 +2589,7 @@ function SpeakerTasksPage() {
   const confirm = useMutation(
     trpc.onboarding.confirmManual.mutationOptions({
       onSuccess: async () => {
-        trackBrowserEvent("onboarding_completed");
+        trackBrowserEvent("onboarding_task_completed");
         await refresh();
       },
     }),
@@ -2600,7 +2600,7 @@ function SpeakerTasksPage() {
   const submitForm = useMutation(
     trpc.onboarding.submitForm.mutationOptions({
       onSuccess: async () => {
-        trackBrowserEvent("onboarding_completed");
+        trackBrowserEvent("onboarding_task_completed");
         await refresh();
       },
     }),
@@ -2608,7 +2608,7 @@ function SpeakerTasksPage() {
   const upload = useMutation(
     trpc.onboarding.uploadFile.mutationOptions({
       onSuccess: async () => {
-        trackBrowserEvent("onboarding_completed");
+        trackBrowserEvent("onboarding_task_completed");
         await refresh();
       },
       onSettled: () => setUploadingFor(undefined),

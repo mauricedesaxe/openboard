@@ -3,7 +3,7 @@ export type BrowserTelemetryEvent =
   | "cfp_published"
   | "decision_published"
   | "event_created"
-  | "onboarding_completed"
+  | "onboarding_task_completed"
   | "proposal_submitted"
   | "review_completed"
   | "sign_in_completed";
