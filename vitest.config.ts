@@ -36,6 +36,9 @@ export default defineConfig(async () => {
       name === "0033_templated_communications.sql" ||
       name === "0034_harden_communication_delivery.sql",
   );
+  const eventOwnerRolesMigration = migrations.filter(
+    ({ name }) => name === "0040_backfill_event_owner_roles.sql",
+  );
 
   return {
     plugins: [
@@ -49,6 +52,7 @@ export default defineConfig(async () => {
               agendaDeliveryRecipientMigration,
             AGENDA_DELIVERY_CLAIM_MIGRATION: agendaDeliveryClaimMigration,
             AGENDA_FINALIZATION_MIGRATION: agendaFinalizationMigration,
+            EVENT_OWNER_ROLES_MIGRATION: eventOwnerRolesMigration,
             REPLACEMENT_GUARD_MIGRATION: replacementGuardMigration,
             SUBMISSION_REVISION_MIGRATION: submissionRevisionMigration,
             TEMPLATED_COMMUNICATIONS_MIGRATION:
