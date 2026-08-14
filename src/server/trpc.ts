@@ -42,6 +42,7 @@ import {
   taskFileUploadSchema,
 } from "../shared/onboarding";
 import {
+  MIN_PROBLEM_REPORT_COMPLETION_MS,
   problemReportInputSchema,
   reportRoute,
 } from "../shared/problem-reports";
@@ -232,7 +233,10 @@ export const appRouter = trpc.router({
     submit: trpc.procedure
       .input(problemReportInputSchema)
       .mutation(async ({ ctx, input }) => {
-        if (input.website || input.elapsedMs < 1_000) {
+        if (
+          input.website ||
+          input.elapsedMs < MIN_PROBLEM_REPORT_COMPLETION_MS
+        ) {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: "The report could not be accepted.",
@@ -244,7 +248,7 @@ export const appRouter = trpc.router({
           ctx.request.headers.get("CF-Connecting-IP") ?? "unknown";
         const accepted = await acceptProblemReport(
           ctx.database,
-          userId ? `user:${userId}` : `ip:${ipAddress}`,
+          userId ? { type: "user", userId } : { type: "ip", ipAddress },
           new Date(),
         );
         if (!accepted) {
@@ -259,7 +263,7 @@ export const appRouter = trpc.router({
           contactAllowed: input.contactAllowed && Boolean(userId),
           description: input.description,
           environment: ctx.config.appEnv,
-          release: ctx.config.release ?? ctx.config.appEnv,
+          release: ctx.config.release,
           reportedAt: new Date().toISOString(),
           route,
           ...(userId ? { userId } : {}),

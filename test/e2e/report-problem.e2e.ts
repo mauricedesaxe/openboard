@@ -14,8 +14,19 @@ test("reports a problem from public and authenticated views", async ({
   await page
     .getByRole("textbox", { name: "Problem description" })
     .fill("The sign-in page did not explain what happened.");
-  await page.waitForTimeout(1_000);
+  await page.locator('input[name="website"]').evaluate((input) => {
+    (input as HTMLInputElement).value = "automation";
+  });
   await page.getByRole("button", { name: "Send report" }).click();
+  await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Problem description" }),
+  ).toHaveValue("The sign-in page did not explain what happened.");
+  await page.locator('input[name="website"]').evaluate((input) => {
+    (input as HTMLInputElement).value = "";
+  });
+  await page.waitForTimeout(1_000);
+  await page.getByRole("button", { name: "Try again" }).click();
   await expect(page.getByText("Thanks for the heads-up.")).toBeVisible();
   await page.getByRole("button", { name: "Close" }).click();
 

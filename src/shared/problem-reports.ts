@@ -1,14 +1,21 @@
 import { z } from "zod";
 
+export const MIN_PROBLEM_REPORT_DESCRIPTION_LENGTH = 10;
+export const MAX_PROBLEM_REPORT_DESCRIPTION_LENGTH = 500;
+export const MIN_PROBLEM_REPORT_COMPLETION_MS = 1_000;
+const MAX_PROBLEM_REPORT_COMPLETION_MS = 3_600_000;
+
 export const problemReportInputSchema = z.object({
   contactAllowed: z.boolean(),
-  description: z.string().trim().min(10).max(500),
-  elapsedMs: z.number().int().min(0).max(3_600_000),
+  description: z
+    .string()
+    .trim()
+    .min(MIN_PROBLEM_REPORT_DESCRIPTION_LENGTH)
+    .max(MAX_PROBLEM_REPORT_DESCRIPTION_LENGTH),
+  elapsedMs: z.number().int().min(0).max(MAX_PROBLEM_REPORT_COMPLETION_MS),
   route: z.string().max(300),
   website: z.string().max(200),
 });
-
-export type ProblemReportInput = z.infer<typeof problemReportInputSchema>;
 
 export function reportRoute(pathname: string): string {
   const segments = pathname.split("/").filter(Boolean);

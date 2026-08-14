@@ -150,8 +150,6 @@ export function didCompleteOnboarding(
   );
 }
 
-export { reportRoute as browserRoute } from "../shared/problem-reports";
-
 let browserTelemetry: BrowserTelemetry | undefined;
 
 function installBetterStackCommand(token: string): BetterStackCommand {

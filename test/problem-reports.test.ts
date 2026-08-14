@@ -7,6 +7,7 @@ import {
   getCapturedProblemReports,
   type ProblemReport,
 } from "../src/server/problem-reports/delivery";
+import type { UserId } from "../src/shared/events";
 
 import { callTrpc, getResult, signIn } from "./support";
 
@@ -102,9 +103,7 @@ describe("problem reports", () => {
     }> = [];
     function request(input: RequestInfo | URL, init?: RequestInit) {
       requests.push({ input, init });
-      return Promise.resolve(
-        Response.json({ data: { id: "incident-123" } }, { status: 201 }),
-      );
+      return Promise.resolve(new Response(undefined, { status: 201 }));
     }
     const result = await deliverProblemReport(
       betterStackConfig,
@@ -116,7 +115,7 @@ describe("problem reports", () => {
       request,
     );
 
-    expect(result).toEqual({ ok: true, incidentId: "incident-123" });
+    expect(result).toEqual({ ok: true });
     expect(requests).toHaveLength(1);
     const init = requests[0]?.init;
     expect(init?.headers).toEqual({
@@ -174,5 +173,5 @@ const problemReport: ProblemReport = {
   release: "release-123",
   reportedAt: "2026-08-14T12:00:00.000Z",
   route: "/events/:slug/agenda",
-  userId: "user-123",
+  userId: "user-123" as UserId,
 };

@@ -394,6 +394,8 @@ test("reports a failed authentication code delivery", async () => {
     appEnv: "production",
     appUrl: "https://localhost",
     authSecret: "test-secret-that-is-at-least-thirty-two-characters",
+    problemReports: { type: "unavailable" },
+    release: "test",
     email: {
       type: "cloudflare",
       from: "auth@example.com",
