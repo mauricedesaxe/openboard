@@ -5,7 +5,10 @@ import { parseConfig } from "./server/config";
 import { createDatabase } from "./server/database/client";
 import type { Environment } from "./server/environment";
 import { getCapturedInvitationSecret } from "./server/event-team/delivery";
-import { checkProductionHealth } from "./server/health";
+import {
+  checkProductionHealth,
+  productionUnavailableResponse,
+} from "./server/health";
 import {
   createAuth,
   getCapturedAuthenticationCode,
@@ -25,8 +28,13 @@ const IMMUTABLE_CACHE_SECONDS = 365 * 24 * 60 * 60;
 
 export default {
   async fetch(request, environment): Promise<Response> {
+    const url = new URL(request.url);
     const configResult = parseConfig(environment);
     if (!configResult.ok) {
+      if (url.pathname === "/api/health") {
+        return productionUnavailableResponse();
+      }
+
       return Response.json(
         { code: "INVALID_CONFIGURATION", issues: configResult.issues },
         { status: 503 },
@@ -34,7 +42,6 @@ export default {
     }
 
     const config = configResult.value;
-    const url = new URL(request.url);
     if (url.pathname === "/api/health") {
       return checkProductionHealth(environment.DB);
     }

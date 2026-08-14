@@ -5,7 +5,7 @@ export async function checkProductionHealth(
     const result = await database
       .prepare("SELECT 1 AS reachable")
       .first<{ reachable: number }>();
-    if (result?.reachable !== 1) return unavailableResponse();
+    if (result?.reachable !== 1) return productionUnavailableResponse();
 
     return Response.json(
       { status: "ok" },
@@ -18,11 +18,11 @@ export async function checkProductionHealth(
         error: error instanceof Error ? error.message : "Unknown D1 error",
       }),
     );
-    return unavailableResponse();
+    return productionUnavailableResponse();
   }
 }
 
-function unavailableResponse(): Response {
+export function productionUnavailableResponse(): Response {
   return Response.json(
     { status: "unavailable" },
     { status: 503, headers: { "Cache-Control": "no-store" } },
