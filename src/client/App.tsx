@@ -78,6 +78,7 @@ import {
 import { MutationStatus } from "./MutationStatus";
 import { authClient } from "./auth";
 import {
+  didCompleteOnboarding,
   identifyBrowserUser,
   markBrowserSignInCompleted,
   trackBrowserEvent,
@@ -2586,11 +2587,20 @@ function SpeakerTasksPage() {
   );
   const refresh = () =>
     queryClient.invalidateQueries(trpc.onboarding.mine.queryFilter());
+  const refreshAfterCompletion = async (assignmentId: string) => {
+    const previous = tasks.data ?? [];
+    await refresh();
+    const latest = await queryClient.fetchQuery(
+      trpc.onboarding.mine.queryOptions(),
+    );
+    if (didCompleteOnboarding(previous, latest, assignmentId)) {
+      trackBrowserEvent("onboarding_completed");
+    }
+  };
   const confirm = useMutation(
     trpc.onboarding.confirmManual.mutationOptions({
-      onSuccess: async () => {
-        trackBrowserEvent("onboarding_task_completed");
-        await refresh();
+      onSuccess: async (_result, input) => {
+        await refreshAfterCompletion(input.assignmentId);
       },
     }),
   );
@@ -2599,17 +2609,15 @@ function SpeakerTasksPage() {
   );
   const submitForm = useMutation(
     trpc.onboarding.submitForm.mutationOptions({
-      onSuccess: async () => {
-        trackBrowserEvent("onboarding_task_completed");
-        await refresh();
+      onSuccess: async (_result, input) => {
+        await refreshAfterCompletion(input.assignmentId);
       },
     }),
   );
   const upload = useMutation(
     trpc.onboarding.uploadFile.mutationOptions({
-      onSuccess: async () => {
-        trackBrowserEvent("onboarding_task_completed");
-        await refresh();
+      onSuccess: async (_result, input) => {
+        await refreshAfterCompletion(input.assignmentId);
       },
       onSettled: () => setUploadingFor(undefined),
     }),
