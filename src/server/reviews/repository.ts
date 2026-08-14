@@ -69,10 +69,9 @@ export async function getOrganizerReviewBoard(
   if (!event) return undefined;
   const round = await findOpenOrLatestReviewRound(database, event.id);
   if (!round) return undefined;
-  const lockedByPublishedOutcomes = await hasPublishedOutcomes(
-    database,
+  const publishedRoundIds = await findPublishedReviewRoundIds(database, [
     round.id,
-  );
+  ]);
 
   const activeReviewers = await database
     .select({
@@ -135,8 +134,9 @@ export async function getOrganizerReviewBoard(
     round: {
       id: round.id,
       name: round.name,
-      status: round.status,
-      lockedByPublishedOutcomes,
+      state: publishedRoundIds.has(round.id)
+        ? ("published-lock" as const)
+        : round.status,
     },
     reviewers: activeReviewers.map((reviewer) => {
       const assignments = assignmentRows.filter(
@@ -189,6 +189,18 @@ export async function getOrganizerReviewBoard(
       };
     }),
   };
+}
+
+async function findPublishedReviewRoundIds(
+  database: Database,
+  reviewRoundIds: string[],
+) {
+  if (reviewRoundIds.length === 0) return new Set<string>();
+  const rows = await database
+    .select({ reviewRoundId: decisionPublications.reviewRoundId })
+    .from(decisionPublications)
+    .where(inArray(decisionPublications.reviewRoundId, reviewRoundIds));
+  return new Set(rows.map(({ reviewRoundId }) => reviewRoundId));
 }
 
 export async function listOwnReviewAssignments(
@@ -247,25 +259,15 @@ export async function listOwnReviewAssignments(
     database,
     rows.map(({ submissionId }) => submissionId),
   );
-  const publishedRoundIds = new Set(
-    rows.length === 0
-      ? []
-      : (
-          await database
-            .select({ reviewRoundId: decisionPublications.reviewRoundId })
-            .from(decisionPublications)
-            .where(
-              inArray(
-                decisionPublications.reviewRoundId,
-                rows.map(({ reviewRoundId }) => reviewRoundId),
-              ),
-            )
-        ).map(({ reviewRoundId }) => reviewRoundId),
+  const publishedRoundIds = await findPublishedReviewRoundIds(
+    database,
+    rows.map(({ reviewRoundId }) => reviewRoundId),
   );
   return rows.map((row) => ({
     assignmentId: row.assignmentId,
-    roundStatus: row.roundStatus,
-    lockedByPublishedOutcomes: publishedRoundIds.has(row.reviewRoundId),
+    roundState: publishedRoundIds.has(row.reviewRoundId)
+      ? ("published-lock" as const)
+      : row.roundStatus,
     submission: {
       id: row.submissionId,
       title: row.title,
@@ -1118,13 +1120,4 @@ async function findOpenOrLatestReviewRound(
     )
     .limit(1);
   return round;
-}
-
-async function hasPublishedOutcomes(database: Database, reviewRoundId: string) {
-  const [publication] = await database
-    .select({ id: decisionPublications.id })
-    .from(decisionPublications)
-    .where(eq(decisionPublications.reviewRoundId, reviewRoundId))
-    .limit(1);
-  return Boolean(publication);
 }

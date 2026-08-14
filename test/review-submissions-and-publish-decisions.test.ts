@@ -14,8 +14,7 @@ const assignmentSchema = z.object({ id: z.string() });
 const boardSchema = z.object({
   round: z.object({
     id: z.string(),
-    status: z.enum(["draft", "open", "closed"]),
-    lockedByPublishedOutcomes: z.boolean(),
+    state: z.enum(["draft", "open", "closed", "published-lock"]),
   }),
   reviewers: z.array(
     z.object({
@@ -62,8 +61,7 @@ const boardSchema = z.object({
 const mineSchema = z.array(
   z.object({
     assignmentId: z.string(),
-    roundStatus: z.enum(["draft", "open", "closed"]),
-    lockedByPublishedOutcomes: z.boolean(),
+    roundState: z.enum(["draft", "open", "closed", "published-lock"]),
     submission: z.object({
       id: z.string(),
       title: z.string(),
@@ -231,8 +229,7 @@ describe("review submissions and publish decisions", () => {
       ).body,
       boardSchema,
     );
-    expect(board.round.status).toBe("draft");
-    expect(board.round.lockedByPublishedOutcomes).toBe(false);
+    expect(board.round.state).toBe("draft");
     expect(board.reviewers.map((candidate) => candidate.email)).toEqual([
       "review-owner@example.com",
       reviewerEmail,
@@ -318,8 +315,7 @@ describe("review submissions and publish decisions", () => {
     expect(mine).toHaveLength(1);
     expect(mine[0]).toMatchObject({
       assignmentId: firstAssignment.id,
-      roundStatus: "open",
-      lockedByPublishedOutcomes: false,
+      roundState: "open",
       submission: {
         id: first.id,
         title: "A calm review system",
@@ -722,16 +718,15 @@ describe("review submissions and publish decisions", () => {
       boardSchema,
     );
     expect(board.round).toMatchObject({
-      status: "closed",
-      lockedByPublishedOutcomes: true,
+      state: "published-lock",
     });
     expect(
       getResult(
         (await callTrpc("reviews.mine", { slug }, reviewer.cookie, "query"))
           .body,
         mineSchema,
-      )[0]?.lockedByPublishedOutcomes,
-    ).toBe(true);
+      )[0]?.roundState,
+    ).toBe("published-lock");
     expect(
       (
         await callTrpc(

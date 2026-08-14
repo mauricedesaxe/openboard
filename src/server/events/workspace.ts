@@ -358,7 +358,7 @@ function reviewStatus(review: OrganizerState["review"]) {
   return {
     key: "review",
     label: "Review",
-    value: review?.round.status ?? "Not started",
+    value: review?.round.state ?? "Not started",
     detail: `${completed} of ${assigned} assigned reviews complete`,
     href: "review",
   };

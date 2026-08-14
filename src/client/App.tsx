@@ -2992,6 +2992,7 @@ function formatAcceptedTypes(acceptedTypes: string[]) {
 
 type ReviewPageMode = "overview" | "assignments" | "decisions" | "my-reviews";
 type ReviewSort = "original" | "average-desc" | "average-asc";
+type ReviewRoundState = "draft" | "open" | "closed" | "published-lock";
 
 function ReviewPage() {
   const { slug = "" } = useParams();
@@ -3323,9 +3324,9 @@ function OrganizerReviewBoard({
             );
           })
           .map(({ submission }) => submission);
-  const roundState = board.data.round.lockedByPublishedOutcomes
-    ? "published-lock"
-    : board.data.round.status;
+  const roundState = board.data.round.state;
+  const roundIsClosed =
+    roundState === "closed" || roundState === "published-lock";
 
   function closeWithConfirmation() {
     if (!hasMissingReviews) {
@@ -3375,21 +3376,16 @@ function OrganizerReviewBoard({
                   ? "Published lock"
                   : roundState}
               </span>
-              {board.data.round.status === "draft" && (
-                <span>Reviewing has not opened.</span>
-              )}
-              {board.data.round.status === "closed" &&
-                !board.data.round.lockedByPublishedOutcomes && (
-                  <span>Reviewing is closed.</span>
-                )}
-              {board.data.round.lockedByPublishedOutcomes && (
+              {roundState === "draft" && <span>Reviewing has not opened.</span>}
+              {roundState === "closed" && <span>Reviewing is closed.</span>}
+              {roundState === "published-lock" && (
                 <span>
                   Outcomes are published. This review round is permanently
                   locked and cannot reopen.
                 </span>
               )}
             </div>
-            {board.data.round.status === "draft" && (
+            {roundState === "draft" && (
               <button
                 className="primary-button"
                 disabled={openRound.isPending}
@@ -3399,7 +3395,7 @@ function OrganizerReviewBoard({
                 {openRound.isPending ? "Opening…" : "Open reviewing"}
               </button>
             )}
-            {board.data.round.status === "open" && (
+            {roundState === "open" && (
               <button
                 className="primary-button"
                 disabled={closeRound.isPending}
@@ -3409,17 +3405,16 @@ function OrganizerReviewBoard({
                 {closeRound.isPending ? "Closing…" : "Close reviewing"}
               </button>
             )}
-            {board.data.round.status === "closed" &&
-              !board.data.round.lockedByPublishedOutcomes && (
-                <button
-                  className="text-button"
-                  disabled={reopenRound.isPending}
-                  onClick={() => reopenRound.mutate({ slug })}
-                  type="button"
-                >
-                  {reopenRound.isPending ? "Reopening…" : "Reopen round"}
-                </button>
-              )}
+            {roundState === "closed" && (
+              <button
+                className="text-button"
+                disabled={reopenRound.isPending}
+                onClick={() => reopenRound.mutate({ slug })}
+                type="button"
+              >
+                {reopenRound.isPending ? "Reopening…" : "Reopen round"}
+              </button>
+            )}
           </div>
         )}
       </section>
@@ -3569,7 +3564,7 @@ function OrganizerReviewBoard({
                           )}
                         </select>
                       </Field>
-                      {board.data.round.status === "closed" &&
+                      {roundIsClosed &&
                         submission.decision.status.endsWith("_queued") && (
                           <label className="publication-selection">
                             <input
@@ -3592,7 +3587,7 @@ function OrganizerReviewBoard({
                   {mode === "assignments" &&
                     !hasPublishedDecision &&
                     submission.status === "active" &&
-                    board.data.round.status !== "closed" && (
+                    !roundIsClosed && (
                       <div className="assignment-control">
                         <select
                           aria-label={`Reviewer for ${submission.title}`}
@@ -3654,7 +3649,7 @@ function OrganizerReviewBoard({
                               assignment.reviewerEmail}{" "}
                             · {assignment.score ?? "not scored"}
                           </span>
-                          {board.data.round.status !== "closed" && (
+                          {!roundIsClosed && (
                             <button
                               className="text-button"
                               disabled={reviewBoardStatus.isPendingFor(
@@ -3689,38 +3684,36 @@ function OrganizerReviewBoard({
           );
         })}
       </div>
-      {mode === "decisions" &&
-        board.data.round.status === "closed" &&
-        queued.length > 0 && (
-          <section className="publication-bar">
-            <div>
-              <div className="eyebrow">Atomic publication</div>
-              <strong>
-                Publish {selectedQueued.length} selected{" "}
-                {pluralize(selectedQueued.length, "outcome")}
-                {selectedQueued.length > 1 ? " together" : ""}
-              </strong>
-            </div>
-            <button
-              className="primary-button"
-              disabled={publish.isPending || selectedQueued.length === 0}
-              onClick={() =>
-                publish.mutate({
-                  slug,
-                  selections: selectedQueued.map((submission) => ({
-                    submissionId: submission.id,
-                    expectedStatus: submission.decision.status as
-                      "accept_queued" | "decline_queued",
-                    expectedRevision: submission.decision.revision,
-                  })),
-                })
-              }
-              type="button"
-            >
-              {publish.isPending ? "Publishing…" : "Publish decisions"}
-            </button>
-          </section>
-        )}
+      {mode === "decisions" && roundIsClosed && queued.length > 0 && (
+        <section className="publication-bar">
+          <div>
+            <div className="eyebrow">Atomic publication</div>
+            <strong>
+              Publish {selectedQueued.length} selected{" "}
+              {pluralize(selectedQueued.length, "outcome")}
+              {selectedQueued.length > 1 ? " together" : ""}
+            </strong>
+          </div>
+          <button
+            className="primary-button"
+            disabled={publish.isPending || selectedQueued.length === 0}
+            onClick={() =>
+              publish.mutate({
+                slug,
+                selections: selectedQueued.map((submission) => ({
+                  submissionId: submission.id,
+                  expectedStatus: submission.decision.status as
+                    "accept_queued" | "decline_queued",
+                  expectedRevision: submission.decision.revision,
+                })),
+              })
+            }
+            type="button"
+          >
+            {publish.isPending ? "Publishing…" : "Publish decisions"}
+          </button>
+        </section>
+      )}
     </div>
   );
 }
@@ -3802,8 +3795,7 @@ function ReviewAssignmentCard({
 }: {
   assignment: {
     assignmentId: string;
-    roundStatus: "draft" | "open" | "closed";
-    lockedByPublishedOutcomes: boolean;
+    roundState: ReviewRoundState;
     submission: {
       id: string;
       title: string;
@@ -3837,14 +3829,15 @@ function ReviewAssignmentCard({
       },
     }),
   );
-  const editable = assignment.roundStatus === "open";
-  const unavailableMessage = assignment.lockedByPublishedOutcomes
-    ? "Score and comment controls are permanently unavailable because outcomes from this review round are published."
-    : assignment.roundStatus === "draft"
-      ? "Score and comment controls are unavailable until an organizer opens this review round."
-      : assignment.roundStatus === "closed"
-        ? "Score and comment controls are unavailable because this review round is closed."
-        : undefined;
+  const editable = assignment.roundState === "open";
+  const unavailableMessage =
+    assignment.roundState === "published-lock"
+      ? "Score and comment controls are permanently unavailable because outcomes from this review round are published."
+      : assignment.roundState === "draft"
+        ? "Score and comment controls are unavailable until an organizer opens this review round."
+        : assignment.roundState === "closed"
+          ? "Score and comment controls are unavailable because this review round is closed."
+          : undefined;
   const unavailableMessageId = `review-unavailable-${assignment.assignmentId}`;
   const saveMessage = save.isPending
     ? "Saving review…"
