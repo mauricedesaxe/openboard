@@ -61,3 +61,10 @@ explicit email transport. The primary setup uses `EMAIL_TRANSPORT=cloudflare`,
 `EMAIL_FROM=auth@alexlazar.dev`, and the `EMAIL` binding in `wrangler.jsonc`. The documented fallback
 uses `EMAIL_TRANSPORT=resend`, the same `EMAIL_FROM`, and `RESEND_API_KEY`. The Worker returns a typed
 503 response instead of serving the application when configuration is incomplete or unsafe.
+
+## Production monitoring
+
+Better Stack checks `https://openboard.alexlazar.dev/api/health` every minute from outside
+Cloudflare. The endpoint returns `status: ok` only after the Worker validates its production
+configuration and completes a data-free D1 query. Monitor incidents notify the named app owner by
+email and resolve when the endpoint recovers.
