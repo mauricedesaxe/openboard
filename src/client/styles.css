@@ -9,6 +9,7 @@
   --paper: #f4efe3;
   --acid: #d9ff56;
   --orange: #ed6a3a;
+  --danger: #a22d18;
   --line: rgba(27, 39, 36, 0.22);
 }
 
@@ -1700,7 +1701,7 @@ a {
 }
 .status-published-lock {
   color: var(--paper);
-  background: #a22d18;
+  background: var(--danger);
 }
 .review-list {
   display: grid;
