@@ -209,10 +209,12 @@ jobs:
               VALUES ('preview-agenda', 'preview-event', 0, 0, 0);
             INSERT OR IGNORE INTO agenda_items (id, agenda_id, event_id, kind, service_scope, service_title, starts_at_local, ends_at_local, placed, revision, created_at, updated_at)
               VALUES ('preview-item', 'preview-agenda', 'preview-event', 'service', 'event', 'Preview schedule check', '2028-08-13T09:00', '2028-08-13T10:00', 1, 1, 0, 0);
-            INSERT OR IGNORE INTO agenda_publications (id, agenda_id, event_id, revision, working_revision, event_name, timezone, starts_on, ends_on, published_by_user_id, created_at, finalized, requires_finalization)
-              VALUES ('preview-publication', 'preview-agenda', 'preview-event', 1, 1, 'Preview conference', 'UTC', '2028-08-13', '2028-08-13', 'preview-user', 0, 0, 0);
-            INSERT OR IGNORE INTO published_agenda_items (id, publication_id, agenda_item_id, kind, title, starts_at, ends_at, canceled)
-              VALUES ('preview-published-item', 'preview-publication', 'preview-item', 'service', 'Preview schedule check', '2028-08-13T09:00:00.000Z', '2028-08-13T10:00:00.000Z', 0);
+            INSERT INTO agenda_publications (id, agenda_id, event_id, revision, working_revision, event_name, timezone, starts_on, ends_on, published_by_user_id, created_at, finalized, requires_finalization)
+              SELECT 'preview-publication', 'preview-agenda', 'preview-event', 1, 1, 'Preview conference', 'UTC', '2028-08-13', '2028-08-13', 'preview-user', 0, 0, 0
+              WHERE NOT EXISTS (SELECT 1 FROM agenda_publications WHERE id = 'preview-publication');
+            INSERT INTO published_agenda_items (id, publication_id, agenda_item_id, kind, title, starts_at, ends_at, canceled)
+              SELECT 'preview-published-item', 'preview-publication', 'preview-item', 'service', 'Preview schedule check', '2028-08-13T09:00:00.000Z', '2028-08-13T10:00:00.000Z', 0
+              WHERE NOT EXISTS (SELECT 1 FROM published_agenda_items WHERE id = 'preview-published-item');
             UPDATE agenda_publications SET finalized = 1
               WHERE id = 'preview-publication' AND finalized = 0;
           "
