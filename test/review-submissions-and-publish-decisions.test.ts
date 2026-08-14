@@ -11,6 +11,14 @@ import {
 
 const idSchema = z.object({ id: z.string() });
 const assignmentSchema = z.object({ id: z.string() });
+const fileAnswerSchema = z.object({
+  fieldKey: z.string(),
+  id: z.string(),
+  fileName: z.string(),
+  contentType: z.string(),
+  sizeBytes: z.number(),
+  url: z.string(),
+});
 const boardSchema = z.object({
   round: z.object({
     id: z.string(),
@@ -30,6 +38,7 @@ const boardSchema = z.object({
       id: z.string(),
       title: z.string(),
       status: z.enum(["active", "withdrawn"]),
+      fileAnswers: z.array(fileAnswerSchema),
       decision: z.object({
         status: z.enum([
           "pending",
@@ -68,6 +77,7 @@ const mineSchema = z.array(
       abstract: z.string(),
       format: z.string(),
       track: z.string(),
+      fileAnswers: z.array(fileAnswerSchema),
     }),
     review: z
       .object({ score: z.number(), comment: z.string().nullable() })
@@ -81,6 +91,243 @@ const ownerSubmissionSchema = z.object({
 });
 
 describe("review submissions and publish decisions", () => {
+  test("limits proposal attachments to organizers and assigned reviewers", async () => {
+    const slug = "review-attachments-2027";
+    const owner = await signIn("review-file-owner@example.com");
+    const reviewer = await signIn("review-file-assigned@example.com");
+    const unassignedReviewer = await signIn(
+      "review-file-unassigned@example.com",
+    );
+    const submissionOwner = await signIn("review-file-submit@example.com");
+
+    await createEvent(owner.cookie, slug);
+    await inviteAndAccept(
+      owner.cookie,
+      reviewer.cookie,
+      slug,
+      "review-file-assigned@example.com",
+      "reviewer",
+    );
+    await inviteAndAccept(
+      owner.cookie,
+      unassignedReviewer.cookie,
+      slug,
+      "review-file-unassigned@example.com",
+      "reviewer",
+    );
+    const track = getResult(
+      (
+        await callTrpc(
+          "tracks.create",
+          { slug, name: "Software design" },
+          owner.cookie,
+        )
+      ).body,
+      idSchema,
+    );
+    const cfp = getResult(
+      (
+        await callTrpc(
+          "cfps.createDraft",
+          {
+            slug,
+            name: "Attachment review CFP",
+            deadline: "2027-06-01T00:00:00Z",
+            formats: ["Talk"],
+            customFields: [
+              {
+                key: "outline",
+                label: "Session outline",
+                type: "file",
+                required: true,
+                acceptedTypes: ["application/pdf"],
+                maxSizeMb: 1,
+              },
+            ],
+          },
+          owner.cookie,
+        )
+      ).body,
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        deadline: z.string(),
+        formats: z.array(z.string()),
+        customFields: z.array(z.unknown()),
+      }),
+    );
+    expect(
+      (
+        await callTrpc(
+          "cfps.open",
+          {
+            slug,
+            cfpId: cfp.id,
+            expectedDeadline: cfp.deadline,
+            name: cfp.name,
+            deadline: cfp.deadline,
+            formats: cfp.formats,
+            customFields: cfp.customFields,
+          },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(200);
+
+    const clientDraftId = crypto.randomUUID();
+    const fileContents = "%PDF-1.7 reviewer attachment";
+    const uploaded = getResult(
+      (
+        await callTrpc(
+          "submissions.uploadFile",
+          {
+            slug,
+            cfpId: cfp.id,
+            clientDraftId,
+            uploadId: crypto.randomUUID(),
+            fieldKey: "outline",
+            customAnswers: {},
+            fileName: "session outline.pdf",
+            contentType: "application/pdf",
+            contentBase64: btoa(fileContents),
+          },
+          submissionOwner.cookie,
+        )
+      ).body,
+      z.object({ id: z.string() }),
+    );
+    const submission = getResult(
+      (
+        await callTrpc(
+          "submissions.submit",
+          {
+            slug,
+            cfpId: cfp.id,
+            clientDraftId,
+            title: "Review attachments without exposing them",
+            abstract: "Keep proposal files private to the review workflow.",
+            format: "Talk",
+            trackId: track.id,
+            proposedSpeakers: [
+              { name: "Attachment Speaker", email: "attachment@example.com" },
+            ],
+            customAnswers: {},
+            fileAnswers: { outline: uploaded.id },
+          },
+          submissionOwner.cookie,
+        )
+      ).body,
+      idSchema,
+    );
+    const assignment = getResult(
+      (
+        await callTrpc(
+          "reviews.assign",
+          {
+            slug,
+            submissionId: submission.id,
+            reviewerUserId: reviewer.userId,
+          },
+          owner.cookie,
+        )
+      ).body,
+      assignmentSchema,
+    );
+
+    const board = getResult(
+      (
+        await callTrpc(
+          "reviews.organizerBoard",
+          { slug },
+          owner.cookie,
+          "query",
+        )
+      ).body,
+      boardSchema,
+    );
+    const file = board.submissions[0]?.fileAnswers[0];
+    expect(file).toMatchObject({
+      fieldKey: "outline",
+      id: uploaded.id,
+      fileName: "session outline.pdf",
+      contentType: "application/pdf",
+      sizeBytes: fileContents.length,
+    });
+    expect(file?.url).toBe(`/api/submission-files/${uploaded.id}`);
+
+    expect(
+      (await workerFetch(file?.url ?? "/api/submission-files/missing")).status,
+    ).toBe(404);
+    expect(
+      (
+        await workerFetch(file?.url ?? "/api/submission-files/missing", {
+          headers: { Cookie: unassignedReviewer.cookie },
+        })
+      ).status,
+    ).toBe(404);
+    const ownerDownload = await workerFetch(
+      file?.url ?? "/api/submission-files/missing",
+      { headers: { Cookie: owner.cookie } },
+    );
+    expect(ownerDownload.status).toBe(200);
+    expect(new TextDecoder().decode(await ownerDownload.arrayBuffer())).toBe(
+      fileContents,
+    );
+
+    expect(
+      (await callTrpc("reviews.openRound", { slug }, owner.cookie)).status,
+    ).toBe(200);
+    const mine = getResult(
+      (await callTrpc("reviews.mine", { slug }, reviewer.cookie, "query")).body,
+      mineSchema,
+    );
+    expect(mine[0]?.submission.fileAnswers).toEqual([file]);
+    const reviewerDownload = await workerFetch(
+      file?.url ?? "/api/submission-files/missing",
+      { headers: { Cookie: reviewer.cookie } },
+    );
+    expect(reviewerDownload.status).toBe(200);
+    expect(reviewerDownload.headers.get("cache-control")).toBe(
+      "private, no-store",
+    );
+    expect(reviewerDownload.headers.get("content-disposition")).toBe(
+      "attachment; filename*=UTF-8''session%20outline.pdf",
+    );
+    expect(reviewerDownload.headers.get("content-type")).toBe(
+      "application/pdf",
+    );
+    expect(reviewerDownload.headers.get("x-content-type-options")).toBe(
+      "nosniff",
+    );
+    expect(new TextDecoder().decode(await reviewerDownload.arrayBuffer())).toBe(
+      fileContents,
+    );
+
+    expect(
+      (
+        await callTrpc(
+          "reviews.revokeAssignment",
+          { slug, assignmentId: assignment.id },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      getResult(
+        (await callTrpc("reviews.mine", { slug }, reviewer.cookie, "query"))
+          .body,
+        mineSchema,
+      ),
+    ).toEqual([]);
+    expect(
+      (
+        await workerFetch(file?.url ?? "/api/submission-files/missing", {
+          headers: { Cookie: reviewer.cookie },
+        })
+      ).status,
+    ).toBe(404);
+  });
+
   test("runs one blinded round and publishes selected outcomes atomically", async () => {
     const slug = "review-flow-2027";
     const owner = await signIn("review-owner@example.com");
@@ -721,8 +968,13 @@ describe("review submissions and publish decisions", () => {
       ).all<{ submissionId: string }>(),
     ).toMatchObject({ results: [{ submissionId: first.id }] });
     const finalDecisions = await testEnvironment.DB.prepare(
-      "SELECT submission_id AS submissionId, status FROM decisions ORDER BY submission_id",
-    ).all<{ submissionId: string; status: string }>();
+      `SELECT submission_id AS submissionId, status
+       FROM decisions
+       WHERE submission_id IN (?, ?, ?)
+       ORDER BY submission_id`,
+    )
+      .bind(first.id, second.id, withdrawn.id)
+      .all<{ submissionId: string; status: string }>();
     expect(
       new Map(
         finalDecisions.results.map((decision) => [
