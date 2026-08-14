@@ -95,7 +95,7 @@ const ownerSubmissionSchema = z.object({
 });
 
 describe("review submissions and publish decisions", () => {
-  test("limits proposal attachments to organizers and assigned reviewers", async () => {
+  test("grants proposal attachment access through organizer roles and active assignments", async () => {
     const slug = "review-attachments-2027";
     const owner = await signIn("review-file-owner@example.com");
     const organizer = await signIn("review-file-organizer@example.com");
@@ -251,7 +251,7 @@ describe("review submissions and publish decisions", () => {
         await callTrpc(
           "reviews.organizerBoard",
           { slug },
-          owner.cookie,
+          organizer.cookie,
           "query",
         )
       ).body,
