@@ -51,7 +51,12 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+      - name: Build production release
+        env:
+          VITE_APP_ENV: production
+          VITE_APP_RELEASE: ${{ github.sha }}
+          VITE_BETTERSTACK_BROWSER_TOKEN: ${{ secrets.PRODUCTION_BETTERSTACK_BROWSER_TOKEN }}
+        run: pnpm build
       - name: Apply production migrations
         # Runs against the live production D1 before the new worker deploys, so
         # every migration must be backward-compatible (expand/backfill/contract).
@@ -117,7 +122,12 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm build
+      - name: Build preview release
+        env:
+          VITE_APP_ENV: preview
+          VITE_APP_RELEASE: ${{ github.event.pull_request.head.sha }}
+          VITE_BETTERSTACK_BROWSER_TOKEN: ${{ secrets.PREVIEW_BETTERSTACK_BROWSER_TOKEN }}
+        run: pnpm build
       - name: Verify this is the current open pull request head
         id: current-pr
         uses: actions/github-script@v7

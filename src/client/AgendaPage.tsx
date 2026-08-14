@@ -26,6 +26,7 @@ import {
   type WorkingAgenda,
   type WorkingItem,
 } from "./agenda-calendar-model";
+import { trackBrowserEvent } from "./browser-telemetry";
 import { useTRPC } from "./trpc";
 
 type UndoAction = { label: string; run: () => void };
@@ -79,6 +80,7 @@ export function AgendaPage() {
   const publish = useMutation(
     trpc.agendas.publish.mutationOptions({
       onSuccess: () => {
+        trackBrowserEvent("agenda_published");
         void refresh();
         void queryClient.invalidateQueries(publicationStatusFilter);
       },
