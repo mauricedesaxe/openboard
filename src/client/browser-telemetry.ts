@@ -14,8 +14,11 @@ type BetterStackCommand = (...args: unknown[]) => void;
 type BrowserTelemetry = {
   identify: (userId: string | undefined) => void;
   initialize: () => void;
+  pageView: () => void;
   track: (event: BrowserTelemetryEvent) => void;
 };
+
+const SIGN_IN_COMPLETED_KEY = "openboard:sign-in-completed";
 
 export function createBrowserTelemetry(input: {
   command: BetterStackCommand;
@@ -23,6 +26,7 @@ export function createBrowserTelemetry(input: {
   pathname: () => string;
   release: string;
 }): BrowserTelemetry {
+  let currentPathname: string | undefined;
   return {
     initialize() {
       input.command("config", {
@@ -35,13 +39,25 @@ export function createBrowserTelemetry(input: {
         },
       });
       input.command("init", {
-        autoPageview: true,
+        autoPageview: false,
         environment: input.environment,
         release: input.release,
+      });
+      currentPathname = input.pathname();
+      input.command("track", "page-load", {
+        url: browserRoute(currentPathname),
       });
     },
     identify(userId) {
       input.command("user", userId ? { id: userId } : null);
+    },
+    pageView() {
+      const pathname = input.pathname();
+      if (pathname === currentPathname) return;
+      currentPathname = pathname;
+      input.command("track", "page-change", {
+        url: browserRoute(pathname),
+      });
     },
     track(event) {
       input.command("track", event, {
@@ -71,6 +87,22 @@ export function initializeBrowserTelemetry(): void {
 
 export function identifyBrowserUser(userId: string | undefined): void {
   browserTelemetry?.identify(userId);
+  if (
+    !userId ||
+    window.sessionStorage.getItem(SIGN_IN_COMPLETED_KEY) !== "true"
+  ) {
+    return;
+  }
+  window.sessionStorage.removeItem(SIGN_IN_COMPLETED_KEY);
+  browserTelemetry?.track("sign_in_completed");
+}
+
+export function markBrowserSignInCompleted(): void {
+  window.sessionStorage.setItem(SIGN_IN_COMPLETED_KEY, "true");
+}
+
+export function trackBrowserPageView(): void {
+  browserTelemetry?.pageView();
 }
 
 export function trackBrowserEvent(event: BrowserTelemetryEvent): void {

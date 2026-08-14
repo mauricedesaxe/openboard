@@ -77,7 +77,12 @@ import {
 
 import { MutationStatus } from "./MutationStatus";
 import { authClient } from "./auth";
-import { identifyBrowserUser, trackBrowserEvent } from "./browser-telemetry";
+import {
+  identifyBrowserUser,
+  markBrowserSignInCompleted,
+  trackBrowserEvent,
+  trackBrowserPageView,
+} from "./browser-telemetry";
 import {
   eventSlugFromPath,
   eventSwitchPath,
@@ -91,7 +96,6 @@ import { useTRPC } from "./trpc";
 
 const ONBOARDING_REFETCH_INTERVAL_MS = 15_000;
 const FILE_ENCODING_CHUNK_BYTES = 32_768;
-const SIGN_IN_COMPLETED_KEY = "openboard:sign-in-completed";
 const AgendaPage = lazy(() =>
   import("./AgendaPage").then((module) => ({ default: module.AgendaPage })),
 );
@@ -107,7 +111,10 @@ function pluralize(count: number, singular: string) {
 
 export function App() {
   const location = useLocation();
+  const session = authClient.useSession();
+  useBrowserUser(session.data?.user.id);
   useEffect(() => {
+    trackBrowserPageView();
     window.scrollTo({ left: 0, top: 0 });
   }, [location.pathname]);
 
@@ -125,7 +132,6 @@ export function App() {
 function SessionApp() {
   const session = authClient.useSession();
   const location = useLocation();
-  useBrowserUser(session.data?.user.id);
 
   if (session.isPending) {
     return <FullPageStatus label="Opening your board" />;
@@ -185,14 +191,6 @@ function SignInRoute({ signedIn }: { signedIn: boolean }) {
 function useBrowserUser(userId: string | undefined) {
   useEffect(() => {
     identifyBrowserUser(userId);
-    if (
-      !userId ||
-      window.sessionStorage.getItem(SIGN_IN_COMPLETED_KEY) !== "true"
-    ) {
-      return;
-    }
-    window.sessionStorage.removeItem(SIGN_IN_COMPLETED_KEY);
-    trackBrowserEvent("sign_in_completed");
   }, [userId]);
 }
 
@@ -597,7 +595,7 @@ function SignInPage() {
       return;
     }
 
-    window.sessionStorage.setItem(SIGN_IN_COMPLETED_KEY, "true");
+    markBrowserSignInCompleted();
     window.sessionStorage.removeItem(pendingSignInKey(returnTo));
   }
 
@@ -3853,7 +3851,7 @@ function ReviewAssignmentCard({
   const save = useMutation(
     trpc.reviews.save.mutationOptions({
       onSuccess: async () => {
-        trackBrowserEvent("review_completed");
+        if (!assignment.review) trackBrowserEvent("review_completed");
         await queryClient.invalidateQueries(
           trpc.reviews.mine.queryFilter({ slug }),
         );
@@ -6773,7 +6771,6 @@ function PublicCfpPage() {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const session = authClient.useSession();
-  useBrowserUser(session.data?.user.id);
   const cfp = useQuery(
     trpc.cfps.publicByEventSlug.queryOptions(
       { slug },
