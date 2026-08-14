@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   browserRoute,
   createBrowserTelemetry,
+  didCompleteOnboarding,
   sanitizeBrowserError,
 } from "../src/client/browser-telemetry";
 
@@ -26,8 +27,11 @@ describe("browser telemetry", () => {
     const error = sanitizeBrowserError(
       {
         breadcrumbs: [{ message: "speaker biography" }],
+        contexts: { response: { data: "proposal answers" } },
         extra: { answers: "proposal answers" },
+        fingerprint: ["speaker@example.com"],
         exception: { values: [{ type: "Error", value: "Controlled failure" }] },
+        message: "speaker biography",
         request: {
           cookies: { session: "private" },
           data: { code: "123456" },
@@ -36,18 +40,71 @@ describe("browser telemetry", () => {
           url: "https://openboard.example/submissions/private-id?code=123456",
         },
         user: { email: "speaker@example.com", id: "user-123" },
+        tags: { email: "speaker@example.com" },
+        transaction: "/submissions/private-id",
       },
       "/submissions/private-id",
     );
 
     expect(error).toEqual({
-      exception: { values: [{ type: "Error", value: "Controlled failure" }] },
+      exception: { values: [{ type: "Error", value: "Browser error" }] },
       request: {
         url: "https://openboard.example/submissions/:submissionId",
       },
       tags: { route: "/submissions/:submissionId" },
       user: { id: "user-123" },
     });
+  });
+
+  test("emits onboarding completion only after the final required task", () => {
+    const previous = [
+      {
+        completed: true,
+        eventSlug: "northstar",
+        id: "first",
+        required: true,
+      },
+      {
+        completed: false,
+        eventSlug: "northstar",
+        id: "final",
+        required: true,
+      },
+      {
+        completed: false,
+        eventSlug: "northstar",
+        id: "optional",
+        required: false,
+      },
+    ];
+
+    expect(
+      didCompleteOnboarding(
+        previous,
+        previous.map((task) =>
+          task.id === "final" ? { ...task, completed: true } : task,
+        ),
+        "final",
+      ),
+    ).toBe(true);
+    expect(
+      didCompleteOnboarding(
+        previous,
+        previous.map((task) =>
+          task.id === "first" ? { ...task, completed: true } : task,
+        ),
+        "first",
+      ),
+    ).toBe(false);
+    expect(
+      didCompleteOnboarding(
+        previous,
+        previous.map((task) =>
+          task.id === "optional" ? { ...task, completed: true } : task,
+        ),
+        "optional",
+      ),
+    ).toBe(false);
   });
 
   test("initializes collection and emits only named safe events", () => {

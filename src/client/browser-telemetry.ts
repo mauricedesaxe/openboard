@@ -3,7 +3,7 @@ export type BrowserTelemetryEvent =
   | "cfp_published"
   | "decision_published"
   | "event_created"
-  | "onboarding_task_completed"
+  | "onboarding_completed"
   | "proposal_submitted"
   | "review_completed"
   | "sign_in_completed";
@@ -113,23 +113,38 @@ export function sanitizeBrowserError(
   event: BrowserError,
   pathname: string,
 ): BrowserError {
-  const sanitized = { ...event };
-  delete sanitized.breadcrumbs;
-  delete sanitized.extra;
-
   const route = browserRoute(pathname);
-  sanitized.tags = { ...recordValue(event.tags), route };
-
   const user = recordValue(event.user);
-  sanitized.user = typeof user.id === "string" ? { id: user.id } : undefined;
-
   const request = recordValue(event.request);
   const requestUrl = typeof request.url === "string" ? request.url : undefined;
-  sanitized.request = requestUrl
-    ? { url: safeRequestUrl(requestUrl, route) }
-    : undefined;
+  return withoutUndefined({
+    environment: stringValue(event.environment),
+    event_id: stringValue(event.event_id),
+    exception: safeException(event.exception),
+    level: stringValue(event.level),
+    platform: stringValue(event.platform),
+    release: stringValue(event.release),
+    request: requestUrl
+      ? { url: safeRequestUrl(requestUrl, route) }
+      : undefined,
+    tags: { route },
+    timestamp: numberValue(event.timestamp),
+    user: typeof user.id === "string" ? { id: user.id } : undefined,
+  });
+}
 
-  return withoutUndefined(sanitized);
+export function didCompleteOnboarding(
+  previous: readonly OnboardingTask[],
+  latest: readonly OnboardingTask[],
+  assignmentId: string,
+): boolean {
+  const changed = previous.find((task) => task.id === assignmentId);
+  if (!changed) return false;
+
+  return (
+    !eventOnboardingComplete(previous, changed.eventSlug) &&
+    eventOnboardingComplete(latest, changed.eventSlug)
+  );
 }
 
 export function browserRoute(pathname: string): string {
@@ -155,12 +170,19 @@ function installBetterStackCommand(token: string): BetterStackCommand {
   const browserWindow = window as Window & {
     betterstack?: BetterStackCommand & { q?: unknown[][]; l?: number };
   };
-  const command: BetterStackCommand & { q?: unknown[][]; l?: number } =
-    browserWindow.betterstack ??
-    ((...args: unknown[]) => {
-      command.q = command.q ?? [];
-      command.q.push(args);
-    });
+  const pending: unknown[][] = [];
+  let loadedCommand: BetterStackCommand | undefined;
+  const command: BetterStackCommand & { q?: unknown[][]; l?: number } = (
+    ...args: unknown[]
+  ) => {
+    if (!loadedCommand) {
+      pending.push(args);
+      return;
+    }
+    const vendorCommand = loadedCommand;
+    withSafeBrowserLocation(() => vendorCommand(...args));
+  };
+  command.q = [];
   command.l = Date.now();
   browserWindow.betterstack = command;
 
@@ -168,8 +190,36 @@ function installBetterStackCommand(token: string): BetterStackCommand {
   script.async = true;
   script.crossOrigin = "anonymous";
   script.src = `https://betterstack.net/b.js?t=${encodeURIComponent(token)}`;
+  script.addEventListener("load", () => {
+    const vendorCommand = browserWindow.betterstack;
+    if (!vendorCommand || vendorCommand === command) return;
+    loadedCommand = vendorCommand;
+    for (const args of pending.splice(0)) command(...args);
+  });
   document.head.appendChild(script);
   return command;
+}
+
+function withSafeBrowserLocation(run: () => void): void {
+  const url = window.location.href;
+  const state = window.history.state as unknown;
+  const referrer = Object.getOwnPropertyDescriptor(document, "referrer");
+  try {
+    Object.defineProperty(document, "referrer", {
+      configurable: true,
+      value: "",
+    });
+    window.history.replaceState(
+      state,
+      "",
+      browserRoute(window.location.pathname),
+    );
+    run();
+  } finally {
+    window.history.replaceState(state, "", url);
+    if (referrer) Object.defineProperty(document, "referrer", referrer);
+    else Reflect.deleteProperty(document, "referrer");
+  }
 }
 
 function safeRequestUrl(url: string, route: string): string {
@@ -184,6 +234,41 @@ function recordValue(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
     : {};
+}
+
+type OnboardingTask = {
+  completed: boolean;
+  eventSlug: string;
+  id: string;
+  required: boolean;
+};
+
+function eventOnboardingComplete(
+  tasks: readonly OnboardingTask[],
+  eventSlug: string,
+): boolean {
+  const required = tasks.filter(
+    (task) => task.eventSlug === eventSlug && task.required,
+  );
+  return required.length > 0 && required.every((task) => task.completed);
+}
+
+function safeException(value: unknown): BrowserError | undefined {
+  const exception = recordValue(value);
+  if (!Array.isArray(exception.values)) return undefined;
+  const values = exception.values.flatMap((item) => {
+    const type = stringValue(recordValue(item).type);
+    return type ? [{ type, value: "Browser error" }] : [];
+  });
+  return values.length > 0 ? { values } : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
 }
 
 function optionalString(value: unknown): string | undefined {
