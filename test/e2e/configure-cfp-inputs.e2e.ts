@@ -218,6 +218,65 @@ test("saves unrelated changes after a stored CFP deadline passes", async ({
   await expect(page.getByText("CFP saved", { exact: true })).toBeVisible();
 });
 
+test("rejects a stale CFP form after its setup refreshes", async ({ page }) => {
+  const suffix = `${Date.now()}`;
+  const slug = `browser-stale-cfp-${suffix}`;
+  await page.goto("/");
+  await signIn(page, `browser-stale-cfp-owner-${suffix}@example.com`);
+  await createEvent(page, slug);
+  await mutate(page.request, "tracks.create", { slug, name: "Web systems" });
+  const initialDeadline = new Date(Date.now() + 8_000);
+  const cfp = await mutate(page.request, "cfps.createDraft", {
+    slug,
+    name: "Initial CFP",
+    deadline: initialDeadline.toISOString(),
+    formats: ["Talk"],
+    customFields: [],
+  });
+  await mutate(page.request, "cfps.open", {
+    slug,
+    cfpId: cfp.id,
+    expectedDeadline: cfp.deadline,
+    name: cfp.name,
+    deadline: cfp.deadline,
+    formats: cfp.formats,
+    customFields: cfp.customFields,
+  });
+
+  await page.goto(`/events/${slug}/cfp/manage`);
+  const openCfp = page.locator(".cfp-builder").filter({
+    has: page.locator(".status-open"),
+  });
+  await openCfp.getByRole("textbox", { name: "CFP name" }).fill("Stale CFP");
+  await openCfp
+    .getByLabel("Deadline")
+    .fill(
+      eventLocalDateTime(new Date(initialDeadline.getTime() + 60 * 60_000)),
+    );
+
+  await mutate(page.request, "cfps.updateDraft", {
+    slug,
+    cfpId: cfp.id,
+    expectedDeadline: cfp.deadline,
+    name: "Updated elsewhere",
+    deadline: new Date(
+      initialDeadline.getTime() + 2 * 60 * 60_000,
+    ).toISOString(),
+    formats: cfp.formats,
+    customFields: cfp.customFields,
+  });
+  await expect(
+    openCfp.getByRole("heading", { name: "Updated elsewhere" }),
+  ).toBeVisible({
+    timeout: 15_000,
+  });
+
+  await openCfp.getByRole("button", { name: "Save form" }).click();
+  await expect(
+    page.getByText("This call for proposals changed. Reload it before saving."),
+  ).toBeVisible();
+});
+
 test("refreshes the public CFP after its tracks change", async ({ page }) => {
   const suffix = `${Date.now()}`;
   const slug = `browser-cfp-tracks-${suffix}`;
@@ -362,6 +421,23 @@ async function createEvent(page: Page, slug: string) {
     },
   });
   expect(response.ok()).toBe(true);
+}
+
+function eventLocalDateTime(date: Date): string {
+  const values = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      day: "2-digit",
+      hour: "2-digit",
+      hourCycle: "h23",
+      minute: "2-digit",
+      month: "2-digit",
+      timeZone: "Europe/Berlin",
+      year: "numeric",
+    })
+      .formatToParts(date)
+      .map((part) => [part.type, part.value]),
+  );
+  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}`;
 }
 
 async function mutate(
