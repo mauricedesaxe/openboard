@@ -6749,6 +6749,7 @@ function PublicCfpPage() {
   const [selectedFiles, setSelectedFiles] = useState<
     Record<string, LocalProposalFile>
   >({});
+  const [restoredFileDraftId, setRestoredFileDraftId] = useState<string>();
   const [fileError, setFileError] = useState<string>();
   const pendingSubmissionStarted = useRef(false);
   const draftKey = proposalDraftKey(slug);
@@ -6783,7 +6784,23 @@ function PublicCfpPage() {
   }, [draft, draftKey]);
 
   useEffect(() => {
-    void loadLocalProposalFiles(draft.clientDraftId).then(setSelectedFiles);
+    let current = true;
+    void loadLocalProposalFiles(draft.clientDraftId)
+      .then((files) => {
+        if (!current) return;
+        setSelectedFiles(files);
+        setRestoredFileDraftId(draft.clientDraftId);
+      })
+      .catch(() => {
+        if (!current) return;
+        setFileError("Saved files could not be restored. Choose them again.");
+        setDraft((saved) => ({ ...saved, submitAfterSignIn: false }));
+        setSelectedFiles({});
+        setRestoredFileDraftId(draft.clientDraftId);
+      });
+    return () => {
+      current = false;
+    };
   }, [draft.clientDraftId]);
 
   function proposalInput() {
@@ -6832,13 +6849,21 @@ function PublicCfpPage() {
       draft.submitAfterSignIn &&
       session.data &&
       cfp.data &&
+      restoredFileDraftId === draft.clientDraftId &&
       !submit.isPending &&
       !pendingSubmissionStarted.current
     ) {
       pendingSubmissionStarted.current = true;
       finishPendingSubmission();
     }
-  }, [cfp.data, draft.submitAfterSignIn, session.data, submit.isPending]);
+  }, [
+    cfp.data,
+    draft.submitAfterSignIn,
+    draft.clientDraftId,
+    restoredFileDraftId,
+    session.data,
+    submit.isPending,
+  ]);
 
   function setStep(update: number | ((current: number) => number)) {
     setDraft((current) => ({
