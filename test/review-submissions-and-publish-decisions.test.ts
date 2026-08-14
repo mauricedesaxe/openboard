@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
 
+import { createDatabase } from "../src/server/database/client";
+import { getOrganizerReviewBoard } from "../src/server/reviews/repository";
+import type { UserId } from "../src/shared/events";
+
 import {
   callTrpc,
   getResult,
@@ -647,6 +651,65 @@ describe("review submissions and publish decisions", () => {
       ).body,
       boardSchema,
     );
+    const firstDecision = await testEnvironment.DB.prepare(
+      "SELECT id, revision FROM decisions WHERE submission_id = ?",
+    )
+      .bind(first.id)
+      .first<{ id: string; revision: number }>();
+    if (!firstDecision) throw new Error("Expected first decision");
+    const interleavedPublicationId = crypto.randomUUID();
+    const interleavedPublicationItemId = crypto.randomUUID();
+    const database = createDatabase(
+      interleaveBeforeQuery(
+        testEnvironment.DB,
+        (query) => query.includes('"decisions"'),
+        async () => {
+          const createdAt = Date.now();
+          await testEnvironment.DB.batch([
+            testEnvironment.DB.prepare(
+              "INSERT INTO decision_publications (id, event_id, review_round_id, published_by_user_id, created_at) SELECT ?, event_id, id, ?, ? FROM review_rounds WHERE id = ?",
+            ).bind(
+              interleavedPublicationId,
+              owner.userId,
+              createdAt,
+              board.round.id,
+            ),
+            testEnvironment.DB.prepare(
+              "INSERT INTO decision_publication_items (id, publication_id, decision_id, outcome, expected_revision) VALUES (?, ?, ?, 'accepted', ?)",
+            ).bind(
+              interleavedPublicationItemId,
+              interleavedPublicationId,
+              firstDecision.id,
+              firstDecision.revision,
+            ),
+            testEnvironment.DB.prepare(
+              "UPDATE decisions SET status = 'accepted', revision = revision + 1, updated_at = ? WHERE id = ?",
+            ).bind(createdAt, firstDecision.id),
+          ]);
+        },
+      ),
+    );
+    const interleavedBoard = await getOrganizerReviewBoard(
+      database,
+      owner.userId as UserId,
+      slug,
+    );
+    expect(interleavedBoard?.round.state).toBe("published-lock");
+    expect(
+      interleavedBoard?.submissions.find(({ id }) => id === first.id)?.decision
+        .status,
+    ).toBe("accepted");
+    await testEnvironment.DB.batch([
+      testEnvironment.DB.prepare(
+        "DELETE FROM decision_publication_items WHERE id = ?",
+      ).bind(interleavedPublicationItemId),
+      testEnvironment.DB.prepare(
+        "DELETE FROM decision_publications WHERE id = ?",
+      ).bind(interleavedPublicationId),
+      testEnvironment.DB.prepare(
+        "UPDATE decisions SET status = 'accept_queued', revision = ?, updated_at = ? WHERE id = ?",
+      ).bind(firstDecision.revision, Date.now(), firstDecision.id),
+    ]);
     const publishable = board.submissions.filter((submission) =>
       submission.decision.status.endsWith("_queued"),
     );
@@ -875,6 +938,58 @@ describe("review submissions and publish decisions", () => {
 const organizerEmail = "review-organizer@example.com";
 const reviewerEmail = "reviewer-one@example.com";
 const secondReviewerEmail = "reviewer-two@example.com";
+
+function interleaveBeforeQuery(
+  binding: D1Database,
+  matches: (query: string) => boolean,
+  interleave: () => Promise<void>,
+): D1Database {
+  let pending = true;
+
+  async function runInterleave(query: string) {
+    if (!pending || !matches(query)) return;
+    pending = false;
+    await interleave();
+  }
+
+  function wrapStatement(
+    statement: D1PreparedStatement,
+    query: string,
+  ): D1PreparedStatement {
+    return new Proxy(statement, {
+      get(target, property) {
+        if (property === "bind") {
+          return (...values: unknown[]) =>
+            wrapStatement(target.bind(...values), query);
+        }
+        if (property === "all") {
+          return async <T>() => {
+            await runInterleave(query);
+            return target.all<T>();
+          };
+        }
+        if (property === "raw") {
+          return async (
+            ...arguments_: Parameters<D1PreparedStatement["raw"]>
+          ) => {
+            await runInterleave(query);
+            return target.raw(...arguments_);
+          };
+        }
+        return Reflect.get(target, property, target) as unknown;
+      },
+    });
+  }
+
+  return new Proxy(binding, {
+    get(target, property) {
+      if (property === "prepare") {
+        return (query: string) => wrapStatement(target.prepare(query), query);
+      }
+      return Reflect.get(target, property, target) as unknown;
+    },
+  });
+}
 
 async function createEvent(cookie: string, slug: string): Promise<void> {
   expect(
