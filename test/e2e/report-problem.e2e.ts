@@ -11,6 +11,17 @@ test("reports a problem from public and authenticated views", async ({
   const reportAction = page.getByRole("button", { name: "Report a problem" });
   await expect(reportAction).toBeVisible();
   await reportAction.click();
+  const description = page.getByRole("textbox", {
+    name: "Problem description",
+  });
+  await expect(description).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.getByRole("button", { name: "Close" })).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.getByRole("button", { name: "Send report" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(reportAction).toBeFocused();
+  await reportAction.click();
   await page
     .getByRole("textbox", { name: "Problem description" })
     .fill("The sign-in page did not explain what happened.");

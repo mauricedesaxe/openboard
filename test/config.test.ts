@@ -86,6 +86,7 @@ describe("configuration", () => {
       parseConfig({
         ...validConfig,
         BETTERSTACK_INCIDENT_API_TOKEN: "incident-token",
+        BETTERSTACK_INCIDENT_POLICY_ID: "owner-policy",
         BETTERSTACK_INCIDENT_REQUESTER_EMAIL: "owner@example.com",
         VERSION: { id: "release-123" },
       }),
@@ -95,6 +96,7 @@ describe("configuration", () => {
         problemReports: {
           type: "betterstack",
           apiToken: "incident-token",
+          policyId: "owner-policy",
           requesterEmail: "owner@example.com",
         },
         release: "release-123",

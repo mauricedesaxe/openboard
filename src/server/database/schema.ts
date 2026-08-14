@@ -92,6 +92,7 @@ export const problemReportRateLimits = sqliteTable(
   {
     key: text("key").primaryKey(),
     windowStartedAt: integer("window_started_at").notNull(),
+    attemptCount: integer("attempt_count").notNull(),
     reportCount: integer("report_count").notNull(),
   },
 );
