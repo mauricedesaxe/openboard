@@ -69,6 +69,10 @@ export async function getOrganizerReviewBoard(
   if (!event) return undefined;
   const round = await findOpenOrLatestReviewRound(database, event.id);
   if (!round) return undefined;
+  const lockedByPublishedOutcomes = await hasPublishedOutcomes(
+    database,
+    round.id,
+  );
 
   const activeReviewers = await database
     .select({
@@ -128,7 +132,12 @@ export async function getOrganizerReviewBoard(
   );
 
   return {
-    round: { id: round.id, name: round.name, status: round.status },
+    round: {
+      id: round.id,
+      name: round.name,
+      status: round.status,
+      lockedByPublishedOutcomes,
+    },
     reviewers: activeReviewers.map((reviewer) => {
       const assignments = assignmentRows.filter(
         (assignment) => assignment.reviewerUserId === reviewer.id,
@@ -191,6 +200,7 @@ export async function listOwnReviewAssignments(
   const rows = await database
     .select({
       assignmentId: reviewerAssignments.id,
+      reviewRoundId: reviewerAssignments.reviewRoundId,
       roundStatus: reviewRounds.status,
       submissionId: submissions.id,
       title: submissions.title,
@@ -237,9 +247,25 @@ export async function listOwnReviewAssignments(
     database,
     rows.map(({ submissionId }) => submissionId),
   );
+  const publishedRoundIds = new Set(
+    rows.length === 0
+      ? []
+      : (
+          await database
+            .select({ reviewRoundId: decisionPublications.reviewRoundId })
+            .from(decisionPublications)
+            .where(
+              inArray(
+                decisionPublications.reviewRoundId,
+                rows.map(({ reviewRoundId }) => reviewRoundId),
+              ),
+            )
+        ).map(({ reviewRoundId }) => reviewRoundId),
+  );
   return rows.map((row) => ({
     assignmentId: row.assignmentId,
     roundStatus: row.roundStatus,
+    lockedByPublishedOutcomes: publishedRoundIds.has(row.reviewRoundId),
     submission: {
       id: row.submissionId,
       title: row.title,
@@ -1092,4 +1118,13 @@ async function findOpenOrLatestReviewRound(
     )
     .limit(1);
   return round;
+}
+
+async function hasPublishedOutcomes(database: Database, reviewRoundId: string) {
+  const [publication] = await database
+    .select({ id: decisionPublications.id })
+    .from(decisionPublications)
+    .where(eq(decisionPublications.reviewRoundId, reviewRoundId))
+    .limit(1);
+  return Boolean(publication);
 }

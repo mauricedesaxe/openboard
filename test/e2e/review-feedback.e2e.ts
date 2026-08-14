@@ -261,6 +261,36 @@ test("refreshes the organizer average after saving a review", async ({
     reviewCard.getByLabel("Private reviewer comment"),
   ).toBeDisabled();
 
+  await reviewNavigation.getByRole("link", { name: "Decisions" }).click();
+  const decisionProposal = page
+    .locator(".review-proposal")
+    .filter({ hasText: "A proposal to review" });
+  await decisionProposal
+    .getByLabel("Internal outcome")
+    .selectOption("accept_queued");
+  await expect(page.getByRole("status")).toHaveText("Outcome queued");
+  await decisionProposal
+    .getByRole("checkbox", { name: "Include in this publication" })
+    .check();
+  await page.getByRole("button", { name: "Publish decisions" }).click();
+  await expect(page.getByRole("status")).toHaveText("Decisions published");
+  await reviewNavigation.getByRole("link", { name: "Overview" }).click();
+  await expect(page.getByText("Published lock", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(
+      "Outcomes are published. This review round is permanently locked and cannot reopen.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reopen round" })).toHaveCount(
+    0,
+  );
+  await reviewNavigation.getByRole("link", { name: "My reviews" }).click();
+  await expect(
+    reviewCard.getByText(
+      "Score and comment controls are permanently unavailable because outcomes from this review round are published.",
+    ),
+  ).toBeVisible();
+
   const pureReviewerEmail = `browser-pure-reviewer-${suffix}@example.com`;
   const pureOrganizerEmail = `browser-pure-organizer-${suffix}@example.com`;
   await invite(page.request, slug, pureReviewerEmail, "reviewer");
