@@ -1,5 +1,4 @@
-import { z } from "zod";
-
+import type { UserId } from "../../shared/events";
 import type { AppConfig } from "../config";
 
 export type ProblemReport = {
@@ -9,28 +8,25 @@ export type ProblemReport = {
   release: string;
   reportedAt: string;
   route: string;
-  userId?: string;
+  userId?: UserId;
 };
 
 type DeliveryResult =
-  | { ok: true; incidentId: string }
-  | { ok: false; reason: "configuration" | "delivery" };
+  { ok: true } | { ok: false; reason: "configuration" | "delivery" };
 
-const incidentResponseSchema = z.object({
-  data: z.object({ id: z.string().min(1) }),
-});
 const capturedReports: ProblemReport[] = [];
+const PROBLEM_REPORT_DELIVERY_TIMEOUT_MS = 10_000;
 
 export async function deliverProblemReport(
   config: AppConfig,
   report: ProblemReport,
   request: typeof fetch = fetch,
 ): Promise<DeliveryResult> {
-  if (config.problemReports?.type === "capture") {
+  if (config.problemReports.type === "capture") {
     capturedReports.push(structuredClone(report));
-    return { ok: true, incidentId: `capture:${capturedReports.length}` };
+    return { ok: true };
   }
-  if (!config.problemReports || config.problemReports.type === "unavailable") {
+  if (config.problemReports.type === "unavailable") {
     return { ok: false, reason: "configuration" };
   }
 
@@ -43,7 +39,7 @@ export async function deliverProblemReport(
           Authorization: `Bearer ${config.problemReports.apiToken}`,
           "Content-Type": "application/json",
         },
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(PROBLEM_REPORT_DELIVERY_TIMEOUT_MS),
         body: JSON.stringify({
           description: formatIncidentDescription(report),
           email: true,
@@ -54,10 +50,7 @@ export async function deliverProblemReport(
       },
     );
     if (!response.ok) return { ok: false, reason: "delivery" };
-    const parsed = incidentResponseSchema.safeParse(await response.json());
-    return parsed.success
-      ? { ok: true, incidentId: parsed.data.data.id }
-      : { ok: false, reason: "delivery" };
+    return { ok: true };
   } catch {
     return { ok: false, reason: "delivery" };
   }
@@ -87,6 +80,8 @@ function redactSensitiveText(value: string): string {
     .replace(/\b\d{6}\b/g, "[redacted code]");
   return Array.from(redacted, (character) => {
     const code = character.charCodeAt(0);
-    return code < 32 && ![9, 10, 13].includes(code) ? " " : character;
+    const safeWhitespace =
+      character === "\t" || character === "\n" || character === "\r";
+    return code < 32 && !safeWhitespace ? " " : character;
   }).join("");
 }

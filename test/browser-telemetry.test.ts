@@ -1,27 +1,27 @@
 import { describe, expect, test, vi } from "vitest";
 
 import {
-  browserRoute,
   createBrowserTelemetry,
   didCompleteOnboarding,
   sanitizeBrowserError,
 } from "../src/client/browser-telemetry";
+import { reportRoute } from "../src/shared/problem-reports";
 
 describe("browser telemetry", () => {
   test("turns private URLs into stable route context", () => {
-    expect(browserRoute("/events/northstar/review/decisions")).toBe(
+    expect(reportRoute("/events/northstar/review/decisions")).toBe(
       "/events/:slug/review/decisions",
     );
-    expect(browserRoute("/submissions/private-submission-id")).toBe(
+    expect(reportRoute("/submissions/private-submission-id")).toBe(
       "/submissions/:submissionId",
     );
-    expect(browserRoute("/invitations/private-secret")).toBe(
+    expect(reportRoute("/invitations/private-secret")).toBe(
       "/invitations/:secret",
     );
-    expect(browserRoute("/speaker-invitations/private-secret")).toBe(
+    expect(reportRoute("/speaker-invitations/private-secret")).toBe(
       "/speaker-invitations/:secret",
     );
-    expect(browserRoute("/unknown/private-value")).toBe("/other");
+    expect(reportRoute("/unknown/private-value")).toBe("/other");
   });
 
   test("removes private browser context before an error is sent", () => {

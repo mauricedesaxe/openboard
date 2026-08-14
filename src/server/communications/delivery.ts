@@ -15,7 +15,7 @@ const maxAttempts = 8;
 
 export async function processCommunicationDeliveryWork(
   database: Database,
-  config: AppConfig,
+  config: Pick<AppConfig, "email">,
   options: { now?: Date; clock?: () => Date; limit?: number } = {},
 ) {
   const now = currentTime(options);

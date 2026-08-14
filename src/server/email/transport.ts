@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import type { AppConfig } from "../config";
 
+type EmailConfig = Pick<AppConfig, "email">;
+
 export type EmailContent = {
   idempotencyKey: string;
   to: string;
@@ -33,7 +35,7 @@ const capturedEmails = new Map<string, EmailContent>();
 const emailTimeoutMs = 15_000;
 
 export async function sendConfiguredEmail(
-  config: AppConfig,
+  config: EmailConfig,
   message: EmailContent,
 ): Promise<EmailDeliveryResult> {
   if (config.email.type === "capture") {
@@ -127,7 +129,9 @@ class EmailDeliveryError extends Error {
   }
 }
 
-export function getCapturedEmails(config: AppConfig): readonly EmailContent[] {
+export function getCapturedEmails(
+  config: EmailConfig,
+): readonly EmailContent[] {
   return config.email.type === "capture" ? [...capturedEmails.values()] : [];
 }
 

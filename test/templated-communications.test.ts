@@ -118,9 +118,6 @@ describe("templated communications", () => {
     const failed = await processCommunicationDeliveryWork(
       database,
       {
-        appEnv: "test",
-        appUrl: "https://localhost",
-        authSecret: "test-secret-that-is-at-least-thirty-two-characters",
         email: {
           type: "cloudflare",
           from: "auth@alexlazar.dev",
@@ -153,9 +150,6 @@ describe("templated communications", () => {
     ).toBe(200);
 
     const captureConfig = {
-      appEnv: "test" as const,
-      appUrl: "https://localhost",
-      authSecret: "test-secret-that-is-at-least-thirty-two-characters",
       email: { type: "capture" as const },
     };
     expect(
@@ -208,9 +202,6 @@ describe("templated communications", () => {
       await processCommunicationDeliveryWork(
         database,
         {
-          appEnv: "test",
-          appUrl: "https://localhost",
-          authSecret: "test-secret-that-is-at-least-thirty-two-characters",
           email: {
             type: "cloudflare",
             from: "auth@alexlazar.dev",
@@ -258,9 +249,6 @@ describe("templated communications", () => {
       await processCommunicationDeliveryWork(
         database,
         {
-          appEnv: "test",
-          appUrl: "https://localhost",
-          authSecret: "test-secret-that-is-at-least-thirty-two-characters",
           email: {
             type: "cloudflare",
             from: "auth@alexlazar.dev",
@@ -353,9 +341,6 @@ describe("templated communications", () => {
       await processCommunicationDeliveryWork(
         database,
         {
-          appEnv: "test",
-          appUrl: "https://localhost",
-          authSecret: "test-secret-that-is-at-least-thirty-two-characters",
           email: {
             type: "cloudflare",
             from: "auth@alexlazar.dev",

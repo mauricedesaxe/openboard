@@ -67,11 +67,11 @@ export type AppConfig = {
     | { type: "capture" }
     | { type: "cloudflare"; from: string; sender: SendEmail }
     | { type: "resend"; from: string; apiKey: string };
-  problemReports?:
+  problemReports:
     | { type: "capture" }
     | { type: "unavailable" }
     | { type: "betterstack"; apiToken: string; requesterEmail: string };
-  release?: string;
+  release: string;
 };
 
 export type ConfigResult =

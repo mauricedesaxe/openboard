@@ -61,7 +61,6 @@ import {
   type StoredFile,
   type StoredFileId,
 } from "../shared/files";
-import { reportRoute } from "../shared/problem-reports";
 import {
   speakerHeadshotUploadSchema,
   type SpeakerHeadshotUpload,
@@ -77,6 +76,7 @@ import {
 } from "../shared/submissions";
 
 import { MutationStatus } from "./MutationStatus";
+import { ProblemReportAction } from "./ProblemReportAction";
 import { authClient } from "./auth";
 import {
   didCompleteOnboarding,
@@ -130,148 +130,6 @@ export function App() {
         </Routes>
       </Suspense>
       <ProblemReportAction signedIn={Boolean(session.data)} />
-    </>
-  );
-}
-
-function ProblemReportAction({ signedIn }: { signedIn: boolean }) {
-  const trpc = useTRPC();
-  const location = useLocation();
-  const [open, setOpen] = useState(false);
-  const [description, setDescription] = useState("");
-  const [contactAllowed, setContactAllowed] = useState(false);
-  const openedAt = useRef(0);
-  const submit = useMutation(
-    trpc.problemReports.submit.mutationOptions({
-      onSuccess: () => trackBrowserEvent("problem_reported"),
-    }),
-  );
-  function openForm() {
-    openedAt.current = Date.now();
-    submit.reset();
-    setOpen(true);
-  }
-  function closeForm() {
-    setOpen(false);
-    setDescription("");
-    setContactAllowed(false);
-    submit.reset();
-  }
-  function sendReport(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const website = form.get("website");
-    submit.mutate({
-      contactAllowed,
-      description,
-      elapsedMs: Date.now() - openedAt.current,
-      route: reportRoute(location.pathname),
-      website: typeof website === "string" ? website : "",
-    });
-  }
-
-  return (
-    <>
-      <button
-        className="problem-report-trigger"
-        onClick={openForm}
-        type="button"
-      >
-        Report a problem
-      </button>
-      {open && (
-        <div className="problem-report-backdrop" role="presentation">
-          <section
-            aria-labelledby="problem-report-title"
-            aria-modal="true"
-            className="problem-report-dialog"
-            role="dialog"
-          >
-            {submit.isSuccess ? (
-              <>
-                <div className="eyebrow">Report sent</div>
-                <h2 id="problem-report-title">Thanks for the heads-up.</h2>
-                <p>OpenBoard’s owner was alerted.</p>
-                <button
-                  className="primary-button"
-                  onClick={closeForm}
-                  type="button"
-                >
-                  Close
-                </button>
-              </>
-            ) : (
-              <form onSubmit={sendReport}>
-                <div className="problem-report-heading">
-                  <div>
-                    <div className="eyebrow">Production support</div>
-                    <h2 id="problem-report-title">What went wrong?</h2>
-                  </div>
-                  <button
-                    className="text-button"
-                    onClick={closeForm}
-                    type="button"
-                  >
-                    Close
-                  </button>
-                </div>
-                <p className="muted">
-                  Describe the problem in one or two sentences. Don’t include
-                  sign-in codes or private event content.
-                </p>
-                <label className="problem-report-description">
-                  Problem description
-                  <textarea
-                    autoFocus
-                    maxLength={500}
-                    minLength={10}
-                    onChange={(event) => setDescription(event.target.value)}
-                    required
-                    value={description}
-                  />
-                </label>
-                <label className="problem-report-honeypot" aria-hidden="true">
-                  Website
-                  <input autoComplete="off" name="website" tabIndex={-1} />
-                </label>
-                {signedIn ? (
-                  <label className="problem-report-contact">
-                    <input
-                      checked={contactAllowed}
-                      onChange={(event) =>
-                        setContactAllowed(event.target.checked)
-                      }
-                      type="checkbox"
-                    />
-                    The owner may contact me through my OpenBoard account.
-                  </label>
-                ) : (
-                  <p className="muted">
-                    This report is anonymous. Sign in first if you’d like a
-                    reply.
-                  </p>
-                )}
-                {submit.error && (
-                  <p className="form-error" role="alert">
-                    {submit.error.message}
-                  </p>
-                )}
-                <button
-                  className="primary-button"
-                  disabled={submit.isPending}
-                  type="submit"
-                >
-                  {submit.isPending
-                    ? "Sending…"
-                    : submit.isError
-                      ? "Try again"
-                      : "Send report"}
-                </button>
-              </form>
-            )}
-          </section>
-        </div>
-      )}
     </>
   );
 }
