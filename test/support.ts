@@ -102,8 +102,10 @@ export async function callTrpc(
   input: unknown,
   cookie?: string,
   type: "mutation" | "query" = "mutation",
+  requestHeaders?: HeadersInit,
 ): Promise<{ status: number; body: TrpcResponse }> {
-  const headers = new Headers({ "Content-Type": "application/json" });
+  const headers = new Headers(requestHeaders);
+  headers.set("Content-Type", "application/json");
   if (cookie) headers.set("Cookie", cookie);
 
   const path =

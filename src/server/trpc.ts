@@ -42,6 +42,10 @@ import {
   taskFileUploadSchema,
 } from "../shared/onboarding";
 import {
+  problemReportInputSchema,
+  reportRoute,
+} from "../shared/problem-reports";
+import {
   decisionPublicationSchema,
   decisionQueueStatusSchema,
   reviewerAssignmentIdSchema,
@@ -123,6 +127,8 @@ import {
   waiveTask,
   type OnboardingWriteError,
 } from "./onboarding/repository";
+import { deliverProblemReport } from "./problem-reports/delivery";
+import { acceptProblemReport } from "./problem-reports/repository";
 import {
   archiveRoom,
   archiveTrack,
@@ -222,6 +228,70 @@ const userIdSchema = z
   .transform((value) => value as UserId);
 
 export const appRouter = trpc.router({
+  problemReports: trpc.router({
+    submit: trpc.procedure
+      .input(problemReportInputSchema)
+      .mutation(async ({ ctx, input }) => {
+        if (input.website || input.elapsedMs < 1_000) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "The report could not be accepted.",
+          });
+        }
+
+        const userId = ctx.session?.user.id as UserId | undefined;
+        const ipAddress =
+          ctx.request.headers.get("CF-Connecting-IP") ?? "unknown";
+        const accepted = await acceptProblemReport(
+          ctx.database,
+          userId ? `user:${userId}` : `ip:${ipAddress}`,
+          new Date(),
+        );
+        if (!accepted) {
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: "Too many reports were sent. Try again later.",
+          });
+        }
+
+        const route = reportRoute(input.route);
+        const report = {
+          contactAllowed: input.contactAllowed && Boolean(userId),
+          description: input.description,
+          environment: ctx.config.appEnv,
+          release: ctx.config.release ?? ctx.config.appEnv,
+          reportedAt: new Date().toISOString(),
+          route,
+          ...(userId ? { userId } : {}),
+        };
+        const delivery = await deliverProblemReport(ctx.config, report);
+        if (!delivery.ok) {
+          console.error(
+            JSON.stringify({
+              event: "problem_report_delivery_failed",
+              environment: report.environment,
+              release: report.release,
+              route,
+            }),
+          );
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "The report could not be delivered. Try again.",
+          });
+        }
+
+        console.log(
+          JSON.stringify({
+            event: "problem_reported",
+            environment: report.environment,
+            release: report.release,
+            route,
+            signedIn: Boolean(userId),
+          }),
+        );
+        return { accepted: true };
+      }),
+  }),
   communications: trpc.router({
     templates: authenticatedProcedure
       .input(slugInput)

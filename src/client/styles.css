@@ -31,6 +31,94 @@ a {
   color: inherit;
 }
 
+.problem-report-trigger {
+  position: fixed;
+  right: 24px;
+  bottom: 20px;
+  z-index: 30;
+  border: 1px solid var(--ink);
+  padding: 10px 14px;
+  background: var(--paper);
+  box-shadow: 4px 4px 0 var(--ink);
+  color: var(--ink);
+  cursor: pointer;
+  font: 500 11px "DM Mono";
+  text-transform: uppercase;
+}
+.problem-report-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(27, 39, 36, 0.64);
+}
+.problem-report-dialog {
+  width: min(100%, 560px);
+  border: 1px solid var(--ink);
+  padding: clamp(24px, 5vw, 44px);
+  background: var(--paper);
+  box-shadow: 10px 10px 0 var(--acid);
+}
+.problem-report-dialog h2 {
+  margin: 6px 0 12px;
+  font:
+    600 clamp(30px, 5vw, 44px) / 1 "Newsreader",
+    serif;
+}
+.problem-report-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+.problem-report-description {
+  display: grid;
+  gap: 8px;
+  margin: 24px 0 18px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.problem-report-description textarea {
+  min-height: 140px;
+  resize: vertical;
+}
+.problem-report-contact {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 22px;
+  font-size: 13px;
+}
+.problem-report-contact input {
+  margin-top: 3px;
+}
+.problem-report-honeypot {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+@media (max-width: 600px) {
+  .problem-report-trigger {
+    right: 14px;
+    bottom: 14px;
+  }
+  .problem-report-backdrop {
+    align-items: end;
+    padding: 0;
+  }
+  .problem-report-dialog {
+    width: 100%;
+    max-height: 92vh;
+    overflow-y: auto;
+    box-shadow: 0 -8px 0 var(--acid);
+  }
+}
+
 .app-shell {
   min-height: 100vh;
   display: grid;
