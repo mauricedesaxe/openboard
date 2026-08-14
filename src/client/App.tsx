@@ -3885,7 +3885,7 @@ function ReviewAssignmentCard({
             disabled={!editable}
             id={`score-${assignment.assignmentId}`}
             onChange={(event) => {
-              save.reset();
+              if (!save.isPending) save.reset();
               setScore(Number(event.target.value));
             }}
             value={score}
@@ -3909,7 +3909,7 @@ function ReviewAssignmentCard({
             id={`comment-${assignment.assignmentId}`}
             maxLength={5000}
             onChange={(event) => {
-              save.reset();
+              if (!save.isPending) save.reset();
               setComment(event.target.value);
             }}
             value={comment}
