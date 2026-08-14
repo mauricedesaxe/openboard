@@ -69,9 +69,6 @@ export async function getOrganizerReviewBoard(
   if (!event) return undefined;
   const round = await findOpenOrLatestReviewRound(database, event.id);
   if (!round) return undefined;
-  const publishedRoundIds = await findPublishedReviewRoundIds(database, [
-    round.id,
-  ]);
 
   const activeReviewers = await database
     .select({
@@ -99,6 +96,11 @@ export async function getOrganizerReviewBoard(
       track: tracks.name,
       decisionStatus: decisions.status,
       decisionRevision: decisions.revision,
+      published: sql<number>`EXISTS (
+        SELECT 1
+        FROM ${decisionPublications}
+        WHERE ${decisionPublications.reviewRoundId} = ${round.id}
+      )`,
     })
     .from(submissions)
     .innerJoin(tracks, eq(tracks.id, submissions.trackId))
@@ -134,7 +136,7 @@ export async function getOrganizerReviewBoard(
     round: {
       id: round.id,
       name: round.name,
-      state: publishedRoundIds.has(round.id)
+      state: submissionRows.some(({ published }) => published)
         ? ("published-lock" as const)
         : round.status,
     },
@@ -191,18 +193,6 @@ export async function getOrganizerReviewBoard(
   };
 }
 
-async function findPublishedReviewRoundIds(
-  database: Database,
-  reviewRoundIds: string[],
-) {
-  if (reviewRoundIds.length === 0) return new Set<string>();
-  const rows = await database
-    .select({ reviewRoundId: decisionPublications.reviewRoundId })
-    .from(decisionPublications)
-    .where(inArray(decisionPublications.reviewRoundId, reviewRoundIds));
-  return new Set(rows.map(({ reviewRoundId }) => reviewRoundId));
-}
-
 export async function listOwnReviewAssignments(
   database: Database,
   userId: UserId,
@@ -212,7 +202,6 @@ export async function listOwnReviewAssignments(
   const rows = await database
     .select({
       assignmentId: reviewerAssignments.id,
-      reviewRoundId: reviewerAssignments.reviewRoundId,
       roundStatus: reviewRounds.status,
       submissionId: submissions.id,
       title: submissions.title,
@@ -221,6 +210,11 @@ export async function listOwnReviewAssignments(
       track: tracks.name,
       score: reviews.score,
       comment: reviews.comment,
+      published: sql<number>`EXISTS (
+        SELECT 1
+        FROM ${decisionPublications}
+        WHERE ${decisionPublications.reviewRoundId} = ${reviewerAssignments.reviewRoundId}
+      )`,
     })
     .from(reviewerAssignments)
     .innerJoin(
@@ -259,15 +253,9 @@ export async function listOwnReviewAssignments(
     database,
     rows.map(({ submissionId }) => submissionId),
   );
-  const publishedRoundIds = await findPublishedReviewRoundIds(
-    database,
-    rows.map(({ reviewRoundId }) => reviewRoundId),
-  );
   return rows.map((row) => ({
     assignmentId: row.assignmentId,
-    roundState: publishedRoundIds.has(row.reviewRoundId)
-      ? ("published-lock" as const)
-      : row.roundStatus,
+    roundState: row.published ? ("published-lock" as const) : row.roundStatus,
     submission: {
       id: row.submissionId,
       title: row.title,
