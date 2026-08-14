@@ -52,23 +52,33 @@ describe("browser telemetry", () => {
 
   test("initializes collection and emits only named safe events", () => {
     const command = vi.fn();
+    let pathname = "/events/northstar/agenda";
     const telemetry = createBrowserTelemetry({
       command,
       environment: "preview",
-      pathname: () => "/events/northstar/agenda",
+      pathname: () => pathname,
       release: "abc123",
     });
 
     telemetry.initialize();
+    telemetry.pageView();
     telemetry.identify("user-123");
     telemetry.track("agenda_published");
+    pathname = "/events/northstar/review/decisions";
+    telemetry.pageView();
     telemetry.identify(undefined);
 
     expect(command.mock.calls[0]?.[0]).toBe("config");
     expect(command).toHaveBeenCalledWith("init", {
-      autoPageview: true,
+      autoPageview: false,
       environment: "preview",
       release: "abc123",
+    });
+    expect(command).toHaveBeenCalledWith("track", "page-load", {
+      url: "/events/:slug/agenda",
+    });
+    expect(command).toHaveBeenCalledWith("track", "page-change", {
+      url: "/events/:slug/review/decisions",
     });
     expect(command).toHaveBeenCalledWith("user", { id: "user-123" });
     expect(command).toHaveBeenCalledWith("track", "agenda_published", {
