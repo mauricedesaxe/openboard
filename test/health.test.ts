@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 
 import { checkProductionHealth } from "../src/server/health";
@@ -21,6 +21,9 @@ describe("production health", () => {
   });
 
   test("reports an unavailable D1 database without exposing its error", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     const database = {
       prepare: () => ({
         first: () => Promise.reject(new Error("private database detail")),
@@ -34,5 +37,12 @@ describe("production health", () => {
     expect(healthResponseSchema.parse(await response.json())).toEqual({
       status: "unavailable",
     });
+    expect(consoleError).toHaveBeenCalledWith(
+      JSON.stringify({
+        event: "production_health_database_unavailable",
+        error: "private database detail",
+      }),
+    );
+    consoleError.mockRestore();
   });
 });
