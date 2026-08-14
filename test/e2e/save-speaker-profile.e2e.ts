@@ -14,6 +14,9 @@ test("saves an optional bio and uploaded headshot", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Create your profile" }),
   ).toBeVisible();
+  await expectProfileHeadingHierarchy(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectProfileHeadingHierarchy(page);
   await page
     .getByRole("textbox", { name: "Display name" })
     .fill("Browser Speaker");
@@ -126,6 +129,30 @@ async function signIn(page: Page, email: string) {
     page.waitForURL((url) => !url.pathname.startsWith("/sign-in")),
     page.getByRole("button", { name: "Open my board" }).click(),
   ]);
+}
+
+async function expectProfileHeadingHierarchy(page: Page) {
+  const heading = page.locator(".compact-heading");
+  const eyebrowBox = await heading
+    .getByText("Reusable speaker profile")
+    .boundingBox();
+  const titleBox = await heading
+    .getByRole("heading", { name: "Create your profile" })
+    .boundingBox();
+  const descriptionBox = await heading
+    .getByText(
+      "Your bio and headshot stay with you across events and accepted proposals.",
+    )
+    .boundingBox();
+  expect(eyebrowBox).not.toBeNull();
+  expect(titleBox).not.toBeNull();
+  expect(descriptionBox).not.toBeNull();
+  expect(titleBox!.y).toBeGreaterThanOrEqual(
+    eyebrowBox!.y + eyebrowBox!.height,
+  );
+  expect(descriptionBox!.y).toBeGreaterThanOrEqual(
+    titleBox!.y + titleBox!.height,
+  );
 }
 
 async function createClaimedSpeaker(page: Page, slug: string, email: string) {
