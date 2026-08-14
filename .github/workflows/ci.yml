@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: production
-      url: https://openboard.sweet-mouse-22c9.workers.dev
+      url: https://openboard.alexlazar.dev
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -70,16 +70,18 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm exec wrangler deploy --config wrangler.production.jsonc
-      - name: Verify production serves the app and public API
+      - name: Verify production health, app, and public API
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          URL=https://openboard.sweet-mouse-22c9.workers.dev
+          URL=https://openboard.alexlazar.dev
           for attempt in 1 2 3 4 5; do
             STATUS=$(curl -sS --max-time 60 -o /tmp/production-body.html -w "%{http_code}" "$URL") || STATUS=000
+            HEALTH_STATUS=$(curl -sS --max-time 60 -o /tmp/production-health.json -w "%{http_code}" "$URL/api/health") || HEALTH_STATUS=000
             AUTH_STATUS=$(curl -sS --max-time 60 -o /tmp/production-auth.json -w "%{http_code}" "$URL/api/auth/get-session") || AUTH_STATUS=000
             if [ "$STATUS" = "200" ] && grep -q 'id="root"' /tmp/production-body.html \
+              && [ "$HEALTH_STATUS" = "200" ] && grep -q '"status":"ok"' /tmp/production-health.json \
               && [ "$AUTH_STATUS" = "200" ]; then
               EVENT_SLUG=$(pnpm exec wrangler d1 execute DB --remote --config wrangler.production.jsonc --json --command "SELECT events.slug FROM agenda_publications INNER JOIN events ON events.id = agenda_publications.event_id WHERE agenda_publications.finalized = 1 ORDER BY agenda_publications.created_at DESC LIMIT 1" | jq -r '.[0].results[0].slug // empty')
               if [ -z "$EVENT_SLUG" ]; then
@@ -89,10 +91,11 @@ jobs:
               echo "Production OK: $URL"
               exit 0
             fi
-            echo "attempt $attempt of 5: HTTP $STATUS, auth $AUTH_STATUS"
+            echo "attempt $attempt of 5: HTTP $STATUS, health $HEALTH_STATUS, auth $AUTH_STATUS"
             sleep 10
           done
-          echo "production did not serve the SPA or boot auth"
+          echo "production did not pass health, SPA, or auth verification"
+          cat /tmp/production-health.json 2>/dev/null
           cat /tmp/production-auth.json 2>/dev/null
           exit 1
 
