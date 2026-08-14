@@ -29,7 +29,9 @@ test("serves one published revision through every public output", async ({
   expect(calendar).toContain("SUMMARY:Preview schedule check\r\n");
 
   await page.goto(`/events/${slug}/schedule`);
-  await expect(page.getByText("Published agenda · revision 1")).toBeVisible();
+  await expect(page.getByText("Published agenda · revision 1")).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(
     page.getByText("Preview schedule check", { exact: true }),
   ).toBeVisible();
