@@ -5,6 +5,7 @@ import { parseConfig } from "./server/config";
 import { createDatabase } from "./server/database/client";
 import type { Environment } from "./server/environment";
 import { getCapturedInvitationSecret } from "./server/event-team/delivery";
+import { checkProductionHealth } from "./server/health";
 import {
   createAuth,
   getCapturedAuthenticationCode,
@@ -33,9 +34,13 @@ export default {
     }
 
     const config = configResult.value;
+    const url = new URL(request.url);
+    if (url.pathname === "/api/health") {
+      return checkProductionHealth(environment.DB);
+    }
+
     const database = createDatabase(environment.DB);
     const auth = createAuth({ config, database });
-    const url = new URL(request.url);
 
     const publishedScheduleResponse = await routePublishedSchedule(
       request,

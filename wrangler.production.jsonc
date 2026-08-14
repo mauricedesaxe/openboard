@@ -37,7 +37,7 @@
   ],
   "vars": {
     "APP_ENV": "production",
-    "APP_URL": "https://openboard.sweet-mouse-22c9.workers.dev",
+    "APP_URL": "https://openboard.alexlazar.dev",
     "EMAIL_TRANSPORT": "cloudflare",
     "EMAIL_FROM": "auth@alexlazar.dev",
   },
