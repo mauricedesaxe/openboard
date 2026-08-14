@@ -5447,6 +5447,7 @@ function CfpBuilder({
       timezone,
     }),
   );
+  const [expectedDeadline, setExpectedDeadline] = useState(cfp?.deadline);
   const [validationError, setValidationError] = useState<{
     message: string;
     path: (string | number)[];
@@ -5463,10 +5464,20 @@ function CfpBuilder({
     );
   };
   const create = useMutation(
-    trpc.cfps.createDraft.mutationOptions({ onSuccess: refresh }),
+    trpc.cfps.createDraft.mutationOptions({
+      onSuccess: async (saved) => {
+        setExpectedDeadline(saved.deadline);
+        await refresh();
+      },
+    }),
   );
   const update = useMutation(
-    trpc.cfps.updateDraft.mutationOptions({ onSuccess: refresh }),
+    trpc.cfps.updateDraft.mutationOptions({
+      onSuccess: async (saved) => {
+        setExpectedDeadline(saved.deadline);
+        await refresh();
+      },
+    }),
   );
   const open = useMutation(
     trpc.cfps.open.mutationOptions({ onSuccess: refresh }),
@@ -5575,7 +5586,7 @@ function CfpBuilder({
       update.mutate({
         slug,
         cfpId: cfp.id,
-        expectedDeadline: cfp.deadline,
+        expectedDeadline: expectedDeadline ?? parsed.deadline,
         ...parsed,
       });
     } else create.mutate({ slug, ...parsed });
@@ -5595,7 +5606,7 @@ function CfpBuilder({
     open.mutate({
       slug,
       cfpId: cfp.id,
-      expectedDeadline: cfp.deadline,
+      expectedDeadline: expectedDeadline ?? parsed.deadline,
       ...parsed,
     });
   }
