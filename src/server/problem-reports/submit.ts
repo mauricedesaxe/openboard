@@ -17,7 +17,7 @@ type SubmitProblemReportResult =
   | { status: "accepted" }
   | { status: "automated" }
   | { status: "rate_limited" }
-  | { status: "delivery_failed" };
+  | { status: "delivery_failed"; reason: "configuration" | "delivery" };
 
 export async function submitProblemReport(input: {
   config: AppConfig;
@@ -56,11 +56,12 @@ export async function submitProblemReport(input: {
       JSON.stringify({
         event: "problem_report_delivery_failed",
         environment: report.environment,
+        reason: delivery.reason,
         release: report.release,
         route,
       }),
     );
-    return { status: "delivery_failed" };
+    return { status: "delivery_failed", reason: delivery.reason };
   }
 
   console.log(
