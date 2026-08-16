@@ -75,7 +75,7 @@ function formatIncidentDescription(report: ProblemReport): string {
   ].join("\n");
 }
 
-function redactSensitiveText(value: string): string {
+export function redactSensitiveText(value: string): string {
   const redacted = value
     .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[redacted email]")
     .replace(/\b\d{6}\b/g, "[redacted code]");
