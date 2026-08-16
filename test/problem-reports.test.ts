@@ -13,6 +13,7 @@ import {
   releaseProblemReportReservation,
   reserveProblemReport,
 } from "../src/server/problem-reports/repository";
+import { submitProblemReport } from "../src/server/problem-reports/submit";
 import type { UserId } from "../src/shared/events";
 
 import { callTrpc, getResult, signIn, testEnvironment } from "./support";
@@ -194,6 +195,70 @@ describe("problem reports", () => {
       { "CF-Connecting-IP": "192.0.2.246" },
     );
     expect(tooFast.status).toBe(400);
+  });
+
+  test("blocks an identity after too many reservation attempts", async () => {
+    const database = createDatabase(testEnvironment.DB);
+    const identity = { type: "ip" as const, ipAddress: "192.0.2.247" };
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const reservation = await reserveProblemReport(
+        database,
+        identity,
+        "attempt-limit-secret",
+        new Date(),
+      );
+      expect(reservation).toBeDefined();
+      if (reservation) {
+        await releaseProblemReportReservation(database, reservation);
+      }
+    }
+
+    expect(
+      await reserveProblemReport(
+        database,
+        identity,
+        "attempt-limit-secret",
+        new Date(),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("releases the reservation when incident delivery is unavailable", async () => {
+    const database = createDatabase(testEnvironment.DB);
+    const identity = { type: "ip" as const, ipAddress: "192.0.2.248" };
+    const config: AppConfig = {
+      ...betterStackConfig,
+      problemReports: { type: "unavailable" },
+    };
+
+    const result = await submitProblemReport({
+      config,
+      database,
+      identity,
+      now: new Date(),
+      report: reportInput,
+    });
+    expect(result).toEqual({
+      status: "delivery_failed",
+      reason: "configuration",
+    });
+
+    expect(
+      await reserveProblemReport(
+        database,
+        identity,
+        config.authSecret,
+        new Date(),
+      ),
+    ).toBeDefined();
+  });
+
+  test("treats an unavailable incident integration as a configuration failure", async () => {
+    const result = await deliverProblemReport(
+      { ...betterStackConfig, problemReports: { type: "unavailable" } },
+      problemReport,
+    );
+    expect(result).toEqual({ ok: false, reason: "configuration" });
   });
 });
 

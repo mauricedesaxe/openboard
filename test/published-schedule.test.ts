@@ -108,4 +108,70 @@ describe("published schedule", () => {
     expect(message.calendar).toContain("DESCRIPTION:Calendar\\ndetails");
     expect(message.calendar).not.toContain("\u0001");
   });
+
+  test("renders an invitation for a newly published placement", () => {
+    const message = renderAgendaCalendarMessage(
+      messageInput({ action: "publish" }),
+    );
+
+    expect(message.method).toBe("REQUEST");
+    expect(message.calendar).toContain("METHOD:REQUEST\r\n");
+    expect(message.calendar).toContain("STATUS:CONFIRMED\r\n");
+    expect(message.subject).toBe(
+      "Invitation: APIs and calendars at OpenBoard Live",
+    );
+    expect(message.text).toContain("is attached.");
+  });
+
+  test("renders an update for an edited placement", () => {
+    const message = renderAgendaCalendarMessage(
+      messageInput({ action: "update" }),
+    );
+
+    expect(message.method).toBe("REQUEST");
+    expect(message.calendar).toContain("STATUS:CONFIRMED\r\n");
+    expect(message.subject).toBe(
+      "Updated: APIs and calendars at OpenBoard Live",
+    );
+    expect(message.text).toContain("is attached.");
+  });
+
+  test("renders a restore as a request with an update subject", () => {
+    const message = renderAgendaCalendarMessage(
+      messageInput({ action: "restore" }),
+    );
+
+    expect(message.method).toBe("REQUEST");
+    expect(message.calendar).toContain("STATUS:CONFIRMED\r\n");
+    expect(message.subject).toBe(
+      "Updated: APIs and calendars at OpenBoard Live",
+    );
+    expect(message.text).toContain("is attached.");
+  });
 });
+
+function messageInput(
+  overrides: Partial<Parameters<typeof renderAgendaCalendarMessage>[0]> = {},
+) {
+  return {
+    eventName: "OpenBoard Live",
+    timezone: "Europe/Berlin",
+    publishedAt: "2028-08-10T07:30:00.000Z",
+    destination: "speaker@example.com",
+    recipientName: "Example Speaker",
+    organizerEmail: "calendar@example.com",
+    action: "publish" as const,
+    uid: "agenda-1@openboard",
+    sequence: 1,
+    item: {
+      title: "APIs and calendars",
+      abstract: "Calendar details",
+      trackName: "Engineering",
+      roomName: "Main hall",
+      startsAt: "2028-08-10T08:00:00.000Z",
+      endsAt: "2028-08-10T09:00:00.000Z",
+      speakers: ["Example Speaker"],
+    },
+    ...overrides,
+  };
+}
