@@ -1,3 +1,5 @@
+import { reportOperationalFailure } from "./observability";
+
 export async function checkProductionHealth(
   database: D1Database,
 ): Promise<Response> {
@@ -11,12 +13,11 @@ export async function checkProductionHealth(
       { status: "ok" },
       { headers: { "Cache-Control": "no-store" } },
     );
-  } catch (error) {
-    console.error(
-      JSON.stringify({
-        event: "production_health_database_unavailable",
-        error: error instanceof Error ? error.message : "Unknown D1 error",
-      }),
+  } catch (error: unknown) {
+    reportOperationalFailure(
+      "production_health_database_unavailable",
+      {},
+      error,
     );
     return productionUnavailableResponse();
   }

@@ -54,6 +54,7 @@ import {
   matchesStoredFileContentType,
   putStoredFile,
 } from "../files/repository";
+import { reportOperationalFailure } from "../observability";
 import {
   prepareSubmissionSpeakerInvitation,
   type SubmissionSpeakerInvitationDelivery,
@@ -1306,14 +1307,12 @@ async function removeUnusedProposalFiles(
       await files.delete(file.objectKey);
       await database.delete(storedFiles).where(eq(storedFiles.id, file.id));
     } catch (error: unknown) {
-      console.error(
-        JSON.stringify({
-          event: "proposal_file_cleanup_failed",
-          fileId: file.id,
-          objectKey: file.objectKey,
-          error:
-            error instanceof Error ? error.message : "Unknown cleanup failure",
-        }),
+      reportOperationalFailure(
+        "proposal_file_cleanup_failed",
+        {
+          "file.id": file.id,
+        },
+        error,
       );
     }
   }

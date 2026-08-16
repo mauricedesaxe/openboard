@@ -18,6 +18,7 @@ import {
   matchesStoredFileContentType,
   putStoredFile,
 } from "../files/repository";
+import { reportOperationalFailure } from "../observability";
 
 export async function findOwnSpeakerProfile(
   database: Database,
@@ -266,14 +267,12 @@ async function removeStoredHeadshot(
     await files.delete(objectKey);
     await database.delete(storedFiles).where(eq(storedFiles.id, fileId));
   } catch (error: unknown) {
-    console.error(
-      JSON.stringify({
-        event,
-        fileId,
-        objectKey,
-        error:
-          error instanceof Error ? error.message : "Unknown cleanup failure",
-      }),
+    reportOperationalFailure(
+      event,
+      {
+        "file.id": fileId,
+      },
+      error,
     );
   }
 }

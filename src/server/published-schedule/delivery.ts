@@ -21,6 +21,11 @@ import {
   publishedAgendaSpeakers,
 } from "../database/schema";
 import { emailFailureIsRetryable } from "../email/transport";
+import {
+  continueTraceOperation,
+  reportOperationalFailure,
+  traceOperation,
+} from "../observability";
 
 import { renderAgendaCalendarMessage } from "./ical";
 
@@ -28,6 +33,7 @@ const deliveryClaimTimeoutMs = 5 * 60_000;
 const defaultDeliveryBatchSize = 25;
 const deliveryRetryBaseDelayMs = 30_000;
 const deliveryRetryMaximumDelayMs = 60 * 60_000;
+const deliveryFailureAlertAttempt = 8;
 
 type AgendaDeliveryOptions = {
   organizerEmail: string;
@@ -82,158 +88,206 @@ export async function processAgendaDeliveryWork(
 
   const result = { delivered: 0, failed: 0, superseded: 0 };
   for (const candidate of work) {
-    if (
-      options.retryStaleClaims === false &&
-      candidate.claimToken &&
-      candidate.claimedAt &&
-      candidate.claimedAt <= staleClaim
-    ) {
-      const finished = await finishAttempt(
-        database,
-        candidate.id,
-        candidate.claimToken,
-        candidate.attemptCount,
-        candidate.claimedAt,
-        now,
-        {
-          status: "failed",
-          error: "Previous Cloudflare delivery outcome is unknown",
-          retryEligible: false,
-          nextAttemptAt: null,
-        },
-      );
-      if (finished) result.failed += 1;
-      continue;
-    }
-    const claimToken = crypto.randomUUID();
     const attemptNumber = candidate.attemptCount + 1;
-    const claimedAt = currentTime(options);
-    const claimed = await database
-      .update(agendaDeliveryWork)
-      .set({
-        claimedAt,
-        claimToken,
-        attemptCount: attemptNumber,
-      })
-      .where(
-        and(
-          eq(agendaDeliveryWork.id, candidate.id),
-          eq(agendaDeliveryWork.status, candidate.status),
-          eq(agendaDeliveryWork.attemptCount, candidate.attemptCount),
-          candidate.nextAttemptAt
-            ? eq(agendaDeliveryWork.nextAttemptAt, candidate.nextAttemptAt)
-            : isNull(agendaDeliveryWork.nextAttemptAt),
-          candidate.claimedAt
-            ? eq(agendaDeliveryWork.claimedAt, candidate.claimedAt)
-            : isNull(agendaDeliveryWork.claimedAt),
-          candidate.claimToken
-            ? eq(agendaDeliveryWork.claimToken, candidate.claimToken)
-            : isNull(agendaDeliveryWork.claimToken),
-        ),
-      );
-    if (claimed.meta.changes === 0) continue;
+    const deliveryAttributes = {
+      "delivery.action": candidate.action,
+      "delivery.work_id": candidate.id,
+      "publication.id": candidate.publicationId,
+    } as const;
+    const attemptAttributes = {
+      ...deliveryAttributes,
+      "delivery.attempt": attemptNumber,
+    } as const;
+    await continueTraceOperation(
+      candidate.traceContext,
+      "delivery",
+      "agenda.delivery.work",
+      deliveryAttributes,
+      async () => {
+        if (
+          options.retryStaleClaims === false &&
+          candidate.claimToken &&
+          candidate.claimedAt &&
+          candidate.claimedAt <= staleClaim
+        ) {
+          const finished = await finishAttempt(
+            database,
+            candidate.id,
+            candidate.claimToken,
+            candidate.attemptCount,
+            candidate.claimedAt,
+            now,
+            {
+              status: "failed",
+              error: "Previous Cloudflare delivery outcome is unknown",
+              retryEligible: false,
+              nextAttemptAt: null,
+            },
+          );
+          if (finished) {
+            result.failed += 1;
+            reportOperationalFailure("agenda_delivery_failed", {
+              ...deliveryAttributes,
+              "delivery.attempt": candidate.attemptCount,
+              "delivery.retryable": false,
+              "error.type": "UnknownCloudflareDeliveryOutcome",
+            });
+          }
+          return;
+        }
+        const claimToken = crypto.randomUUID();
+        const claimedAt = currentTime(options);
+        const claimed = await database
+          .update(agendaDeliveryWork)
+          .set({
+            claimedAt,
+            claimToken,
+            attemptCount: attemptNumber,
+          })
+          .where(
+            and(
+              eq(agendaDeliveryWork.id, candidate.id),
+              eq(agendaDeliveryWork.status, candidate.status),
+              eq(agendaDeliveryWork.attemptCount, candidate.attemptCount),
+              candidate.nextAttemptAt
+                ? eq(agendaDeliveryWork.nextAttemptAt, candidate.nextAttemptAt)
+                : isNull(agendaDeliveryWork.nextAttemptAt),
+              candidate.claimedAt
+                ? eq(agendaDeliveryWork.claimedAt, candidate.claimedAt)
+                : isNull(agendaDeliveryWork.claimedAt),
+              candidate.claimToken
+                ? eq(agendaDeliveryWork.claimToken, candidate.claimToken)
+                : isNull(agendaDeliveryWork.claimToken),
+            ),
+          );
+        if (claimed.meta.changes === 0) return;
 
-    const startedAt = claimedAt;
-    const current = await database
-      .select({
-        uid: calendarSyncStates.uid,
-      })
-      .from(calendarSyncStates)
-      .where(eq(calendarSyncStates.agendaItemId, candidate.agendaItemId))
-      .limit(1);
-    if (
-      current[0]?.uid !== candidate.calendarUid ||
-      !candidate.recipientKey ||
-      !candidate.destination ||
-      !candidate.recipientName
-    ) {
-      const finished = await finishAttempt(
-        database,
-        candidate.id,
-        claimToken,
-        attemptNumber,
-        startedAt,
-        currentTime(options),
-        {
-          status: "superseded",
-        },
-      );
-      if (finished) result.superseded += 1;
-      continue;
-    }
+        const startedAt = claimedAt;
+        const current = await database
+          .select({
+            uid: calendarSyncStates.uid,
+          })
+          .from(calendarSyncStates)
+          .where(eq(calendarSyncStates.agendaItemId, candidate.agendaItemId))
+          .limit(1);
+        if (
+          current[0]?.uid !== candidate.calendarUid ||
+          !candidate.recipientKey ||
+          !candidate.destination ||
+          !candidate.recipientName
+        ) {
+          const finished = await finishAttempt(
+            database,
+            candidate.id,
+            claimToken,
+            attemptNumber,
+            startedAt,
+            currentTime(options),
+            {
+              status: "superseded",
+            },
+          );
+          if (finished) result.superseded += 1;
+          return;
+        }
 
-    const [newerRecipientWork] = await database
-      .select({ id: agendaDeliveryWork.id })
-      .from(agendaDeliveryWork)
-      .where(
-        and(
-          eq(agendaDeliveryWork.agendaItemId, candidate.agendaItemId),
-          eq(agendaDeliveryWork.calendarUid, candidate.calendarUid),
-          eq(agendaDeliveryWork.recipientKey, candidate.recipientKey),
-          eq(agendaDeliveryWork.destination, candidate.destination),
-          gt(agendaDeliveryWork.calendarSequence, candidate.calendarSequence),
-        ),
-      )
-      .limit(1);
-    if (newerRecipientWork) {
-      const finished = await finishAttempt(
-        database,
-        candidate.id,
-        claimToken,
-        attemptNumber,
-        startedAt,
-        currentTime(options),
-        { status: "superseded" },
-      );
-      if (finished) result.superseded += 1;
-      continue;
-    }
+        const [newerRecipientWork] = await database
+          .select({ id: agendaDeliveryWork.id })
+          .from(agendaDeliveryWork)
+          .where(
+            and(
+              eq(agendaDeliveryWork.agendaItemId, candidate.agendaItemId),
+              eq(agendaDeliveryWork.calendarUid, candidate.calendarUid),
+              eq(agendaDeliveryWork.recipientKey, candidate.recipientKey),
+              eq(agendaDeliveryWork.destination, candidate.destination),
+              gt(
+                agendaDeliveryWork.calendarSequence,
+                candidate.calendarSequence,
+              ),
+            ),
+          )
+          .limit(1);
+        if (newerRecipientWork) {
+          const finished = await finishAttempt(
+            database,
+            candidate.id,
+            claimToken,
+            attemptNumber,
+            startedAt,
+            currentTime(options),
+            { status: "superseded" },
+          );
+          if (finished) result.superseded += 1;
+          return;
+        }
 
-    try {
-      const delivery = await createAgendaCalendarDelivery(
-        database,
-        candidate,
-        options.organizerEmail,
-      );
-      if (!delivery)
-        throw new Error("Calendar publication snapshot is missing");
-      await deliver(delivery);
-      const finishedAt = currentTime(options);
-      const finished = await finishAttempt(
-        database,
-        candidate.id,
-        claimToken,
-        attemptNumber,
-        startedAt,
-        finishedAt,
-        {
-          status: "completed",
-        },
-      );
-      if (finished) result.delivered += 1;
-    } catch (error: unknown) {
-      const retryable = emailFailureIsRetryable(error);
-      const message =
-        error instanceof Error ? error.message : "Unknown delivery failure";
-      const finishedAt = currentTime(options);
-      const finished = await finishAttempt(
-        database,
-        candidate.id,
-        claimToken,
-        attemptNumber,
-        startedAt,
-        finishedAt,
-        {
-          status: "failed",
-          error: message,
-          retryEligible: retryable,
-          nextAttemptAt: retryable
-            ? nextDeliveryAttemptAt(finishedAt, attemptNumber)
-            : null,
-        },
-      );
-      if (finished) result.failed += 1;
-    }
+        try {
+          await traceOperation(
+            "delivery",
+            "agenda.delivery.attempt",
+            attemptAttributes,
+            async () => {
+              const delivery = await createAgendaCalendarDelivery(
+                database,
+                candidate,
+                options.organizerEmail,
+              );
+              if (!delivery) {
+                throw new Error("Calendar publication snapshot is missing");
+              }
+              await deliver(delivery);
+            },
+          );
+          const finishedAt = currentTime(options);
+          const finished = await finishAttempt(
+            database,
+            candidate.id,
+            claimToken,
+            attemptNumber,
+            startedAt,
+            finishedAt,
+            {
+              status: "completed",
+            },
+          );
+          if (finished) result.delivered += 1;
+        } catch (error: unknown) {
+          const retryable = emailFailureIsRetryable(error);
+          const message =
+            error instanceof Error ? error.message : "Unknown delivery failure";
+          const finishedAt = currentTime(options);
+          const finished = await finishAttempt(
+            database,
+            candidate.id,
+            claimToken,
+            attemptNumber,
+            startedAt,
+            finishedAt,
+            {
+              status: "failed",
+              error: message,
+              retryEligible: retryable,
+              nextAttemptAt: retryable
+                ? nextDeliveryAttemptAt(finishedAt, attemptNumber)
+                : null,
+            },
+          );
+          if (finished) {
+            result.failed += 1;
+            if (!retryable || attemptNumber === deliveryFailureAlertAttempt) {
+              reportOperationalFailure(
+                "agenda_delivery_failed",
+                {
+                  ...attemptAttributes,
+                  "delivery.retryable": retryable,
+                },
+                error,
+              );
+            }
+          }
+        }
+      },
+    );
   }
   return result;
 }
