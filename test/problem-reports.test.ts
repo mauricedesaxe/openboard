@@ -7,6 +7,7 @@ import {
   deliverProblemReport,
   getCapturedProblemReports,
   type ProblemReport,
+  redactSensitiveText,
 } from "../src/server/problem-reports/delivery";
 import {
   releaseProblemReportReservation,
@@ -182,6 +183,78 @@ describe("problem reports", () => {
         new Date(),
       ),
     ).toBeDefined();
+  });
+
+  test("limits automated form submissions by speed", async () => {
+    const tooFast = await callTrpc(
+      "problemReports.submit",
+      { ...reportInput, formOpenDurationMs: 500 },
+      undefined,
+      "mutation",
+      { "CF-Connecting-IP": "192.0.2.246" },
+    );
+    expect(tooFast.status).toBe(400);
+  });
+});
+
+describe("report text sanitization", () => {
+  test("replaces email addresses with a redacted placeholder", () => {
+    expect(redactSensitiveText("Contact admin@example.com for help.")).toBe(
+      "Contact [redacted email] for help.",
+    );
+    expect(
+      redactSensitiveText(
+        "a+b@c.net wrote to user@sub.domain.org about the page.",
+      ),
+    ).toBe("[redacted email] wrote to [redacted email] about the page.");
+    expect(redactSensitiveText("hello@me.example")).toBe("[redacted email]");
+  });
+
+  test("replaces six-digit number sequences with a redacted placeholder", () => {
+    expect(redactSensitiveText("Code 123456 failed.")).toBe(
+      "Code [redacted code] failed.",
+    );
+    expect(redactSensitiveText("Codes 111111 and 999999 both work.")).toBe(
+      "Codes [redacted code] and [redacted code] both work.",
+    );
+  });
+
+  test("keeps numbers that are not six digits", () => {
+    expect(redactSensitiveText("Code 12345 worked.")).toBe(
+      "Code 12345 worked.",
+    );
+    expect(redactSensitiveText("Code 1234567 failed.")).toBe(
+      "Code 1234567 failed.",
+    );
+    expect(redactSensitiveText("Order #12345 placed.")).toBe(
+      "Order #12345 placed.",
+    );
+  });
+
+  test("redacts mixed emails and codes in the same text", () => {
+    expect(
+      redactSensitiveText(
+        "User admin@example.com reported Code 654321 on route /events/conf",
+      ),
+    ).toBe(
+      "User [redacted email] reported Code [redacted code] on route /events/conf",
+    );
+  });
+
+  test("strips control characters except tabs, newlines, and carriage returns", () => {
+    expect(redactSensitiveText("Line\u0000break")).toBe("Line break");
+    expect(redactSensitiveText("Tab\tNewline\nReturn\rAll")).toBe(
+      "Tab\tNewline\nReturn\rAll",
+    );
+  });
+
+  test("returns unchanged text when there is nothing to redact", () => {
+    const text = "The page stopped responding after I opened the agenda.";
+    expect(redactSensitiveText(text)).toBe(text);
+  });
+
+  test("returns empty string when given empty input", () => {
+    expect(redactSensitiveText("")).toBe("");
   });
 });
 
