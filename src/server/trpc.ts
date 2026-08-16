@@ -255,6 +255,13 @@ export const appRouter = trpc.router({
           });
         }
         if (result.status === "delivery_failed") {
+          if (result.reason === "configuration") {
+            throw new TRPCError({
+              code: "SERVICE_UNAVAILABLE",
+              message:
+                "Problem reports are not configured for this deployment.",
+            });
+          }
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
             message: "The report could not be delivered. Try again.",
