@@ -6,3 +6,4 @@ EMAIL_TRANSPORT="capture"
 # and RESEND_API_KEY="re_...".
 # Production reports require BETTERSTACK_INCIDENT_API_TOKEN,
 # BETTERSTACK_INCIDENT_POLICY_ID, and BETTERSTACK_INCIDENT_REQUESTER_EMAIL.
+# Production scheduled-work liveness requires BETTERSTACK_HEARTBEAT_URL.

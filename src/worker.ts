@@ -10,6 +10,7 @@ import {
   checkProductionHealth,
   productionUnavailableResponse,
 } from "./server/health";
+import { reportScheduledWorkLiveness } from "./server/heartbeats";
 import {
   createAuth,
   getCapturedAuthenticationCode,
@@ -277,4 +278,5 @@ async function processPendingDeliveryWork(
     communications,
     repairedDecisionRecords,
   });
+  await reportScheduledWorkLiveness(configResult.value);
 }

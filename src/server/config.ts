@@ -4,6 +4,7 @@ const commonConfigShape = {
   APP_ENV: z.enum(["local", "test", "preview", "production"]),
   APP_URL: z.url(),
   BETTER_AUTH_SECRET: z.string().min(32),
+  BETTERSTACK_HEARTBEAT_URL: z.url().optional(),
   BETTERSTACK_INCIDENT_API_TOKEN: z.string().min(1).optional(),
   BETTERSTACK_INCIDENT_POLICY_ID: z.string().min(1).optional(),
   BETTERSTACK_INCIDENT_REQUESTER_EMAIL: z.email().optional(),
@@ -78,6 +79,8 @@ export type AppConfig = {
         requesterEmail: string;
       };
   release: string;
+  scheduledWorkHeartbeat:
+    { type: "disabled" } | { type: "betterstack"; url: string };
 };
 
 export type ConfigResult =
@@ -129,6 +132,13 @@ export function parseConfig(
               }
             : { type: "unavailable" },
       release: config.VERSION?.id ?? config.APP_ENV,
+      scheduledWorkHeartbeat:
+        config.APP_ENV === "production" && config.BETTERSTACK_HEARTBEAT_URL
+          ? {
+              type: "betterstack",
+              url: config.BETTERSTACK_HEARTBEAT_URL,
+            }
+          : { type: "disabled" },
     },
   };
 }

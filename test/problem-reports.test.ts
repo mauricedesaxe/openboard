@@ -335,6 +335,7 @@ const betterStackConfig: AppConfig = {
     requesterEmail: "owner@example.com",
   },
   release: "release-123",
+  scheduledWorkHeartbeat: { type: "disabled" },
 };
 
 const problemReport: ProblemReport = {

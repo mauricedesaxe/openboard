@@ -61,7 +61,6 @@ explicit email transport. The deployment workflow requires `PRODUCTION_BETTERSTA
 for telemetry export. The primary setup uses `EMAIL_TRANSPORT=cloudflare`,
 `EMAIL_FROM=auth@alexlazar.dev`, and the `EMAIL` binding in `wrangler.jsonc`. The documented fallback
 uses `EMAIL_TRANSPORT=resend`, the same `EMAIL_FROM`, and `RESEND_API_KEY`. The Worker returns a typed
-<<<<<<< HEAD
 503 response instead of serving the application when configuration is incomplete or unsafe.
 
 Production problem reports require `BETTERSTACK_INCIDENT_API_TOKEN`,
@@ -74,3 +73,9 @@ Production telemetry must keep the request-to-delivery path visible across later
 retries. It must not record recipients, message content, uploaded-file details, request content, or
 arbitrary error messages. Unhandled exceptions retain their stack. Handled failures use stable event
 codes and safe domain IDs.
+
+Scheduled work runs every minute through the cron trigger declared in `wrangler.jsonc`. Each
+successful run pings the dedicated OpenBoard Better Stack heartbeat configured through the
+`BETTERSTACK_HEARTBEAT_URL` Worker secret. Only production configuration can satisfy the heartbeat,
+so preview and local runs never keep it alive or trigger its incidents. A missed heartbeat emails
+the app owner, which detects a stopped schedule even while HTTP traffic stays healthy.
