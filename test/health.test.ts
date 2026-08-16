@@ -25,6 +25,10 @@ describe("production health", () => {
         ...(env as unknown as Environment),
         BETTER_AUTH_SECRET: "short",
       },
+      {
+        passThroughOnException: () => undefined,
+        waitUntil: () => undefined,
+      } as unknown as ExecutionContext,
     );
 
     expect(response.status).toBe(503);
@@ -47,12 +51,11 @@ describe("production health", () => {
     expect(response.status).toBe(503);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(await response.json()).toEqual({ status: "unavailable" });
-    expect(consoleError).toHaveBeenCalledWith(
-      JSON.stringify({
-        event: "production_health_database_unavailable",
-        error: "private database detail",
-      }),
-    );
+    expect(consoleError).toHaveBeenCalledWith({
+      event: "production_health_database_unavailable",
+      severity: "error",
+      "error.type": "Error",
+    });
     consoleError.mockRestore();
   });
 });

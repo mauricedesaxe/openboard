@@ -7,6 +7,15 @@
   "version_metadata": {
     "binding": "VERSION",
   },
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": false,
+      "destinations": ["openboard-betterstack-logs"],
+      "persist": false,
+    },
+  },
   "workers_dev": true,
   "preview_urls": false,
   "triggers": {

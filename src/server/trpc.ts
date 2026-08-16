@@ -107,6 +107,7 @@ import {
 } from "./events/repository";
 import { getEventWorkspace } from "./events/workspace";
 import type { Auth } from "./identity/auth";
+import { reportOperationalFailure } from "./observability";
 import {
   attachTaskFile,
   cancelTaskAssignment,
@@ -559,15 +560,12 @@ export const appRouter = trpc.router({
         try {
           await sendEventInvitation(ctx.config, result.value);
         } catch (error: unknown) {
-          console.error(
-            JSON.stringify({
-              event: "event_invitation_delivery_failed",
-              invitationId: result.value.id,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Unknown email failure",
-            }),
+          reportOperationalFailure(
+            "event_invitation_delivery_failed",
+            {
+              "invitation.id": result.value.id,
+            },
+            error,
           );
           return {
             outcome: "delivery_failed" as const,
@@ -1382,12 +1380,12 @@ async function deliverSubmissionSpeakerInvitation(
     await sendSubmissionSpeakerInvitation(config, invitation);
     return "sent";
   } catch (error: unknown) {
-    console.error(
-      JSON.stringify({
-        event: "submission_speaker_invitation_delivery_failed",
-        invitationId: invitation.id,
-        error: error instanceof Error ? error.message : "Unknown email failure",
-      }),
+    reportOperationalFailure(
+      "submission_speaker_invitation_delivery_failed",
+      {
+        "invitation.id": invitation.id,
+      },
+      error,
     );
     return "failed";
   }

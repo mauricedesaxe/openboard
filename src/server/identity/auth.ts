@@ -7,6 +7,7 @@ import type { AppConfig } from "../config";
 import type { Database } from "../database/client";
 import { schema, verification } from "../database/schema";
 import { sendConfiguredEmail } from "../email/transport";
+import { reportOperationalFailure } from "../observability";
 
 const capturedCodes = new Map<string, string>();
 
@@ -75,14 +76,10 @@ export function createAuth({ config, database }: AuthDependencies) {
       const response = await auth.handler(request);
       if (!deliveryFailure) return response;
 
-      console.error(
-        JSON.stringify({
-          event: "authentication_code_delivery_failed",
-          error:
-            deliveryFailure instanceof Error
-              ? deliveryFailure.message
-              : "Unknown email delivery failure",
-        }),
+      reportOperationalFailure(
+        "authentication_code_delivery_failed",
+        {},
+        deliveryFailure,
       );
       return Response.json(
         {
