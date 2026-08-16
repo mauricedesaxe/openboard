@@ -3,6 +3,7 @@ export type Environment = {
   APP_URL: string;
   ASSETS: Fetcher;
   BETTER_AUTH_SECRET: string;
+  BETTERSTACK_HEARTBEAT_URL?: string;
   BETTERSTACK_INCIDENT_API_TOKEN?: string;
   BETTERSTACK_INCIDENT_POLICY_ID?: string;
   BETTERSTACK_INCIDENT_REQUESTER_EMAIL?: string;

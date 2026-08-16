@@ -33,4 +33,7 @@
       "allowed_sender_addresses": ["auth@alexlazar.dev"],
     },
   ],
+  "triggers": {
+    "crons": ["* * * * *"],
+  },
 }

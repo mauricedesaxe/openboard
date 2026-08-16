@@ -47,6 +47,7 @@ describe("configuration", () => {
         },
         problemReports: { type: "unavailable" },
         release: "production",
+        scheduledWorkHeartbeat: { type: "disabled" },
       },
     });
     expect(
@@ -69,6 +70,7 @@ describe("configuration", () => {
         },
         problemReports: { type: "unavailable" },
         release: "production",
+        scheduledWorkHeartbeat: { type: "disabled" },
       },
     });
     expect(

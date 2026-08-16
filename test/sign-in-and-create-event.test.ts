@@ -396,6 +396,7 @@ test("reports a failed authentication code delivery", async () => {
     authSecret: "test-secret-that-is-at-least-thirty-two-characters",
     problemReports: { type: "unavailable" },
     release: "test",
+    scheduledWorkHeartbeat: { type: "disabled" },
     email: {
       type: "cloudflare",
       from: "auth@example.com",
