@@ -41,6 +41,10 @@ import {
   user,
 } from "../database/schema";
 import { findEventForOrganizer } from "../events/repository";
+import {
+  currentTraceContext,
+  reportOperationalFailure,
+} from "../observability";
 import { speakerHeadshotUrl } from "../speaker-profiles/repository";
 
 /** Keep generated inserts below D1's 100-variable statement limit. */
@@ -763,6 +767,7 @@ export async function publishAgenda(
         calendarSequence: change.sequence,
         subject: renderTemplate(template.subjectTemplate, variables),
         body: renderTemplate(template.bodyTemplate, variables),
+        traceContext: currentTraceContext(),
         createdAt: now,
       };
     }),
@@ -793,12 +798,12 @@ export async function publishAgenda(
     if (String(error).includes("stale_agenda_publication")) {
       return { ok: false, error: "agenda_changed" };
     }
-    console.error(
-      JSON.stringify({
-        event: "agenda_publication_failed",
-        eventId: event.id,
-        error: error instanceof Error ? error.message : String(error),
-      }),
+    reportOperationalFailure(
+      "agenda_publication_failed",
+      {
+        "event.id": event.id,
+      },
+      error,
     );
     return { ok: false, error: "persistence_failed" };
   }

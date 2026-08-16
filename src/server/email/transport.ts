@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { AppConfig } from "../config";
+import { traceOperation } from "../observability";
 
 type EmailConfig = Pick<AppConfig, "email">;
 
@@ -35,6 +36,18 @@ const capturedEmails = new Map<string, EmailContent>();
 const emailTimeoutMs = 15_000;
 
 export async function sendConfiguredEmail(
+  config: EmailConfig,
+  message: EmailContent,
+): Promise<EmailDeliveryResult> {
+  return traceOperation(
+    "external",
+    "email.send",
+    { "delivery.provider": config.email.type },
+    () => sendEmail(config, message),
+  );
+}
+
+async function sendEmail(
   config: EmailConfig,
   message: EmailContent,
 ): Promise<EmailDeliveryResult> {

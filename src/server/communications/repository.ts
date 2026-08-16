@@ -15,6 +15,7 @@ import {
   communicationTemplates,
 } from "../database/schema";
 import { findEventForOrganizer } from "../events/repository";
+import { currentTraceContext } from "../observability";
 
 const defaultTemplates = {
   submission_confirmation: {
@@ -173,6 +174,7 @@ export async function prepareCommunication(
     work: {
       id: crypto.randomUUID(),
       communicationId,
+      traceContext: currentTraceContext(),
       createdAt: input.now,
     },
   };
@@ -257,10 +259,16 @@ export async function retryCommunication(
 ) {
   const event = await findEventForOrganizer(database, actorUserId, slug);
   if (!event) return false;
+  const traceContext = currentTraceContext();
   if (communicationId.startsWith("agenda:")) {
     const result = await database
       .update(agendaDeliveryWork)
-      .set({ status: "pending", nextAttemptAt: null, lastError: null })
+      .set({
+        status: "pending",
+        nextAttemptAt: null,
+        lastError: null,
+        traceContext,
+      })
       .where(
         and(
           eq(agendaDeliveryWork.id, communicationId.slice("agenda:".length)),
@@ -289,7 +297,12 @@ export async function retryCommunication(
   }
   const result = await database
     .update(communicationDeliveryWork)
-    .set({ status: "pending", nextAttemptAt: null, lastError: null })
+    .set({
+      status: "pending",
+      nextAttemptAt: null,
+      lastError: null,
+      traceContext,
+    })
     .where(
       and(
         eq(communicationDeliveryWork.communicationId, communicationId),

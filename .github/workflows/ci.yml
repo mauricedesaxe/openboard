@@ -70,6 +70,17 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: echo "$BETTER_AUTH_SECRET" | pnpm exec wrangler secret put BETTER_AUTH_SECRET --config wrangler.production.jsonc
+      - name: Set the production telemetry token
+        env:
+          BETTERSTACK_SOURCE_TOKEN: ${{ secrets.PRODUCTION_BETTERSTACK_SOURCE_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [[ -z "${BETTERSTACK_SOURCE_TOKEN//[[:space:]]/}" ]]; then
+            printf 'PRODUCTION_BETTERSTACK_SOURCE_TOKEN must not be blank.\n' >&2
+            exit 1
+          fi
+          printf '%s' "$BETTERSTACK_SOURCE_TOKEN" | pnpm exec wrangler secret put BETTERSTACK_SOURCE_TOKEN --config wrangler.production.jsonc
       - name: Deploy production
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

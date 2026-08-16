@@ -8,6 +8,11 @@ import {
   emailFailureIsRetryable,
   sendConfiguredEmail,
 } from "../email/transport";
+import {
+  continueTraceOperation,
+  reportOperationalFailure,
+  traceOperation,
+} from "../observability";
 
 const retryBaseMs = 30_000;
 const claimTimeoutMs = 5 * 60_000;
@@ -44,121 +49,169 @@ export async function processCommunicationDeliveryWork(
     .limit(options.limit ?? 25);
   const summary = { delivered: 0, failed: 0, terminal: 0 };
   for (const candidate of candidates) {
-    if (
-      config.email.type === "cloudflare" &&
-      candidate.work.claimToken &&
-      candidate.work.claimedAt &&
-      candidate.work.claimedAt <= staleClaim
-    ) {
-      const finished = await finishCommunicationAttempt(
-        database,
-        candidate.work.id,
-        candidate.work.claimToken,
-        candidate.work.attemptCount,
-        candidate.work.claimedAt,
-        now,
-        {
-          status: "terminal",
-          result: "terminal_failure",
-          providerId: null,
-          error: "Previous Cloudflare delivery outcome is unknown",
-          nextAttemptAt: null,
-        },
-      );
-      if (finished) summary.terminal += 1;
-      continue;
-    }
-    const token = crypto.randomUUID();
     const attemptNumber = candidate.work.attemptCount + 1;
-    const claimedAt = currentTime(options);
-    const claim = await database
-      .update(communicationDeliveryWork)
-      .set({
-        claimToken: token,
-        claimedAt,
-        attemptCount: attemptNumber,
-      })
-      .where(
-        and(
-          eq(communicationDeliveryWork.id, candidate.work.id),
-          eq(communicationDeliveryWork.status, candidate.work.status),
-          eq(
-            communicationDeliveryWork.attemptCount,
+    const deliveryAttributes = {
+      "delivery.work_id": candidate.work.id,
+    } as const;
+    const attemptAttributes = {
+      ...deliveryAttributes,
+      "delivery.attempt": attemptNumber,
+    } as const;
+    await continueTraceOperation(
+      candidate.work.traceContext,
+      "delivery",
+      "communication.delivery.work",
+      deliveryAttributes,
+      async () => {
+        if (
+          config.email.type === "cloudflare" &&
+          candidate.work.claimToken &&
+          candidate.work.claimedAt &&
+          candidate.work.claimedAt <= staleClaim
+        ) {
+          const finished = await finishCommunicationAttempt(
+            database,
+            candidate.work.id,
+            candidate.work.claimToken,
             candidate.work.attemptCount,
-          ),
-          candidate.work.nextAttemptAt
-            ? eq(
-                communicationDeliveryWork.nextAttemptAt,
-                candidate.work.nextAttemptAt,
+            candidate.work.claimedAt,
+            now,
+            {
+              status: "terminal",
+              result: "terminal_failure",
+              providerId: null,
+              error: "Previous Cloudflare delivery outcome is unknown",
+              nextAttemptAt: null,
+            },
+          );
+          if (finished) {
+            summary.terminal += 1;
+            reportOperationalFailure("communication_delivery_terminal", {
+              ...deliveryAttributes,
+              "delivery.attempt": candidate.work.attemptCount,
+              "delivery.retryable": false,
+              "error.type": "UnknownCloudflareDeliveryOutcome",
+            });
+          }
+          return;
+        }
+        const token = crypto.randomUUID();
+        const claimedAt = currentTime(options);
+        const claim = await database
+          .update(communicationDeliveryWork)
+          .set({
+            claimToken: token,
+            claimedAt,
+            attemptCount: attemptNumber,
+          })
+          .where(
+            and(
+              eq(communicationDeliveryWork.id, candidate.work.id),
+              eq(communicationDeliveryWork.status, candidate.work.status),
+              eq(
+                communicationDeliveryWork.attemptCount,
+                candidate.work.attemptCount,
+              ),
+              candidate.work.nextAttemptAt
+                ? eq(
+                    communicationDeliveryWork.nextAttemptAt,
+                    candidate.work.nextAttemptAt,
+                  )
+                : isNull(communicationDeliveryWork.nextAttemptAt),
+              candidate.work.claimToken
+                ? eq(
+                    communicationDeliveryWork.claimToken,
+                    candidate.work.claimToken,
+                  )
+                : isNull(communicationDeliveryWork.claimToken),
+              candidate.work.claimedAt
+                ? eq(
+                    communicationDeliveryWork.claimedAt,
+                    candidate.work.claimedAt,
+                  )
+                : isNull(communicationDeliveryWork.claimedAt),
+            ),
+          );
+        if (claim.meta.changes === 0) return;
+        const startedAt = claimedAt;
+        let status: "completed" | "failed" | "terminal" = "completed";
+        let result: "delivered" | "retryable_failure" | "terminal_failure" =
+          "delivered";
+        let providerId: string | null = null;
+        let errorMessage: string | null = null;
+        let deliveryError: unknown;
+        try {
+          const delivered = await traceOperation(
+            "delivery",
+            "communication.delivery.attempt",
+            attemptAttributes,
+            async () => {
+              if (
+                !candidate.communication.subject ||
+                !candidate.communication.body
+              ) {
+                throw createEmailDeliveryError(
+                  "Communication snapshot is incomplete",
+                  false,
+                );
+              }
+              return sendConfiguredEmail(config, {
+                idempotencyKey: candidate.communication.id,
+                to: candidate.communication.destination,
+                subject: candidate.communication.subject,
+                text: candidate.communication.body,
+              });
+            },
+          );
+          providerId = delivered.providerId;
+        } catch (error: unknown) {
+          deliveryError = error;
+          const retryable = emailFailureIsRetryable(error);
+          const exhausted = attemptNumber >= maxAttempts;
+          status = retryable && !exhausted ? "failed" : "terminal";
+          result =
+            retryable && !exhausted ? "retryable_failure" : "terminal_failure";
+          errorMessage =
+            error instanceof Error ? error.message : "Email delivery failed";
+        }
+        const finishedAt = currentTime(options);
+        const nextAttemptAt =
+          status === "failed"
+            ? new Date(
+                finishedAt.getTime() +
+                  retryDelayMs(candidate.work.id, attemptNumber),
               )
-            : isNull(communicationDeliveryWork.nextAttemptAt),
-          candidate.work.claimToken
-            ? eq(
-                communicationDeliveryWork.claimToken,
-                candidate.work.claimToken,
-              )
-            : isNull(communicationDeliveryWork.claimToken),
-          candidate.work.claimedAt
-            ? eq(communicationDeliveryWork.claimedAt, candidate.work.claimedAt)
-            : isNull(communicationDeliveryWork.claimedAt),
-        ),
-      );
-    if (claim.meta.changes === 0) continue;
-    const startedAt = claimedAt;
-    let status: "completed" | "failed" | "terminal" = "completed";
-    let result: "delivered" | "retryable_failure" | "terminal_failure" =
-      "delivered";
-    let providerId: string | null = null;
-    let errorMessage: string | null = null;
-    try {
-      if (!candidate.communication.subject || !candidate.communication.body) {
-        throw createEmailDeliveryError(
-          "Communication snapshot is incomplete",
-          false,
+            : null;
+        const finished = await finishCommunicationAttempt(
+          database,
+          candidate.work.id,
+          token,
+          attemptNumber,
+          startedAt,
+          finishedAt,
+          {
+            status,
+            result,
+            providerId,
+            error: errorMessage,
+            nextAttemptAt,
+          },
         );
-      }
-      const delivered = await sendConfiguredEmail(config, {
-        idempotencyKey: candidate.communication.id,
-        to: candidate.communication.destination,
-        subject: candidate.communication.subject,
-        text: candidate.communication.body,
-      });
-      providerId = delivered.providerId;
-    } catch (error: unknown) {
-      const retryable = emailFailureIsRetryable(error);
-      const exhausted = attemptNumber >= maxAttempts;
-      status = retryable && !exhausted ? "failed" : "terminal";
-      result =
-        retryable && !exhausted ? "retryable_failure" : "terminal_failure";
-      errorMessage =
-        error instanceof Error ? error.message : "Email delivery failed";
-    }
-    const finishedAt = currentTime(options);
-    const nextAttemptAt =
-      status === "failed"
-        ? new Date(
-            finishedAt.getTime() +
-              retryDelayMs(candidate.work.id, attemptNumber),
-          )
-        : null;
-    const finished = await finishCommunicationAttempt(
-      database,
-      candidate.work.id,
-      token,
-      attemptNumber,
-      startedAt,
-      finishedAt,
-      {
-        status,
-        result,
-        providerId,
-        error: errorMessage,
-        nextAttemptAt,
+        if (finished) {
+          summary[status === "completed" ? "delivered" : status] += 1;
+          if (status === "terminal") {
+            reportOperationalFailure(
+              "communication_delivery_terminal",
+              {
+                ...attemptAttributes,
+                "delivery.retryable": false,
+              },
+              deliveryError,
+            );
+          }
+        }
       },
     );
-    if (finished) {
-      summary[status === "completed" ? "delivered" : status] += 1;
-    }
   }
   return summary;
 }

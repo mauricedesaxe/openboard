@@ -6,6 +6,7 @@ export type Environment = {
   BETTERSTACK_INCIDENT_API_TOKEN?: string;
   BETTERSTACK_INCIDENT_POLICY_ID?: string;
   BETTERSTACK_INCIDENT_REQUESTER_EMAIL?: string;
+  BETTERSTACK_SOURCE_TOKEN?: string;
   DB: D1Database;
   EMAIL?: SendEmail;
   EMAIL_FROM?: string;

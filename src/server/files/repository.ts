@@ -3,6 +3,7 @@ import {
   MAX_STORED_FILE_BYTES,
   type StoredFileUpload,
 } from "../../shared/files";
+import { reportOperationalFailure } from "../observability";
 
 type PutStoredFileResult =
   | {
@@ -78,16 +79,7 @@ export async function compensateStoredFile(
   try {
     await files.delete(objectKey);
   } catch (error: unknown) {
-    console.error(
-      JSON.stringify({
-        event,
-        objectKey,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unknown object-store failure",
-      }),
-    );
+    reportOperationalFailure(event, {}, error);
   }
 }
 

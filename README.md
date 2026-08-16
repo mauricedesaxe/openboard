@@ -57,11 +57,20 @@ Run `pnpm check` to execute formatting, linting, type checking, isolated D1 test
 and SPA build.
 
 Production requires `APP_ENV=production`, an HTTPS `APP_URL`, a random `BETTER_AUTH_SECRET`, and an
-explicit email transport. The primary setup uses `EMAIL_TRANSPORT=cloudflare`,
+explicit email transport. The deployment workflow requires `PRODUCTION_BETTERSTACK_SOURCE_TOKEN`
+for telemetry export. The primary setup uses `EMAIL_TRANSPORT=cloudflare`,
 `EMAIL_FROM=auth@alexlazar.dev`, and the `EMAIL` binding in `wrangler.jsonc`. The documented fallback
 uses `EMAIL_TRANSPORT=resend`, the same `EMAIL_FROM`, and `RESEND_API_KEY`. The Worker returns a typed
+<<<<<<< HEAD
 503 response instead of serving the application when configuration is incomplete or unsafe.
 
 Production problem reports require `BETTERSTACK_INCIDENT_API_TOKEN`,
 `BETTERSTACK_INCIDENT_POLICY_ID`, and `BETTERSTACK_INCIDENT_REQUESTER_EMAIL` as Worker secrets. The
 token must be a team-scoped Uptime API token. The policy must route email to the app owner.
+
+## Production observability
+
+Production telemetry must keep the request-to-delivery path visible across later cron attempts and
+retries. It must not record recipients, message content, uploaded-file details, request content, or
+arbitrary error messages. Unhandled exceptions retain their stack. Handled failures use stable event
+codes and safe domain IDs.

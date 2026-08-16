@@ -651,6 +651,7 @@ export const communicationDeliveryWork = sqliteTable(
     claimedAt: integer("claimed_at", { mode: "timestamp_ms" }),
     claimToken: text("claim_token"),
     lastError: text("last_error"),
+    traceContext: text("trace_context"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
 );
@@ -1109,6 +1110,7 @@ export const agendaDeliveryWork = sqliteTable(
     lastError: text("last_error"),
     subject: text("subject"),
     body: text("body"),
+    traceContext: text("trace_context"),
     retryEligible: integer("retry_eligible", { mode: "boolean" })
       .notNull()
       .default(true),
