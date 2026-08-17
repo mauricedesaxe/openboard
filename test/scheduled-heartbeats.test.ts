@@ -43,6 +43,27 @@ describe("scheduled work heartbeats", () => {
     expect(logs).not.toHaveBeenCalled();
   });
 
+  test("pings through a workerd-compatible fetch with a bounded timeout", async () => {
+    const config = parseConfig(productionConfig);
+    expect(config.ok).toBe(true);
+    if (!config.ok) return;
+
+    spyOperationalFailures();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    await reportScheduledWorkLiveness(config.value);
+
+    expect(fetchSpy).toHaveBeenCalledExactlyOnceWith(
+      heartbeatUrl,
+      expect.objectContaining({
+        method: "GET",
+        redirect: "manual",
+      }),
+    );
+    expect(fetchSpy.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
   test("stays silent outside production even when a heartbeat URL is set", async () => {
     const preview = parseConfig({
       ...productionConfig,
