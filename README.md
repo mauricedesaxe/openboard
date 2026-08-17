@@ -76,6 +76,11 @@ codes and safe domain IDs.
 
 Scheduled work runs every minute through the cron trigger declared in `wrangler.jsonc`. Each
 successful run pings the dedicated OpenBoard Better Stack heartbeat configured through the
-`BETTERSTACK_HEARTBEAT_URL` Worker secret. Only production configuration can satisfy the heartbeat,
-so preview and local runs never keep it alive or trigger its incidents. A missed heartbeat emails
-the app owner, which detects a stopped schedule even while HTTP traffic stays healthy.
+`BETTERSTACK_HEARTBEAT_URL` Worker secret. The deployment workflow requires
+`PRODUCTION_BETTERSTACK_HEARTBEAT_URL` and fails the production deploy when it is missing, so a
+dropped secret cannot silently remove the schedule detector. Only production configuration can
+satisfy the heartbeat, so preview and local runs never keep it alive or trigger its incidents. A
+missed heartbeat emails the app owner, which detects a stopped schedule even while HTTP traffic
+stays healthy. Treat the heartbeat URL as a credential: anyone who holds it can keep the heartbeat
+quiet through a genuine outage, so it never belongs in logs, PR descriptions, or other tracker
+artifacts.
