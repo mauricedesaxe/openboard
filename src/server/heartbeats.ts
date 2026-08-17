@@ -25,17 +25,15 @@ export async function reportScheduledWorkLiveness(
         "error.type": "HeartbeatRejected",
       });
     }
-  } catch {
-    reportOperationalFailure("scheduled_heartbeat_ping_failed", {
-      "error.type": "HeartbeatPingFailed",
-    });
+  } catch (error) {
+    reportOperationalFailure("scheduled_heartbeat_ping_failed", {}, error);
   }
 }
 
 async function pingHeartbeat(url: string): Promise<{ ok: boolean }> {
   const response = await fetch(url, {
     method: "GET",
-    redirect: "error",
+    redirect: "manual", // workerd rejects "error"; a redirect lands in the !ok rejection path
     signal: AbortSignal.timeout(heartbeatTimeoutMs),
   });
   return { ok: response.ok };
