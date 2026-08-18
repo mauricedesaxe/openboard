@@ -7,6 +7,15 @@ const MAXIMUM_PROBLEM_REPORT_FORM_OPEN_DURATION_MS = 3_600_000;
 
 export const problemReportInputSchema = z.object({
   contactAllowed: z.boolean(),
+  contactEmail: z
+    .string()
+    .trim()
+    .pipe(
+      z.union([
+        z.literal(""),
+        z.email().transform((email) => email.toLowerCase()),
+      ]),
+    ),
   description: z
     .string()
     .trim()

@@ -21,6 +21,7 @@ import { callTrpc, getResult, signIn, testEnvironment } from "./support";
 const acceptedSchema = z.object({ accepted: z.literal(true) });
 const reportInput = {
   contactAllowed: true,
+  contactEmail: "",
   description: "The page stopped responding after I opened the agenda.",
   formOpenDurationMs: 2_000,
   honeypotWebsite: "",
@@ -68,6 +69,48 @@ describe("problem reports", () => {
     ]);
     expect(typeof reports[0]?.release).toBe("string");
     expect(reports[0]).not.toHaveProperty("userId");
+  });
+
+  test("persists optional contact info for a signed-out report", async () => {
+    const before = getCapturedProblemReports().length;
+    const withContact = await callTrpc(
+      "problemReports.submit",
+      { ...reportInput, contactEmail: "Reporter@Example.com" },
+      undefined,
+      "mutation",
+      { "CF-Connecting-IP": "192.0.2.249" },
+    );
+    expect(withContact.status).toBe(200);
+
+    const withoutConsent = await callTrpc(
+      "problemReports.submit",
+      {
+        ...reportInput,
+        contactAllowed: false,
+        contactEmail: "quiet@example.com",
+      },
+      undefined,
+      "mutation",
+      { "CF-Connecting-IP": "192.0.2.251" },
+    );
+    expect(withoutConsent.status).toBe(200);
+
+    const reports = getCapturedProblemReports().slice(before);
+    expect(reports).toMatchObject([
+      {
+        contactAllowed: true,
+        contactEmail: "reporter@example.com",
+        environment: "test",
+        route: "/events/:slug/agenda",
+      },
+      {
+        contactAllowed: false,
+        environment: "test",
+        route: "/events/:slug/agenda",
+      },
+    ]);
+    expect(reports[0]).not.toHaveProperty("userId");
+    expect(reports[1]).not.toHaveProperty("contactEmail");
   });
 
   test("rejects automation and limits repeated reports", async () => {
@@ -141,6 +184,7 @@ describe("problem reports", () => {
           "Environment: production",
           "User ID: user-123",
           "Contact allowed: yes",
+          "Contact email: reporter@example.com",
         ].join("\n"),
         email: true,
         name: "OpenBoard user report",
@@ -149,6 +193,28 @@ describe("problem reports", () => {
         summary: "User reported a problem on /events/:slug/agenda",
       }),
     );
+  });
+
+  test("omits the contact email line when the reporter has no email", async () => {
+    const requests: Array<{
+      input: RequestInfo | URL;
+      init: RequestInit | undefined;
+    }> = [];
+    function request(input: RequestInfo | URL, init?: RequestInit) {
+      requests.push({ input, init });
+      return Promise.resolve(new Response(undefined, { status: 201 }));
+    }
+    const reportWithoutContact: ProblemReport = { ...problemReport };
+    delete reportWithoutContact.contactEmail;
+    await deliverProblemReport(
+      betterStackConfig,
+      reportWithoutContact,
+      request,
+    );
+    const body = JSON.parse(requests[0]?.init?.body as string) as {
+      description: string;
+    };
+    expect(body.description).toContain("Contact email: none");
   });
 
   test("returns a recoverable failure when incident delivery fails", async () => {
@@ -340,6 +406,7 @@ const betterStackConfig: AppConfig = {
 
 const problemReport: ProblemReport = {
   contactAllowed: true,
+  contactEmail: "reporter@example.com",
   description: "The agenda did not open.",
   environment: "production",
   release: "release-123",

@@ -94,6 +94,13 @@ a {
 .problem-report-contact input {
   margin-top: 3px;
 }
+.problem-report-contact-email {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 20px;
+  font-size: 13px;
+  font-weight: 600;
+}
 .problem-report-honeypot {
   position: absolute;
   left: -10000px;

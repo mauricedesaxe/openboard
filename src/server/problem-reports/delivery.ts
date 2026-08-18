@@ -3,6 +3,7 @@ import type { AppConfig } from "../config";
 
 export type ProblemReport = {
   contactAllowed: boolean;
+  contactEmail?: string;
   description: string;
   environment: string;
   release: string;
@@ -71,7 +72,8 @@ function formatIncidentDescription(report: ProblemReport): string {
     `Timestamp: ${report.reportedAt}`,
     `Environment: ${report.environment}`,
     `User ID: ${report.userId ?? "signed out"}`,
-    `Contact allowed: ${report.contactAllowed && report.userId ? "yes" : "no"}`,
+    `Contact allowed: ${report.contactAllowed && (report.userId || report.contactEmail) ? "yes" : "no"}`,
+    `Contact email: ${report.contactEmail ?? "none"}`,
   ].join("\n");
 }
 
