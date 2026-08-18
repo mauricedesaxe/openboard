@@ -247,6 +247,56 @@ test("resumes a local draft and submits after sign-in", async ({ page }) => {
   await expect(page.getByRole("textbox", { name: "Title" })).toBeDisabled();
 });
 
+test("submits a proposal whose file was picked without a reload", async ({
+  page,
+}) => {
+  const suffix = `${Date.now()}`;
+  const slug = `browser-fresh-file-${suffix}`;
+  const proposedSpeakerEmail = `browser-speaker-${suffix}@example.com`;
+  await page.goto("/");
+  await signIn(page, `browser-owner-${suffix}@example.com`, "Open my board");
+  await createOpenCfp(page, slug);
+  await page.getByRole("button", { name: "Sign out" }).click();
+
+  await page.goto(`/events/${slug}/cfp`);
+  await page.getByRole("textbox", { name: "Title" }).fill("A fresh file");
+  await page
+    .getByRole("textbox", { name: "Abstract" })
+    .fill("This proposal submits a file picked moments before signing in.");
+  await page.getByLabel("Format").selectOption("Talk");
+  await page.getByLabel("Track").selectOption({ label: "Web systems" });
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page
+    .getByRole("textbox", { name: "Proposed speaker name" })
+    .fill("Fresh File Submitter");
+  await page
+    .getByRole("textbox", { name: "Proposed speaker email" })
+    .fill(proposedSpeakerEmail);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByLabel("Audience").selectOption("Experienced");
+  await page
+    .getByRole("textbox", { name: "Workshop requirements" })
+    .fill("A whiteboard and sticky notes.");
+  await page
+    .getByLabel("Session outline")
+    .setInputFiles("test/fixtures/outline.pdf");
+  await expect(page.getByText("outline.pdf")).toBeVisible();
+
+  await page.getByRole("button", { name: "Sign in and submit" }).click();
+  await expect(
+    page.getByText(`Enter the six-digit code sent to ${proposedSpeakerEmail}.`),
+  ).toBeVisible();
+  await completeSignIn(page, "Return to proposal");
+
+  await expect(page).toHaveURL(/\/submissions\/[0-9a-f-]+$/, {
+    timeout: 15_000,
+  });
+  await expect(
+    page.getByRole("heading", { name: "A fresh file" }),
+  ).toBeVisible();
+  await expect(page.getByText("outline.pdf")).toBeVisible();
+});
+
 async function measureLocalTransition(
   page: Page,
   selector: string,
