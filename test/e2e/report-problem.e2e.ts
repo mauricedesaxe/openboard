@@ -41,6 +41,24 @@ test("reports a problem from public and authenticated views", async ({
   await expect(page.getByText("Thanks for the heads-up.")).toBeVisible();
   await page.getByRole("button", { name: "Close" }).click();
 
+  await reportAction.click();
+  const consent = page.getByRole("checkbox", {
+    name: "You can contact me about this.",
+  });
+  await expect(consent).toBeVisible();
+  await expect(page.getByLabel("Contact email")).toHaveCount(0);
+  await consent.check();
+  await page
+    .getByLabel("Contact email")
+    .fill(`problem-reporter-${Date.now()}@example.com`);
+  await page
+    .getByRole("textbox", { name: "Problem description" })
+    .fill("The sign-in page was blank on my phone.");
+  await page.waitForTimeout(1_000);
+  await page.getByRole("button", { name: "Send report" }).click();
+  await expect(page.getByText("Thanks for the heads-up.")).toBeVisible();
+  await page.getByRole("button", { name: "Close" }).click();
+
   await signIn(
     page,
     `problem-reporter-${Date.now()}@example.com`,

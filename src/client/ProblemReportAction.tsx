@@ -18,6 +18,7 @@ export function ProblemReportAction({ signedIn }: { signedIn: boolean }) {
   const [open, setOpen] = useState(false);
   const [description, setDescription] = useState("");
   const [contactAllowed, setContactAllowed] = useState(false);
+  const [contactEmail, setContactEmail] = useState("");
   const openedAt = useRef(0);
   const trigger = useRef<HTMLButtonElement>(null);
   const dialog = useRef<HTMLElement>(null);
@@ -35,6 +36,7 @@ export function ProblemReportAction({ signedIn }: { signedIn: boolean }) {
     setOpen(false);
     setDescription("");
     setContactAllowed(false);
+    setContactEmail("");
     submit.reset();
     trigger.current?.focus();
   }
@@ -44,6 +46,7 @@ export function ProblemReportAction({ signedIn }: { signedIn: boolean }) {
     const honeypotWebsite = form.get("website");
     submit.mutate({
       contactAllowed,
+      contactEmail,
       description,
       formOpenDurationMs: Date.now() - openedAt.current,
       honeypotWebsite:
@@ -158,10 +161,32 @@ export function ProblemReportAction({ signedIn }: { signedIn: boolean }) {
                     The owner may contact me through my OpenBoard account.
                   </label>
                 ) : (
-                  <p className="muted">
-                    This report is anonymous. Sign in first if you’d like a
-                    reply.
-                  </p>
+                  <>
+                    <label className="problem-report-contact">
+                      <input
+                        checked={contactAllowed}
+                        onChange={(event) =>
+                          setContactAllowed(event.target.checked)
+                        }
+                        type="checkbox"
+                      />
+                      You can contact me about this.
+                    </label>
+                    {contactAllowed && (
+                      <label className="problem-report-contact-email">
+                        Contact email
+                        <input
+                          autoComplete="email"
+                          onChange={(event) =>
+                            setContactEmail(event.target.value)
+                          }
+                          placeholder="you@example.com"
+                          type="email"
+                          value={contactEmail}
+                        />
+                      </label>
+                    )}
+                  </>
                 )}
                 {submit.error && (
                   <p className="form-error" role="alert">

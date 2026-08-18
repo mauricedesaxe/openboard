@@ -40,14 +40,20 @@ export async function submitProblemReport(input: {
   const route = reportRoute(input.report.route);
   const userId =
     input.identity.type === "user" ? input.identity.userId : undefined;
+  const consentedEmail = input.report.contactAllowed
+    ? input.report.contactEmail || undefined
+    : undefined;
+  const contactAllowed =
+    input.report.contactAllowed && Boolean(userId || consentedEmail);
   const report = {
-    contactAllowed: input.report.contactAllowed && Boolean(userId),
+    contactAllowed,
     description: input.report.description,
     environment: input.config.appEnv,
     release: input.config.release,
     reportedAt: input.now.toISOString(),
     route,
     ...(userId ? { userId } : {}),
+    ...(consentedEmail ? { contactEmail: consentedEmail } : {}),
   };
   const delivery = await deliverProblemReport(input.config, report);
   if (!delivery.ok) {
