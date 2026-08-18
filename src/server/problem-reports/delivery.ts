@@ -45,7 +45,9 @@ export async function deliverProblemReport(
           description: formatIncidentDescription(report),
           email: true,
           name: "OpenBoard user report",
-          policy_id: config.problemReports.policyId,
+          ...(config.problemReports.policyId
+            ? { policy_id: config.problemReports.policyId }
+            : {}),
           requester_email: config.problemReports.requesterEmail,
           summary: `User reported a problem on ${report.route}`,
         }),

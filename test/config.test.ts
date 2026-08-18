@@ -105,4 +105,23 @@ describe("configuration", () => {
       },
     });
   });
+
+  test("accepts incident delivery without a policy id", () => {
+    expect(
+      parseConfig({
+        ...validConfig,
+        BETTERSTACK_INCIDENT_API_TOKEN: "incident-token",
+        BETTERSTACK_INCIDENT_REQUESTER_EMAIL: "owner@example.com",
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        problemReports: {
+          type: "betterstack",
+          apiToken: "incident-token",
+          requesterEmail: "owner@example.com",
+        },
+      },
+    });
+  });
 });

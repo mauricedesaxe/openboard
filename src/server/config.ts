@@ -75,7 +75,7 @@ export type AppConfig = {
     | {
         type: "betterstack";
         apiToken: string;
-        policyId: string;
+        policyId?: string;
         requesterEmail: string;
       };
   release: string;
@@ -122,12 +122,13 @@ export function parseConfig(
         config.APP_ENV !== "production"
           ? { type: "capture" }
           : config.BETTERSTACK_INCIDENT_API_TOKEN &&
-              config.BETTERSTACK_INCIDENT_POLICY_ID &&
               config.BETTERSTACK_INCIDENT_REQUESTER_EMAIL
             ? {
                 type: "betterstack",
                 apiToken: config.BETTERSTACK_INCIDENT_API_TOKEN,
-                policyId: config.BETTERSTACK_INCIDENT_POLICY_ID,
+                ...(config.BETTERSTACK_INCIDENT_POLICY_ID
+                  ? { policyId: config.BETTERSTACK_INCIDENT_POLICY_ID }
+                  : {}),
                 requesterEmail: config.BETTERSTACK_INCIDENT_REQUESTER_EMAIL,
               }
             : { type: "unavailable" },

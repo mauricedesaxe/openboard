@@ -226,6 +226,40 @@ describe("problem reports", () => {
     expect(result).toEqual({ ok: false, reason: "delivery" });
   });
 
+  test("omits policy_id when no policy is configured", async () => {
+    const requests: Array<{
+      input: RequestInfo | URL;
+      init: RequestInit | undefined;
+    }> = [];
+    function request(input: RequestInfo | URL, init?: RequestInit) {
+      requests.push({ input, init });
+      return Promise.resolve(new Response(undefined, { status: 201 }));
+    }
+    const result = await deliverProblemReport(
+      {
+        ...betterStackConfig,
+        problemReports: {
+          type: "betterstack",
+          apiToken: "server-only-token",
+          requesterEmail: "owner@example.com",
+        },
+      },
+      problemReport,
+      request,
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(requests).toHaveLength(1);
+    expect(JSON.parse(requests[0]?.init?.body as string)).toMatchObject({
+      email: true,
+      name: "OpenBoard user report",
+      requester_email: "owner@example.com",
+    });
+    expect(JSON.parse(requests[0]?.init?.body as string)).not.toHaveProperty(
+      "policy_id",
+    );
+  });
+
   test("keeps accepted-report capacity after delivery failures", async () => {
     const database = createDatabase(testEnvironment.DB);
     const identity = { type: "ip" as const, ipAddress: "192.0.2.245" };
