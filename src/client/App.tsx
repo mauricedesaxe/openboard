@@ -56,11 +56,7 @@ import {
   type EventInput,
   type EventSettingsInput,
 } from "../shared/events";
-import {
-  MAX_STORED_FILE_BYTES,
-  type StoredFile,
-  type StoredFileId,
-} from "../shared/files";
+import { MAX_STORED_FILE_BYTES, type StoredFile } from "../shared/files";
 import {
   speakerHeadshotUploadSchema,
   type SpeakerHeadshotUpload,
@@ -6971,13 +6967,11 @@ function PublicCfpPage() {
     }
     const selected = { file, uploadId: crypto.randomUUID() };
     setSelectedFiles((current) => ({ ...current, [field.key]: selected }));
-    setDraft((current) => ({
-      ...current,
-      fileAnswers: { ...current.fileAnswers, [field.key]: undefined } as Record<
-        string,
-        StoredFileId
-      >,
-    }));
+    setDraft((current) => {
+      const fileAnswers = { ...current.fileAnswers };
+      delete fileAnswers[field.key];
+      return { ...current, fileAnswers };
+    });
     await saveLocalProposalFile(draft.clientDraftId, field.key, selected);
   }
 
